@@ -1,0 +1,289 @@
+"use client";
+
+import { useEffect, useState, use } from "react";
+import Link from "next/link";
+import {
+  PageHeader,
+  Card,
+  Button,
+  Badge,
+  statusTone,
+  Modal,
+  Input,
+  Select,
+} from "@/components/ui";
+import {
+  BAG_STATUS_LABELS,
+  TRANSPORT_MODE_LABELS,
+} from "@/lib/utils";
+import { format } from "date-fns";
+
+type Bag = {
+  id: string;
+  bagNumber: string;
+  weightKg: number | null;
+  description: string | null;
+  contents: string | null;
+  status: string;
+  arrivedAt: string | null;
+  deliveredAt: string | null;
+  customer: { id: string; name: string } | null;
+  warehouse: { name: string } | null;
+  transportAssignments: Array<{
+    transportAssignment: {
+      id: string;
+      mode: string;
+      carrier: { name: string } | null;
+      carrierName: string | null;
+      assignedDate: string;
+      arrivalDate: string | null;
+    };
+  }>;
+};
+
+type Shipment = {
+  id: string;
+  lotNumber: string;
+  batchNumber: string | null;
+  direction: string;
+  notes: string | null;
+  shipDate: string | null;
+  originWarehouse: { name: string; city: string } | null;
+  destWarehouse: { name: string; city: string } | null;
+  bags: Bag[];
+};
+
+export default function ShipmentDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = use(params);
+  const [shipment, setShipment] = useState<Shipment | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [editBag, setEditBag] = useState<Bag | null>(null);
+  const [addCount, setAddCount] = useState("1");
+
+  const load = () =>
+    fetch(`/api/shipments/${id}`)
+      .then((r) => r.json())
+      .then(setShipment);
+
+  useEffect(() => {
+    load();
+  }, [id]);
+
+  function toggle(bagId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(bagId)) next.delete(bagId);
+      else next.add(bagId);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (!shipment) return;
+    if (selected.size === shipment.bags.length) setSelected(new Set());
+    else setSelected(new Set(shipment.bags.map((b) => b.id)));
+  }
+
+  async function updateBag() {
+    if (!editBag) return;
+    await fetch(`/api/bags/${editBag.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bagNumber: editBag.bagNumber,
+        weightKg: editBag.weightKg,
+        description: editBag.description,
+        contents: editBag.contents,
+        status: editBag.status,
+        customerId: editBag.customer?.id || null,
+      }),
+    });
+    setEditBag(null);
+    load();
+  }
+
+  async function addBags() {
+    await fetch(`/api/shipments/${id}/bags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count: Number(addCount) || 1 }),
+    });
+    load();
+  }
+
+  if (!shipment) return <div className="text-[var(--muted)]">Loading shipment…</div>;
+
+  const assignHref =
+    selected.size > 0
+      ? `/transport/new?bags=${Array.from(selected).join(",")}`
+      : "/transport/new";
+
+  return (
+    <div>
+      <PageHeader
+        title={`Lot ${shipment.lotNumber}`}
+        subtitle={`${
+          shipment.direction === "IN_TO_TH" ? "India → Thailand" : "Thailand → India"
+        }${shipment.batchNumber ? ` · Batch ${shipment.batchNumber}` : ""} · ${
+          shipment.originWarehouse?.city || "?"
+        } → ${shipment.destWarehouse?.city || "?"}`}
+        actions={
+          <>
+            <Link href="/shipments">
+              <Button variant="secondary">All shipments</Button>
+            </Link>
+            <Link href={assignHref}>
+              <Button disabled={selected.size === 0}>
+                Assign transport ({selected.size})
+              </Button>
+            </Link>
+          </>
+        }
+      />
+
+      <Card className="mb-4 flex flex-wrap items-end gap-3">
+        <Input
+          label="Add more bags"
+          type="number"
+          min={1}
+          className="w-28"
+          value={addCount}
+          onChange={(e) => setAddCount(e.target.value)}
+        />
+        <Button variant="secondary" onClick={addBags}>
+          Add bags
+        </Button>
+        <div className="ml-auto text-sm text-[var(--muted)]">
+          {shipment.bags.length} bags · select bags to assign air / sea / land / carry person
+        </div>
+      </Card>
+
+      <Card className="overflow-x-auto p-0">
+        <table className="data">
+          <thead>
+            <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  checked={
+                    shipment.bags.length > 0 && selected.size === shipment.bags.length
+                  }
+                  onChange={toggleAll}
+                />
+              </th>
+              <th>Bag</th>
+              <th>Weight</th>
+              <th>Customer</th>
+              <th>Status</th>
+              <th>Transport</th>
+              <th>Details</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {shipment.bags.map((b) => {
+              const ta = b.transportAssignments[0]?.transportAssignment;
+              return (
+                <tr key={b.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(b.id)}
+                      onChange={() => toggle(b.id)}
+                    />
+                  </td>
+                  <td className="font-medium">#{b.bagNumber}</td>
+                  <td>{b.weightKg != null ? `${b.weightKg} kg` : "—"}</td>
+                  <td>{b.customer?.name || "—"}</td>
+                  <td>
+                    <Badge tone={statusTone(b.status)}>
+                      {BAG_STATUS_LABELS[b.status] || b.status}
+                    </Badge>
+                  </td>
+                  <td className="text-xs">
+                    {ta ? (
+                      <>
+                        {TRANSPORT_MODE_LABELS[ta.mode] || ta.mode}
+                        <br />
+                        {ta.carrier?.name || ta.carrierName || "—"}
+                        <br />
+                        {format(new Date(ta.assignedDate), "dd MMM yyyy")}
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="max-w-[160px] text-xs text-[var(--muted)]">
+                    {b.description || b.contents || "—"}
+                  </td>
+                  <td>
+                    <button
+                      className="text-sm text-[var(--accent)]"
+                      onClick={() => setEditBag(b)}
+                    >
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+
+      <Modal open={!!editBag} onClose={() => setEditBag(null)} title="Edit bag">
+        {editBag && (
+          <div className="grid gap-3">
+            <Input
+              label="Bag number"
+              value={editBag.bagNumber}
+              onChange={(e) => setEditBag({ ...editBag, bagNumber: e.target.value })}
+            />
+            <Input
+              label="Weight (kg)"
+              type="number"
+              value={editBag.weightKg ?? ""}
+              onChange={(e) =>
+                setEditBag({
+                  ...editBag,
+                  weightKg: e.target.value ? Number(e.target.value) : null,
+                })
+              }
+            />
+            <Input
+              label="Description"
+              value={editBag.description || ""}
+              onChange={(e) => setEditBag({ ...editBag, description: e.target.value })}
+            />
+            <Input
+              label="Contents"
+              value={editBag.contents || ""}
+              onChange={(e) => setEditBag({ ...editBag, contents: e.target.value })}
+            />
+            <Select
+              label="Status"
+              value={editBag.status}
+              onChange={(e) => setEditBag({ ...editBag, status: e.target.value })}
+            >
+              {Object.entries(BAG_STATUS_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </Select>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setEditBag(null)}>
+                Cancel
+              </Button>
+              <Button onClick={updateBag}>Save</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}

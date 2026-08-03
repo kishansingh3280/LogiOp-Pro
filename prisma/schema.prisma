@@ -1,0 +1,214 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum PartyType {
+  CUSTOMER_IN
+  CUSTOMER_TH
+  CARRY_PERSON
+  AGENT
+  OTHER
+}
+
+enum Currency {
+  INR
+  THB
+}
+
+enum TransportMode {
+  AIR
+  SEA
+  LAND
+  CARRY_PERSON
+}
+
+enum BagStatus {
+  CREATED
+  AT_WAREHOUSE
+  ASSIGNED
+  IN_TRANSIT
+  ARRIVED
+  DELIVERED
+  RETURNED
+  LOST
+}
+
+enum LedgerDirection {
+  YOU_GAVE
+  YOU_GOT
+}
+
+enum ShipmentDirection {
+  IN_TO_TH
+  TH_TO_IN
+}
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  name      String
+  city      String
+  country   String
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  originShipments      Shipment[] @relation("OriginWarehouse")
+  destinationShipments Shipment[] @relation("DestinationWarehouse")
+  bags                 Bag[]
+}
+
+model Party {
+  id             String    @id @default(cuid())
+  name           String
+  type           PartyType
+  phone          String?
+  email          String?
+  city           String?
+  country        String?
+  notes          String?
+  // Quoted exchange rates for this party (THB per 1 INR or INR per 1 THB depending on quoteMode)
+  exchangeRate   Float?
+  // "INR_PER_THB" means how many INR for 1 THB; "THB_PER_INR" means how many THB for 1 INR
+  quoteMode      String    @default("INR_PER_THB")
+  defaultCurrency Currency @default(INR)
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  ledgerEntries      LedgerEntry[]
+  bagsAsCustomer     Bag[]              @relation("BagCustomer")
+  transportLegs      TransportAssignment[]
+  carryRatePerKg     Float?
+}
+
+model LedgerEntry {
+  id          String          @id @default(cuid())
+  partyId     String
+  party       Party           @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  direction   LedgerDirection
+  amount      Float
+  currency    Currency
+  description String?
+  entryDate   DateTime        @default(now())
+  // Optional FX context
+  fxRate      Float?
+  fxAmount    Float?
+  fxCurrency  Currency?
+  // Link to transport / auto-sync source
+  transportAssignmentId String?
+  transportAssignment   TransportAssignment? @relation(fields: [transportAssignmentId], references: [id])
+  isAutoSynced Boolean        @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  attachments BillAttachment[]
+
+  @@index([partyId])
+  @@index([entryDate])
+  @@index([currency])
+}
+
+model BillAttachment {
+  id            String      @id @default(cuid())
+  ledgerEntryId String
+  ledgerEntry   LedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Cascade)
+  fileName      String
+  filePath      String
+  mimeType      String?
+  fileSize      Int?
+  createdAt     DateTime    @default(now())
+}
+
+model Shipment {
+  id              String            @id @default(cuid())
+  lotNumber       String            @unique
+  batchNumber     String?
+  direction       ShipmentDirection
+  originWarehouseId String?
+  originWarehouse Warehouse?        @relation("OriginWarehouse", fields: [originWarehouseId], references: [id])
+  destWarehouseId String?
+  destWarehouse   Warehouse?        @relation("DestinationWarehouse", fields: [destWarehouseId], references: [id])
+  notes           String?
+  shipDate        DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  bags Bag[]
+
+  @@index([lotNumber])
+  @@index([batchNumber])
+}
+
+model Bag {
+  id              String     @id @default(cuid())
+  bagNumber       String
+  shipmentId      String
+  shipment        Shipment   @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  customerId      String?
+  customer        Party?     @relation("BagCustomer", fields: [customerId], references: [id])
+  warehouseId     String?
+  warehouse       Warehouse? @relation(fields: [warehouseId], references: [id])
+  weightKg        Float?
+  description     String?
+  contents        String?
+  status          BagStatus  @default(CREATED)
+  // Optional tracking fields
+  deliveredAt     DateTime?
+  arrivedAt       DateTime?
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  transportAssignments TransportAssignmentBag[]
+
+  @@unique([shipmentId, bagNumber])
+  @@index([status])
+  @@index([bagNumber])
+}
+
+model TransportAssignment {
+  id            String        @id @default(cuid())
+  mode          TransportMode
+  carrierId     String?
+  carrier       Party?        @relation(fields: [carrierId], references: [id])
+  carrierName   String?
+  assignedDate  DateTime      @default(now())
+  departureDate DateTime?
+  arrivalDate   DateTime?
+  // For carry person / agent payment calculation
+  ratePerKg     Float?
+  totalWeightKg Float?
+  currency      Currency      @default(INR)
+  trackingRef   String?
+  notes         String?
+  // Delivery confirmation for the assignment as a whole
+  deliveredToCustomer Boolean  @default(false)
+  deliveredAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  bags          TransportAssignmentBag[]
+  ledgerEntries LedgerEntry[]
+}
+
+model TransportAssignmentBag {
+  id                     String               @id @default(cuid())
+  transportAssignmentId  String
+  transportAssignment    TransportAssignment  @relation(fields: [transportAssignmentId], references: [id], onDelete: Cascade)
+  bagId                  String
+  bag                    Bag                  @relation(fields: [bagId], references: [id], onDelete: Cascade)
+
+  @@unique([transportAssignmentId, bagId])
+}
+
+model AppSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}

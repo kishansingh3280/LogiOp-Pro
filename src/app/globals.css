@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f3efe6;
+  --panel: #fffdf8;
+  --ink: #1a2b2a;
+  --muted: #5f6f6c;
+  --line: #d9d2c4;
+  --accent: #0f6e56;
+  --accent-hover: #0b5a46;
+  --accent-soft: #d8efe6;
+  --accent-ink: #0a4d3c;
+  --thb: #c45c26;
+  --inr: #1f5f8b;
+  --pattern: radial-gradient(circle at 12% 18%, rgba(15, 110, 86, 0.08), transparent 32%),
+    radial-gradient(circle at 88% 8%, rgba(196, 92, 38, 0.07), transparent 28%),
+    linear-gradient(180deg, #f7f3eb 0%, #f3efe6 100%);
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--ink);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+}
+
+body {
+  background: var(--pattern);
+  color: var(--ink);
+  font-family: var(--font-body), "Segoe UI", sans-serif;
+  min-height: 100vh;
+}
+
+.font-display {
+  font-family: var(--font-display), Georgia, serif;
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+table.data th {
+  text-align: left;
+  padding: 0.65rem 0.75rem;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+table.data td {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+table.data tr:hover td {
+  background: rgba(15, 110, 86, 0.03);
+}
+
+.money-inr {
+  color: var(--inr);
+  font-variant-numeric: tabular-nums;
+}
+
+.money-thb {
+  color: var(--thb);
+  font-variant-numeric: tabular-nums;
+}
