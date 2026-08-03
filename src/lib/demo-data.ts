@@ -151,8 +151,10 @@ type DemoState = {
   lalamove: {
     connected: boolean;
     apiKey: string;
+    apiSecret: string;
     market: string;
     sandbox: boolean;
+    language: string;
     connectedAt: string | null;
   };
   googleMaps: {
@@ -165,6 +167,7 @@ type DemoState = {
     provider: string;
     status: string;
     externalOrderId: string | null;
+    quotationId: string | null;
     quoteAmount: number | null;
     currency: "INR" | "THB";
     vehicleType: string | null;
@@ -175,6 +178,15 @@ type DemoState = {
     pickupLng: number | null;
     dropoffLat: number | null;
     dropoffLng: number | null;
+    pickupContact: string | null;
+    pickupPhone: string | null;
+    dropoffContact: string | null;
+    dropoffPhone: string | null;
+    driverId: string | null;
+    driverName: string | null;
+    driverPhone: string | null;
+    providerStatus: string | null;
+    priorityFee: number | null;
     notes: string | null;
     bookedAt: string | null;
     completedAt: string | null;
@@ -182,6 +194,22 @@ type DemoState = {
     customerId: string | null;
     shipmentId: string | null;
     bagIds: string[];
+  }>;
+  savedAddresses: Array<{
+    id: string;
+    label: string;
+    contactName: string | null;
+    phone: string | null;
+    address: string;
+    city: string | null;
+    country: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    placeId: string | null;
+    kind: string;
+    notes: string | null;
+    sortOrder: number;
+    isActive: boolean;
   }>;
 };
 
@@ -564,8 +592,10 @@ function seed(): DemoState {
     lalamove: {
       connected: false,
       apiKey: "",
-      market: "TH_BKK",
+      apiSecret: "",
+      market: "TH",
       sandbox: true,
+      language: "en_TH",
       connectedAt: null,
     },
     googleMaps: {
@@ -574,6 +604,40 @@ function seed(): DemoState {
       connectedAt: null,
     },
     lastMileDeliveries: [],
+    savedAddresses: [
+      {
+        id: "sa_bkk_wh",
+        label: "Bangkok Warehouse",
+        contactName: "Bangkok Warehouse",
+        phone: "+66812345678",
+        address: "Lat Krabang industrial estate, Bangkok",
+        city: "Bangkok",
+        country: "Thailand",
+        latitude: 13.7234,
+        longitude: 100.7487,
+        placeId: null,
+        kind: "PICKUP",
+        notes: "Main TH warehouse",
+        sortOrder: 0,
+        isActive: true,
+      },
+      {
+        id: "sa_sukhumvit",
+        label: "Siam Gifts · Sukhumvit",
+        contactName: "Siam Gifts Co.",
+        phone: "+66812345678",
+        address: "Sukhumvit Soi 22, Bangkok",
+        city: "Bangkok",
+        country: "Thailand",
+        latitude: 13.7308,
+        longitude: 100.5695,
+        placeId: null,
+        kind: "DROPOFF",
+        notes: null,
+        sortOrder: 1,
+        isActive: true,
+      },
+    ],
   };
 }
 
@@ -1804,6 +1868,22 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
 
   // Lalamove / last-mile
   if (method === "GET" && p === "/api/lalamove") {
+    if (q.get("cities") === "1") {
+      return {
+        cities: [
+          {
+            locode: "TH BKK",
+            name: "Bangkok",
+            services: [
+              { key: "MOTORCYCLE", description: "Motorcycle" },
+              { key: "CAR", description: "Car" },
+              { key: "VAN", description: "Van" },
+            ],
+          },
+        ],
+        mock: true,
+      };
+    }
     const settings = state.lalamove;
     const readyBags = [];
     for (const s of state.shipments) {
@@ -1818,10 +1898,13 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
         connected: settings.connected,
         market: settings.market,
         sandbox: settings.sandbox,
+        language: settings.language || "en_TH",
         connectedAt: settings.connectedAt,
         hasApiKey: Boolean(settings.apiKey),
+        hasApiSecret: Boolean(settings.apiSecret),
+        liveReady: Boolean(settings.apiKey && settings.apiSecret),
         apiKeyMasked: settings.apiKey
-          ? `${settings.apiKey.slice(0, 4)}••••${settings.apiKey.slice(-3)}`
+          ? `${settings.apiKey.slice(0, 6)}••••${settings.apiKey.slice(-4)}`
           : null,
       },
       deliveries: state.lastMileDeliveries.map((d) => ({
@@ -1839,7 +1922,75 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
         }).filter(Boolean),
       })),
       readyBags,
+      addresses: state.savedAddresses.filter((a) => a.isActive),
     };
+  }
+
+  if (method === "GET" && p === "/api/lalamove/addresses") {
+    return state.savedAddresses.filter((a) => a.isActive);
+  }
+
+  if (method === "POST" && p === "/api/lalamove/addresses") {
+    const b = (body || {}) as Record<string, unknown>;
+    const label = String(b.label || "").trim();
+    const address = String(b.address || "").trim();
+    if (!label || !address)
+      throw Object.assign(new Error("Label and address are required"), { status: 400 });
+    const lat = b.latitude != null ? Number(b.latitude) : null;
+    const lng = b.longitude != null ? Number(b.longitude) : null;
+    if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng))
+      throw Object.assign(new Error("Latitude and longitude are required"), { status: 400 });
+    const row = {
+      id: id("sa"),
+      label,
+      contactName: b.contactName ? String(b.contactName) : null,
+      phone: b.phone ? String(b.phone) : null,
+      address,
+      city: b.city ? String(b.city) : null,
+      country: b.country ? String(b.country) : null,
+      latitude: lat,
+      longitude: lng,
+      placeId: b.placeId ? String(b.placeId) : null,
+      kind: ["PICKUP", "DROPOFF", "BOTH"].includes(String(b.kind))
+        ? String(b.kind)
+        : "BOTH",
+      notes: b.notes ? String(b.notes) : null,
+      sortOrder: 0,
+      isActive: true,
+    };
+    state.savedAddresses.unshift(row);
+    return row;
+  }
+
+  const saMatch = p.match(/^\/api\/lalamove\/addresses\/([^/]+)$/);
+  if (saMatch && method === "PATCH") {
+    const row = state.savedAddresses.find((a) => a.id === saMatch[1]);
+    if (!row) throw Object.assign(new Error("Not found"), { status: 404 });
+    const b = (body || {}) as Record<string, unknown>;
+    if (b.label != null) row.label = String(b.label).trim();
+    if (b.contactName !== undefined)
+      row.contactName = b.contactName ? String(b.contactName) : null;
+    if (b.phone !== undefined) row.phone = b.phone ? String(b.phone) : null;
+    if (b.address != null) row.address = String(b.address).trim();
+    if (b.city !== undefined) row.city = b.city ? String(b.city) : null;
+    if (b.country !== undefined) row.country = b.country ? String(b.country) : null;
+    if (b.latitude !== undefined)
+      row.latitude = b.latitude != null ? Number(b.latitude) : null;
+    if (b.longitude !== undefined)
+      row.longitude = b.longitude != null ? Number(b.longitude) : null;
+    if (b.placeId !== undefined)
+      row.placeId = b.placeId ? String(b.placeId) : null;
+    if (b.kind != null && ["PICKUP", "DROPOFF", "BOTH"].includes(String(b.kind)))
+      row.kind = String(b.kind);
+    if (b.notes !== undefined) row.notes = b.notes ? String(b.notes) : null;
+    if (b.isActive !== undefined) row.isActive = Boolean(b.isActive);
+    return row;
+  }
+  if (saMatch && method === "DELETE") {
+    const row = state.savedAddresses.find((a) => a.id === saMatch[1]);
+    if (!row) throw Object.assign(new Error("Not found"), { status: 404 });
+    row.isActive = false;
+    return { ok: true };
   }
 
   if (method === "POST" && p === "/api/lalamove") {
@@ -1848,13 +1999,18 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
 
     if (action === "connect") {
       const apiKey = String(b.apiKey || "").trim();
+      const apiSecret = String(b.apiSecret || "").trim();
       if (!apiKey)
         throw Object.assign(new Error("API key required"), { status: 400 });
+      if (!apiSecret)
+        throw Object.assign(new Error("API secret required"), { status: 400 });
       state.lalamove = {
         connected: true,
         apiKey,
-        market: String(b.market || "TH_BKK"),
+        apiSecret,
+        market: String(b.market || "TH"),
         sandbox: b.sandbox !== false,
+        language: String(b.language || "en_TH"),
         connectedAt: new Date().toISOString(),
       };
       return {
@@ -1863,9 +2019,12 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
           connected: true,
           market: state.lalamove.market,
           sandbox: state.lalamove.sandbox,
+          language: state.lalamove.language,
           connectedAt: state.lalamove.connectedAt,
           hasApiKey: true,
-          apiKeyMasked: `${apiKey.slice(0, 4)}••••${apiKey.slice(-3)}`,
+          hasApiSecret: true,
+          liveReady: true,
+          apiKeyMasked: `${apiKey.slice(0, 6)}••••${apiKey.slice(-4)}`,
         },
       };
     }
@@ -1874,25 +2033,159 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       state.lalamove = {
         connected: false,
         apiKey: "",
-        market: "TH_BKK",
+        apiSecret: "",
+        market: "TH",
         sandbox: true,
+        language: "en_TH",
         connectedAt: null,
       };
       return {
         ok: true,
         settings: {
           connected: false,
-          market: "TH_BKK",
+          market: "TH",
           sandbox: true,
+          language: "en_TH",
           connectedAt: null,
           hasApiKey: false,
+          hasApiSecret: false,
+          liveReady: false,
           apiKeyMasked: null,
         },
       };
     }
 
-    if (!state.lalamove.connected && (action === "quote" || action === "book")) {
+    if (action === "importAddresses") {
+      let created = 0;
+      for (const w of state.warehouses) {
+        if (w.latitude == null || w.longitude == null) continue;
+        const label = `WH · ${w.name}`;
+        if (state.savedAddresses.some((a) => a.label === label && a.isActive)) continue;
+        state.savedAddresses.push({
+          id: id("sa"),
+          label,
+          contactName: w.name,
+          phone: null,
+          address: w.address || `${w.name}, ${w.city}, ${w.country}`,
+          city: w.city,
+          country: w.country,
+          latitude: w.latitude,
+          longitude: w.longitude,
+          placeId: w.placeId,
+          kind: "PICKUP",
+          notes: "Imported from warehouse",
+          sortOrder: 0,
+          isActive: true,
+        });
+        created += 1;
+      }
+      for (const party of state.parties) {
+        if (!party.address || party.latitude == null || party.longitude == null) continue;
+        const label = `Party · ${party.name}`;
+        if (state.savedAddresses.some((a) => a.label === label && a.isActive)) continue;
+        state.savedAddresses.push({
+          id: id("sa"),
+          label,
+          contactName: party.name,
+          phone: party.phone,
+          address: party.address,
+          city: party.city,
+          country: party.country,
+          latitude: party.latitude,
+          longitude: party.longitude,
+          placeId: party.placeId,
+          kind: "DROPOFF",
+          notes: "Imported from party",
+          sortOrder: 0,
+          isActive: true,
+        });
+        created += 1;
+      }
+      return {
+        ok: true,
+        created,
+        addresses: state.savedAddresses.filter((a) => a.isActive),
+      };
+    }
+
+    if (!state.lalamove.connected &&
+      ["quote", "book", "quoteDirect", "bookDirect"].includes(action)) {
       throw Object.assign(new Error("Connect Lalamove first"), { status: 400 });
+    }
+
+    const mockQuoteFrom = (weight: number, serviceType?: string) => {
+      const market = state.lalamove.market;
+      const base = market.startsWith("TH") ? 89 : 149;
+      const perKg = market.startsWith("TH") ? 12 : 18;
+      const amount = Math.round((base + Math.max(0, weight) * perKg) * 100) / 100;
+      const currency = (market.startsWith("TH") ? "THB" : "INR") as "INR" | "THB";
+      const qid = `LQ-${Date.now().toString(36).toUpperCase()}`;
+      const vehicle =
+        serviceType || (weight > 40 ? "VAN" : "MOTORCYCLE");
+      return {
+        quoteId: qid,
+        quotationId: qid,
+        amount,
+        currency,
+        vehicleType: vehicle,
+        serviceType: vehicle,
+        etaMinutes: 35 + Math.min(40, Math.round(weight)),
+        distanceMeters: 5200,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        stops: [
+          { stopId: "stop_1", address: "Pickup" },
+          { stopId: "stop_2", address: "Dropoff" },
+        ],
+        priceBreakdown: { total: String(amount), currency },
+        mock: true,
+      };
+    };
+
+    if (action === "quoteDirect") {
+      const quote = mockQuoteFrom(Number(b.weightKg) || 5, String(b.serviceType || ""));
+      return { quote, pickup: b.pickup, dropoff: b.dropoff, warning: "Demo mock quote" };
+    }
+
+    if (action === "bookDirect") {
+      const quote = mockQuoteFrom(Number(b.weightKg) || 5, String(b.serviceType || "MOTORCYCLE"));
+      const pickup = b.pickup as Record<string, unknown> | undefined;
+      const dropoff = b.dropoff as Record<string, unknown> | undefined;
+      const orderId = `LM-${Date.now().toString(36).toUpperCase()}`;
+      const delivery = {
+        id: id("lm"),
+        provider: "LALAMOVE",
+        status: "BOOKED",
+        externalOrderId: orderId,
+        quotationId: quote.quotationId,
+        quoteAmount: quote.amount,
+        currency: quote.currency,
+        vehicleType: quote.vehicleType,
+        trackingUrl: `https://www.lalamove.com/tracking/${orderId}`,
+        pickupAddress: pickup ? String(pickup.address || "") : null,
+        dropoffAddress: dropoff ? String(dropoff.address || "") : null,
+        pickupLat: pickup?.lat != null ? Number(pickup.lat) : null,
+        pickupLng: pickup?.lng != null ? Number(pickup.lng) : null,
+        dropoffLat: dropoff?.lat != null ? Number(dropoff.lat) : null,
+        dropoffLng: dropoff?.lng != null ? Number(dropoff.lng) : null,
+        pickupContact: b.senderName ? String(b.senderName) : null,
+        pickupPhone: b.senderPhone ? String(b.senderPhone) : null,
+        dropoffContact: b.recipientName ? String(b.recipientName) : null,
+        dropoffPhone: b.recipientPhone ? String(b.recipientPhone) : null,
+        driverId: null,
+        driverName: null,
+        driverPhone: null,
+        providerStatus: "ASSIGNING_DRIVER",
+        priorityFee: null,
+        notes: (b.notes as string) || null,
+        bookedAt: new Date().toISOString(),
+        completedAt: null,
+        pickupWarehouseId: null,
+        customerId: null,
+        shipmentId: null,
+        bagIds: [] as string[],
+      };
+      state.lastMileDeliveries.unshift(delivery);
+      return { delivery, live: false, warning: "Demo mock booking" };
     }
 
     if (action === "quote" || action === "book") {
@@ -1909,18 +2202,7 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
         }
       }
       const weight = bags.reduce((s, x) => s + (x.bag.weightKg || 0), 0);
-      const market = state.lalamove.market;
-      const base = market.startsWith("TH") ? 89 : 149;
-      const perKg = market.startsWith("TH") ? 12 : 18;
-      const amount = Math.round((base + Math.max(0, weight) * perKg) * 100) / 100;
-      const currency = (market.startsWith("TH") ? "THB" : "INR") as "INR" | "THB";
-      const quote = {
-        quoteId: `LQ-${Date.now().toString(36).toUpperCase()}`,
-        amount,
-        currency,
-        vehicleType: weight > 40 ? "van" : "motorcycle",
-        etaMinutes: 35 + Math.min(40, Math.round(weight)),
-      };
+      const quote = mockQuoteFrom(weight, String(b.serviceType || ""));
       const wh = warehouseMap();
       const parties = partyMap();
       const warehouse = bags[0]
@@ -1961,6 +2243,7 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
             : null,
           weightKg: weight,
           bagCount: bags.length,
+          warning: "Demo mock quote",
         };
       }
 
@@ -1976,6 +2259,7 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
         provider: "LALAMOVE",
         status: "BOOKED",
         externalOrderId: orderId,
+        quotationId: quote.quotationId,
         quoteAmount:
           b.quoteAmount != null ? Number(b.quoteAmount) : quote.amount,
         currency: quote.currency,
@@ -1994,6 +2278,15 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
         pickupLng: warehouse?.longitude ?? null,
         dropoffLat: customer?.latitude ?? null,
         dropoffLng: customer?.longitude ?? null,
+        pickupContact: warehouse?.name || null,
+        pickupPhone: null,
+        dropoffContact: customer?.name || null,
+        dropoffPhone: customer?.phone || null,
+        driverId: null,
+        driverName: null,
+        driverPhone: null,
+        providerStatus: "ASSIGNING_DRIVER",
+        priorityFee: null,
         notes: (b.notes as string) || null,
         bookedAt: new Date().toISOString(),
         completedAt: null,
@@ -2011,13 +2304,37 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
           bags: bags.map((x) => ({ bag: enrichBag(x.bag, x.shipment) })),
         },
         quote,
+        live: false,
+        warning: "Demo mock booking",
       };
+    }
+
+    if (action === "refresh" || action === "priorityFee" || action === "changeDriver") {
+      const d = state.lastMileDeliveries.find((x) => x.id === b.id);
+      if (!d) throw Object.assign(new Error("Not found"), { status: 404 });
+      if (action === "priorityFee") {
+        d.priorityFee = Number(b.amount || 0);
+      }
+      if (action === "changeDriver") {
+        d.driverId = null;
+        d.driverName = null;
+        d.driverPhone = null;
+        d.providerStatus = "ASSIGNING_DRIVER";
+      }
+      if (action === "refresh") {
+        d.providerStatus = d.providerStatus || "ON_GOING";
+        d.driverName = d.driverName || "Demo Driver";
+        d.driverPhone = d.driverPhone || "+66899999999";
+        d.driverId = d.driverId || "drv_demo";
+      }
+      return { delivery: d, live: false };
     }
 
     if (action === "complete") {
       const d = state.lastMileDeliveries.find((x) => x.id === b.id);
       if (!d) throw Object.assign(new Error("Not found"), { status: 404 });
       d.status = "COMPLETED";
+      d.providerStatus = "COMPLETED";
       d.completedAt = new Date().toISOString();
       for (const s of state.shipments) {
         for (const bag of s.bags) {
@@ -2051,6 +2368,7 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       const d = state.lastMileDeliveries.find((x) => x.id === b.id);
       if (!d) throw Object.assign(new Error("Not found"), { status: 404 });
       d.status = "CANCELLED";
+      d.providerStatus = "CANCELED";
       return { delivery: d };
     }
 

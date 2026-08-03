@@ -141,7 +141,8 @@ export default function TransportPage() {
   } | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const [apiKey, setApiKey] = useState("");
-  const [market, setMarket] = useState("TH_BKK");
+  const [apiSecret, setApiSecret] = useState("");
+  const [market, setMarket] = useState("TH");
   const [bookOpen, setBookOpen] = useState(false);
   const [bookBagIds, setBookBagIds] = useState<string[]>([]);
   const [quote, setQuote] = useState<{
@@ -250,16 +251,22 @@ export default function TransportPage() {
       alert("Paste your Lalamove API key");
       return;
     }
+    if (!apiSecret.trim()) {
+      alert("Paste your Lalamove API secret (Partner Portal → Developers)");
+      return;
+    }
     setBusy(true);
     try {
       await apiPost("/api/lalamove", {
         action: "connect",
         apiKey: apiKey.trim(),
+        apiSecret: apiSecret.trim(),
         market,
         sandbox: true,
       });
       setConnectOpen(false);
       setApiKey("");
+      setApiSecret("");
       await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to connect");
@@ -383,6 +390,12 @@ export default function TransportPage() {
         subtitle="Long-haul to destination warehouse, then Lalamove last-mile to the end customer"
         actions={
           <>
+            <Link href="/lalamove">
+              <Button variant="secondary">
+                <Bike size={16} />
+                Lalamove hub
+              </Button>
+            </Link>
             <Button
               variant="secondary"
               onClick={() => setConnectOpen(true)}
@@ -937,9 +950,12 @@ export default function TransportPage() {
         title="Connect Lalamove"
       >
         <p className="mb-3 text-sm text-[var(--muted)]">
-          Link your Lalamove partner API so you can book last-mile from the
-          destination warehouse to the end customer. Sandbox mode works offline
-          for demos.
+          Prefer the{" "}
+          <Link href="/lalamove" className="text-[var(--accent)] underline">
+            Lalamove hub
+          </Link>{" "}
+          for saved addresses, live tracking, and full booking. Paste key + secret
+          from Partner Portal → Developers.
         </p>
         {lalamove.settings.connected ? (
           <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
@@ -954,21 +970,25 @@ export default function TransportPage() {
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder={
-              lalamove.settings.connected
-                ? "Enter new key to rotate"
-                : "pk_test_… or live key"
-            }
+            placeholder="pk_test_… or pk_prod_…"
+          />
+          <Input
+            label="API secret"
+            type="password"
+            value={apiSecret}
+            onChange={(e) => setApiSecret(e.target.value)}
+            placeholder="sk_test_… or sk_prod_…"
           />
           <Select
             label="Market"
             value={market}
             onChange={(e) => setMarket(e.target.value)}
           >
-            <option value="TH_BKK">Thailand · Bangkok</option>
-            <option value="TH_CNX">Thailand · Chiang Mai</option>
-            <option value="IN_DEL">India · Delhi NCR</option>
-            <option value="IN_BOM">India · Mumbai</option>
+            <option value="TH">Thailand (TH)</option>
+            <option value="IN">India (IN)</option>
+            <option value="HK">Hong Kong (HK)</option>
+            <option value="SG">Singapore (SG)</option>
+            <option value="MY">Malaysia (MY)</option>
           </Select>
         </div>
         <div className="mt-5 flex flex-wrap justify-end gap-2">
@@ -985,8 +1005,11 @@ export default function TransportPage() {
           <Button variant="secondary" onClick={() => setConnectOpen(false)}>
             Close
           </Button>
-          <Button onClick={connectLalamove} disabled={busy || !apiKey.trim()}>
-            {lalamove.settings.connected ? "Update key" : "Connect"}
+          <Button
+            onClick={connectLalamove}
+            disabled={busy || !apiKey.trim() || !apiSecret.trim()}
+          >
+            {lalamove.settings.connected ? "Update credentials" : "Connect"}
           </Button>
         </div>
       </Modal>

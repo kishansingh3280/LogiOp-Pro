@@ -341,12 +341,36 @@ model AppSetting {
   value String
 }
 
+/** App-owned saved stops for Lalamove (Partner API cannot read consumer-app favorites). */
+model SavedAddress {
+  id          String   @id @default(cuid())
+  label       String
+  contactName String?
+  phone       String?
+  address     String
+  city        String?
+  country     String?
+  latitude    Float?
+  longitude   Float?
+  placeId     String?
+  kind        String   @default("BOTH") // PICKUP | DROPOFF | BOTH
+  notes       String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([kind])
+  @@index([isActive])
+}
+
 /** Last-mile delivery (e.g. Lalamove) from destination warehouse → end customer */
 model LastMileDelivery {
   id               String    @id @default(cuid())
   provider         String    @default("LALAMOVE")
   status           String    @default("DRAFT") // DRAFT | QUOTED | BOOKED | COMPLETED | CANCELLED
   externalOrderId  String?
+  quotationId      String?
   quoteAmount      Float?
   currency         Currency  @default(THB)
   vehicleType      String?
@@ -357,6 +381,15 @@ model LastMileDelivery {
   pickupLng        Float?
   dropoffLat       Float?
   dropoffLng       Float?
+  pickupContact    String?
+  pickupPhone      String?
+  dropoffContact   String?
+  dropoffPhone     String?
+  driverId         String?
+  driverName       String?
+  driverPhone      String?
+  providerStatus   String?   // ASSIGNING_DRIVER | ON_GOING | PICKED_UP | COMPLETED | CANCELED | …
+  priorityFee      Float?
   notes            String?
   bookedAt         DateTime?
   completedAt      DateTime?
@@ -374,6 +407,7 @@ model LastMileDelivery {
   @@index([status])
   @@index([customerId])
   @@index([shipmentId])
+  @@index([externalOrderId])
 }
 
 model LastMileDeliveryBag {

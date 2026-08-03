@@ -15,6 +15,7 @@ import {
   MoreHorizontal,
   Receipt,
   Tags,
+  Bike,
 } from "lucide-react";
 import { useState } from "react";
 import clsx from "clsx";
@@ -29,6 +30,7 @@ const NAV = [
   { href: "/shipments", label: "Shipments", icon: Package },
   { href: "/bags", label: "Bags", icon: Boxes },
   { href: "/transport", label: "Transport", icon: Truck },
+  { href: "/lalamove", label: "Lalamove", icon: Bike },
   { href: "/warehouses", label: "Warehouses", icon: Warehouse },
 ];
 
@@ -193,6 +195,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               >
                 <Truck size={18} className="text-[var(--accent)]" />
                 Transport
+              </Link>
+              <Link
+                href="/lalamove"
+                onClick={() => setMoreOpen(false)}
+                className="flex items-center gap-3 rounded-xl border border-[var(--line)] px-4 py-3"
+              >
+                <Bike size={18} className="text-[var(--accent)]" />
+                Lalamove
               </Link>
               <Link
                 href="/warehouses"
