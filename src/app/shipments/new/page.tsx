@@ -553,6 +553,20 @@ export default function NewShipmentPage() {
                             </button>
                           </div>
                         ))}
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-xs text-[var(--accent)]"
+                          onClick={() =>
+                            updateBag(i, {
+                              items: [
+                                ...b.items,
+                                { name: "", quantity: "1", unit: "pcs" },
+                              ],
+                            })
+                          }
+                        >
+                          <Plus size={12} /> Add line
+                        </button>
                       </div>
                     </div>
                     <div className="lg:col-span-3">
