@@ -8,11 +8,11 @@ datasource db {
 }
 
 enum PartyType {
-  CUSTOMER_IN
-  CUSTOMER_TH
-  CARRY_PERSON
-  AGENT
-  OTHER
+  LOGISTIC_CUSTOMER
+  BUYER
+  CARRIER
+  TRANSPORTER
+  INDIVIDUAL
 }
 
 enum Currency {

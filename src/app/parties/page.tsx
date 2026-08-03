@@ -13,7 +13,7 @@ import {
   Badge,
   EmptyState,
 } from "@/components/ui";
-import { PARTY_TYPE_LABELS } from "@/lib/utils";
+import { PARTY_TYPE_LABELS, PARTY_TYPE_DESCRIPTIONS } from "@/lib/utils";
 import { apiGet, apiPost, apiPatch } from "@/lib/client-api";
 
 type Party = {
@@ -33,7 +33,7 @@ type Party = {
 
 const emptyForm = {
   name: "",
-  type: "CUSTOMER_IN",
+  type: "LOGISTIC_CUSTOMER",
   phone: "",
   email: "",
   city: "",
@@ -115,30 +115,31 @@ export default function PartiesPage() {
     <div>
       <PageHeader
         title="Parties"
-        subtitle="Customers, carry persons and agents — with per-party FX quotes"
+        subtitle="Logistic customers, buyers, carriers, transporters & individuals"
         actions={<Button onClick={openCreate}>Add party</Button>}
       />
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {["ALL", "CUSTOMER_IN", "CUSTOMER_TH", "CARRY_PERSON", "AGENT", "OTHER"].map(
-          (t) => (
-            <button
-              key={t}
-              onClick={() => setFilter(t)}
-              className={`rounded-lg px-3 py-1.5 text-sm ${
-                filter === t
-                  ? "bg-[var(--accent)] text-white"
-                  : "border border-[var(--line)] bg-[var(--panel)] text-[var(--muted)]"
-              }`}
-            >
-              {t === "ALL" ? "All" : PARTY_TYPE_LABELS[t]}
-            </button>
-          )
-        )}
+        {["ALL", ...Object.keys(PARTY_TYPE_LABELS)].map((t) => (
+          <button
+            key={t}
+            onClick={() => setFilter(t)}
+            className={`rounded-lg px-3 py-1.5 text-sm ${
+              filter === t
+                ? "bg-[var(--accent)] text-white"
+                : "border border-[var(--line)] bg-[var(--panel)] text-[var(--muted)]"
+            }`}
+          >
+            {t === "ALL" ? "All" : PARTY_TYPE_LABELS[t]}
+          </button>
+        ))}
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState title="No parties yet" hint="Add India/Thai customers or carry persons." />
+        <EmptyState
+          title="No parties yet"
+          hint="Add a logistic customer, buyer, carrier, transporter or individual."
+        />
       ) : (
         <Card className="overflow-x-auto p-0">
           <table className="data">
@@ -149,7 +150,7 @@ export default function PartiesPage() {
                 <th>Location</th>
                 <th>Quoted FX</th>
                 <th>Default</th>
-                <th>Carry rate</th>
+                <th>Carry / transport rate</th>
                 <th></th>
               </tr>
             </thead>
@@ -228,6 +229,9 @@ export default function PartiesPage() {
               </option>
             ))}
           </Select>
+          <div className="sm:col-span-2 rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--muted)]">
+            {PARTY_TYPE_DESCRIPTIONS[form.type] || ""}
+          </div>
           <Input
             label="Phone"
             value={form.phone}
@@ -273,7 +277,11 @@ export default function PartiesPage() {
             <option value="THB">THB (฿)</option>
           </Select>
           <Input
-            label="Carry rate (₹/kg)"
+            label={
+              form.type === "TRANSPORTER" || form.type === "CARRIER"
+                ? "Rate (₹/kg) — optional"
+                : "Carry rate (₹/kg) — optional"
+            }
             type="number"
             step="0.01"
             value={form.carryRatePerKg}

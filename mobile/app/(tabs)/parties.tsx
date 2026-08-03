@@ -37,7 +37,7 @@ export default function PartiesScreen() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: "",
-    type: "CUSTOMER_IN",
+    type: "LOGISTIC_CUSTOMER",
     phone: "",
     exchangeRate: "",
     quoteMode: "INR_PER_THB",
@@ -74,7 +74,7 @@ export default function PartiesScreen() {
       setShowForm(false);
       setForm({
         name: "",
-        type: "CUSTOMER_IN",
+        type: "LOGISTIC_CUSTOMER",
         phone: "",
         exchangeRate: "",
         quoteMode: "INR_PER_THB",
@@ -158,7 +158,7 @@ export default function PartiesScreen() {
       ) : null}
 
       <View style={[styles.rowWrap, { marginTop: 12 }]}>
-        {["ALL", "CUSTOMER_IN", "CUSTOMER_TH", "CARRY_PERSON", "AGENT"].map((t) => (
+        {["ALL", ...Object.keys(PARTY_TYPE_LABELS)].map((t) => (
           <Chip
             key={t}
             label={t === "ALL" ? "All" : PARTY_TYPE_LABELS[t]}

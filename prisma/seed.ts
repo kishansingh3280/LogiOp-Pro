@@ -33,27 +33,40 @@ async function main() {
   const parties = [
     {
       name: "Rajesh Traders",
-      type: "CUSTOMER_IN" as const,
+      type: "LOGISTIC_CUSTOMER" as const,
       city: "Delhi",
       country: "India",
       exchangeRate: 2.45,
       quoteMode: "INR_PER_THB",
       defaultCurrency: "INR" as const,
       phone: "+91-9876543210",
+      notes: "Sends goods India → Thailand",
     },
     {
       name: "Siam Gifts Co.",
-      type: "CUSTOMER_TH" as const,
+      type: "LOGISTIC_CUSTOMER" as const,
       city: "Bangkok",
       country: "Thailand",
       exchangeRate: 2.42,
       quoteMode: "INR_PER_THB",
       defaultCurrency: "THB" as const,
       phone: "+66-812345678",
+      notes: "Receives / sends Thai side logistics",
     },
     {
-      name: "Amit Sharma (Carry)",
-      type: "CARRY_PERSON" as const,
+      name: "Bangkok Boutique (Buyer)",
+      type: "BUYER" as const,
+      city: "Bangkok",
+      country: "Thailand",
+      exchangeRate: 2.5,
+      quoteMode: "INR_PER_THB",
+      defaultCurrency: "THB" as const,
+      phone: "+66-899001122",
+      notes: "Buys our own products — invoices later",
+    },
+    {
+      name: "Amit Sharma (Carrier)",
+      type: "CARRIER" as const,
       city: "Delhi",
       country: "India",
       carryRatePerKg: 200,
@@ -62,10 +75,19 @@ async function main() {
     },
     {
       name: "Bangkok Air Agent",
-      type: "AGENT" as const,
+      type: "TRANSPORTER" as const,
       city: "Bangkok",
       country: "Thailand",
       defaultCurrency: "THB" as const,
+      notes: "Air cargo company",
+    },
+    {
+      name: "Uncle Ramesh",
+      type: "INDIVIDUAL" as const,
+      city: "Jaipur",
+      country: "India",
+      defaultCurrency: "INR" as const,
+      notes: "Personal ledger",
     },
   ];
 
@@ -73,10 +95,16 @@ async function main() {
     const existing = await prisma.party.findFirst({ where: { name: p.name } });
     if (!existing) {
       await prisma.party.create({ data: p });
+    } else {
+      // Keep names in sync with new type taxonomy on re-seed
+      await prisma.party.update({
+        where: { id: existing.id },
+        data: { type: p.type, notes: p.notes ?? existing.notes },
+      });
     }
   }
 
-  console.log("Seed complete: warehouses + sample parties");
+  console.log("Seed complete: warehouses + sample parties (new types)");
 }
 
 main()

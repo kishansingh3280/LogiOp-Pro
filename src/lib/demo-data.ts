@@ -98,12 +98,12 @@ function seed(): DemoState {
   const rajesh: DemoParty = {
     id: "p_rajesh",
     name: "Rajesh Traders",
-    type: "CUSTOMER_IN",
+    type: "LOGISTIC_CUSTOMER",
     phone: "+91-9876543210",
     email: null,
     city: "Delhi",
     country: "India",
-    notes: null,
+    notes: "Sends goods India → Thailand",
     exchangeRate: 2.45,
     quoteMode: "INR_PER_THB",
     defaultCurrency: "INR",
@@ -113,13 +113,28 @@ function seed(): DemoState {
   const siam: DemoParty = {
     id: "p_siam",
     name: "Siam Gifts Co.",
-    type: "CUSTOMER_TH",
+    type: "LOGISTIC_CUSTOMER",
     phone: "+66-812345678",
     email: null,
     city: "Bangkok",
     country: "Thailand",
-    notes: null,
+    notes: "Thai-side logistic customer",
     exchangeRate: 2.42,
+    quoteMode: "INR_PER_THB",
+    defaultCurrency: "THB",
+    carryRatePerKg: null,
+    isActive: true,
+  };
+  const buyer: DemoParty = {
+    id: "p_buyer",
+    name: "Bangkok Boutique (Buyer)",
+    type: "BUYER",
+    phone: "+66-899001122",
+    email: null,
+    city: "Bangkok",
+    country: "Thailand",
+    notes: "Buys our own products",
+    exchangeRate: 2.5,
     quoteMode: "INR_PER_THB",
     defaultCurrency: "THB",
     carryRatePerKg: null,
@@ -127,8 +142,8 @@ function seed(): DemoState {
   };
   const amit: DemoParty = {
     id: "p_amit",
-    name: "Amit Sharma (Carry)",
-    type: "CARRY_PERSON",
+    name: "Amit Sharma (Carrier)",
+    type: "CARRIER",
     phone: "+91-9988776655",
     email: null,
     city: "Delhi",
@@ -138,6 +153,36 @@ function seed(): DemoState {
     quoteMode: "INR_PER_THB",
     defaultCurrency: "INR",
     carryRatePerKg: 200,
+    isActive: true,
+  };
+  const airAgent: DemoParty = {
+    id: "p_air",
+    name: "Bangkok Air Agent",
+    type: "TRANSPORTER",
+    phone: null,
+    email: null,
+    city: "Bangkok",
+    country: "Thailand",
+    notes: "Air cargo company",
+    exchangeRate: null,
+    quoteMode: "INR_PER_THB",
+    defaultCurrency: "THB",
+    carryRatePerKg: null,
+    isActive: true,
+  };
+  const uncle: DemoParty = {
+    id: "p_uncle",
+    name: "Uncle Ramesh",
+    type: "INDIVIDUAL",
+    phone: null,
+    email: null,
+    city: "Jaipur",
+    country: "India",
+    notes: "Personal ledger",
+    exchangeRate: null,
+    quoteMode: "INR_PER_THB",
+    defaultCurrency: "INR",
+    carryRatePerKg: null,
     isActive: true,
   };
 
@@ -188,7 +233,7 @@ function seed(): DemoState {
     direction: "YOU_GOT",
     amount: 30000,
     currency: "INR",
-    description: "Transport payment (CARRY_PERSON) — 150 kg × 200 (demo)",
+    description: "Transport payment (CARRIER) — 150 kg × 200 (demo)",
     entryDate: new Date().toISOString(),
     fxRate: null,
     fxAmount: null,
@@ -198,7 +243,7 @@ function seed(): DemoState {
   };
 
   return {
-    parties: [rajesh, siam, amit],
+    parties: [rajesh, siam, buyer, amit, airAgent, uncle],
     entries: [entryAdvance, entryThb, entryCarry],
     warehouses: [delhi, kol, jai, mum, bkk],
     shipments: [

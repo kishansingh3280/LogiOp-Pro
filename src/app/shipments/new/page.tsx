@@ -11,6 +11,7 @@ import {
   Select,
   Textarea,
 } from "@/components/ui";
+import { SHIPMENT_PARTY_TYPES } from "@/lib/utils";
 import { apiGet, apiPost } from "@/lib/client-api";
 
 type Warehouse = { id: string; name: string; city: string };
@@ -107,8 +108,8 @@ export default function NewShipmentPage() {
     }
   }
 
-  const customers = parties.filter(
-    (p) => p.type === "CUSTOMER_IN" || p.type === "CUSTOMER_TH"
+  const customers = parties.filter((p) =>
+    (SHIPMENT_PARTY_TYPES as readonly string[]).includes(p.type)
   );
 
   if (loadError) {

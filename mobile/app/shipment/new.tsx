@@ -66,8 +66,8 @@ export default function NewShipmentScreen() {
     }
   }
 
-  const customers = parties.filter(
-    (p) => p.type === "CUSTOMER_IN" || p.type === "CUSTOMER_TH"
+  const customers = parties.filter((p) =>
+    ["LOGISTIC_CUSTOMER", "BUYER"].includes(p.type)
   );
 
   return (

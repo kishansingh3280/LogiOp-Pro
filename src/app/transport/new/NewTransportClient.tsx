@@ -11,7 +11,7 @@ import {
   Select,
   Textarea,
 } from "@/components/ui";
-import { TRANSPORT_MODE_LABELS, formatMoney } from "@/lib/utils";
+import { TRANSPORT_MODE_LABELS, TRANSPORT_PARTY_TYPES, formatMoney } from "@/lib/utils";
 import { apiGet, apiPost } from "@/lib/client-api";
 
 type Bag = {
@@ -67,8 +67,8 @@ export default function NewTransportClient() {
       );
   }, []);
 
-  const carriers = parties.filter(
-    (p) => p.type === "CARRY_PERSON" || p.type === "AGENT" || p.type === "OTHER"
+  const carriers = parties.filter((p) =>
+    (TRANSPORT_PARTY_TYPES as readonly string[]).includes(p.type)
   );
 
   const selectedBags = useMemo(

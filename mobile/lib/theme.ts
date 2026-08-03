@@ -50,9 +50,20 @@ export const TRANSPORT_MODE_LABELS: Record<string, string> = {
 };
 
 export const PARTY_TYPE_LABELS: Record<string, string> = {
-  CUSTOMER_IN: "India customer",
-  CUSTOMER_TH: "Thai customer",
-  CARRY_PERSON: "Carry person",
-  AGENT: "Agent",
-  OTHER: "Other",
+  LOGISTIC_CUSTOMER: "Logistic customer",
+  BUYER: "Buyer",
+  CARRIER: "Carrier",
+  TRANSPORTER: "Transporter",
+  INDIVIDUAL: "Individual",
 };
+
+export const PARTY_TYPE_DESCRIPTIONS: Record<string, string> = {
+  LOGISTIC_CUSTOMER: "Customers who give you goods to transport India ↔ Thailand",
+  BUYER: "Direct buyers of your own products",
+  CARRIER: "Carry persons who transport your bags by hand",
+  TRANSPORTER: "Companies that transport your goods",
+  INDIVIDUAL: "Personal ledger with other people",
+};
+
+export const SHIPMENT_PARTY_TYPES = ["LOGISTIC_CUSTOMER", "BUYER"] as const;
+export const TRANSPORT_PARTY_TYPES = ["CARRIER", "TRANSPORTER"] as const;

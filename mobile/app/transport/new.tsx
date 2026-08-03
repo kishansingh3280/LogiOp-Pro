@@ -49,8 +49,8 @@ export default function NewTransportScreen() {
       .catch((e) => Alert.alert("Error", e.message));
   }, []);
 
-  const carriers = parties.filter(
-    (p) => p.type === "CARRY_PERSON" || p.type === "AGENT" || p.type === "OTHER"
+  const carriers = parties.filter((p) =>
+    ["CARRIER", "TRANSPORTER"].includes(p.type)
   );
 
   const selectedBags = useMemo(
