@@ -72,7 +72,7 @@ export default function NewShipmentPage() {
     itemIndex: number;
   } | null>(null);
   const [newItemOpen, setNewItemOpen] = useState(false);
-  const [newItemBag, setNewItemBag] = useState({
+  const [newItemForm, setNewItemForm] = useState({
     name: "",
     unit: "pcs",
   });
