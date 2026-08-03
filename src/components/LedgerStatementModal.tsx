@@ -142,9 +142,10 @@ export function LedgerStatementModal({
   return (
     <Modal open={open} onClose={onClose} title="Send PDF statement" wide>
       <p className="mb-4 text-sm text-[var(--muted)]">
-        Simple account statement for{" "}
-        <strong className="text-[var(--ink)]">{party.name}</strong> — date,
-        particulars, debit, credit, and balance (INR / THB).
+        Statement for{" "}
+        <strong className="text-[var(--ink)]">{party.name}</strong>. Exchange rate
+        appears only on entries where currency was converted (e.g. entered THB,
+        saved as INR).
       </p>
 
       <div className="grid gap-3 sm:grid-cols-2">

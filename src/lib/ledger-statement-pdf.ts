@@ -15,6 +15,10 @@ export type StatementEntry = {
   currency: Currency;
   description: string | null;
   entryDate: string;
+  /** Present only when entry was converted (entered currency ≠ saved currency). */
+  fxRate?: number | null;
+  fxAmount?: number | null;
+  fxCurrency?: Currency | null;
 };
 
 export type StatementParty = {
@@ -50,6 +54,26 @@ function moneyPlain(amount: number, currency: Currency): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+/** True only when the entry was saved in a different currency than entered. */
+function wasCurrencyConverted(e: StatementEntry): boolean {
+  return (
+    e.fxAmount != null &&
+    e.fxCurrency != null &&
+    e.fxCurrency !== e.currency
+  );
+}
+
+function conversionNote(e: StatementEntry): string | null {
+  if (!wasCurrencyConverted(e) || e.fxAmount == null || e.fxCurrency == null) {
+    return null;
+  }
+  const from = moneyPlain(e.fxAmount, e.fxCurrency);
+  if (e.fxRate != null) {
+    return `Exchanged from ${from} @ ${e.fxRate} (₹ per ฿)`;
+  }
+  return `Exchanged from ${from}`;
 }
 
 function filterEntries(
@@ -202,7 +226,7 @@ export function buildLedgerStatementPdf(options: StatementOptions): jsPDF {
   doc.setTextColor(110, 120, 120);
   doc.setFontSize(7);
   doc.text(
-    "Debit = given / paid for party.   Credit = received from party.",
+    "Debit = given / paid.  Credit = received.  Exchange rate shown only when currency was converted.",
     margin,
     y
   );
@@ -213,9 +237,13 @@ export function buildLedgerStatementPdf(options: StatementOptions): jsPDF {
     if (e.direction === "YOU_GAVE") run[e.currency].gave += e.amount;
     else run[e.currency].got += e.amount;
     const bal = computeBalance(run[e.currency].gave, run[e.currency].got);
+    const note = conversionNote(e);
+    const particulars = [e.description?.trim() || "—", note]
+      .filter(Boolean)
+      .join(" — ");
     return [
       format(new Date(e.entryDate), "dd MMM yy"),
-      e.description?.trim() || "—",
+      particulars,
       e.currency,
       e.direction === "YOU_GAVE" ? moneyPlain(e.amount, e.currency) : "",
       e.direction === "YOU_GOT" ? moneyPlain(e.amount, e.currency) : "",

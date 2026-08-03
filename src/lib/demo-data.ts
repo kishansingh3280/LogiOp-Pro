@@ -214,7 +214,7 @@ function seed(): DemoState {
     currency: "INR",
     description: "Credit advance against goods (demo)",
     entryDate: new Date().toISOString(),
-    fxRate: 2.45,
+    fxRate: null,
     fxAmount: null,
     fxCurrency: null,
     isAutoSynced: false,

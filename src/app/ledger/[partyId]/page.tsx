@@ -476,7 +476,7 @@ export default function PartyLedgerPage({
 
           {conversion && (
             <div className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-4">
-              <div className="font-medium text-[var(--accent-ink)]">Auto converted</div>
+              <div className="font-medium text-[var(--accent-ink)]">Currency conversion</div>
               <div className="mt-1 text-sm">
                 {formatMoney(conversion.original.amount, conversion.original.currency)} @{" "}
                 {form.fxRate} ={" "}
@@ -485,7 +485,7 @@ export default function PartyLedgerPage({
                 </strong>
               </div>
               <div className="mt-3 text-sm text-[var(--accent-ink)]">
-                Save this entry as THB or INR?
+                How do you want to save this entry?
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
@@ -497,7 +497,7 @@ export default function PartyLedgerPage({
                       : "border border-[var(--line)] bg-white"
                   }`}
                 >
-                  As {conversion.original.currency} (
+                  As {conversion.original.currency} — no exchange (
                   {formatMoney(conversion.original.amount, conversion.original.currency)})
                 </button>
                 <button
@@ -509,10 +509,14 @@ export default function PartyLedgerPage({
                       : "border border-[var(--line)] bg-white"
                   }`}
                 >
-                  As {conversion.converted.to} (
+                  Convert to {conversion.converted.to} (
                   {formatMoney(conversion.converted.value, conversion.converted.to)})
                 </button>
               </div>
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                Exchange rate is stored (and shown on PDF) only when you convert to the other
+                currency.
+              </p>
             </div>
           )}
 
