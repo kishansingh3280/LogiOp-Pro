@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Fraunces, Source_Sans_3 } from "next/font/google";
 import { AppShell } from "@/components/AppShell";
 import "./globals.css";
@@ -18,7 +18,29 @@ const body = Source_Sans_3({
 export const metadata: Metadata = {
   title: "LogiOp Pro — India ↔ Thailand logistics & ledger",
   description:
-    "Enterprise ledger, FX quotes, bag tracking and transport management for India–Thailand cargo.",
+    "Work from Chrome on PC or phone: ledger, FX quotes, bag tracking and transport for India–Thailand cargo.",
+  applicationName: "LogiOp Pro",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "LogiOp Pro",
+    statusBarStyle: "default",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icon-192.png", sizes: "192x192" }],
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: "#0f6e56",
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

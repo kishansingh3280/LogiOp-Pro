@@ -12,6 +12,7 @@ import {
   Truck,
   Menu,
   X,
+  MoreHorizontal,
 } from "lucide-react";
 import { useState } from "react";
 import clsx from "clsx";
@@ -21,17 +22,33 @@ const NAV = [
   { href: "/parties", label: "Parties", icon: Users },
   { href: "/ledger", label: "Ledger", icon: BookOpen },
   { href: "/shipments", label: "Shipments", icon: Package },
-  { href: "/bags", label: "Bag tracker", icon: Boxes },
+  { href: "/bags", label: "Bags", icon: Boxes },
   { href: "/transport", label: "Transport", icon: Truck },
   { href: "/warehouses", label: "Warehouses", icon: Warehouse },
 ];
 
+/** Bottom tabs on phone — same idea as the Android app */
+const MOBILE_TABS = [
+  { href: "/", label: "Home", icon: LayoutDashboard },
+  { href: "/ledger", label: "Ledger", icon: BookOpen },
+  { href: "/shipments", label: "Ship", icon: Package },
+  { href: "/bags", label: "Bags", icon: Boxes },
+  { href: "/parties", label: "Parties", icon: Users },
+];
+
+function isActive(pathname: string, href: string) {
+  if (href === "/") return pathname === "/";
+  return pathname.startsWith(href);
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   return (
     <div className="min-h-screen flex bg-[var(--bg)] text-[var(--ink)]">
+      {/* Desktop / tablet sidebar */}
       <aside
         className={clsx(
           "fixed inset-y-0 left-0 z-40 w-64 border-r border-[var(--line)] bg-[var(--panel)] transition-transform lg:static lg:translate-x-0",
@@ -56,10 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="flex flex-col gap-1 p-3">
           {NAV.map((item) => {
-            const active =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname.startsWith(item.href);
+            const active = isActive(pathname, item.href);
             const Icon = item.icon;
             return (
               <Link
@@ -88,8 +102,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         />
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-[var(--line)] bg-[var(--panel)]/90 px-4 backdrop-blur lg:px-8">
+      <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
+        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-[var(--line)] bg-[var(--panel)]/95 px-4 backdrop-blur lg:px-8">
           <button
             className="lg:hidden"
             onClick={() => setOpen(true)}
@@ -97,12 +111,87 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             <Menu size={20} />
           </button>
-          <div className="text-sm text-[var(--muted)]">
-            Cross-border cargo · ledger · FX
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-display text-base lg:hidden">LogiOp Pro</div>
+            <div className="hidden text-sm text-[var(--muted)] lg:block">
+              Web app · works on PC & phone Chrome
+            </div>
           </div>
+          <button
+            className="rounded-lg border border-[var(--line)] px-2.5 py-1.5 text-xs text-[var(--muted)] lg:hidden"
+            onClick={() => setMoreOpen(true)}
+            aria-label="More"
+          >
+            <MoreHorizontal size={16} />
+          </button>
         </header>
-        <main className="flex-1 px-4 py-6 lg:px-8">{children}</main>
+
+        <main className="flex-1 px-4 py-5 lg:px-8 lg:py-6">{children}</main>
       </div>
+
+      {/* Phone bottom tabs — Android-app style */}
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--line)] bg-[var(--panel)]/95 backdrop-blur lg:hidden safe-bottom">
+        <div className="mx-auto flex max-w-lg items-stretch justify-between px-1 pb-[env(safe-area-inset-bottom)]">
+          {MOBILE_TABS.map((item) => {
+            const active = isActive(pathname, item.href);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={clsx(
+                  "flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium",
+                  active ? "text-[var(--accent)]" : "text-[var(--muted)]"
+                )}
+              >
+                <Icon size={20} />
+                <span className="truncate">{item.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
+
+      {/* More sheet: transport + warehouses */}
+      {moreOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setMoreOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 rounded-t-2xl border border-[var(--line)] bg-[var(--panel)] p-4 pb-8 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="font-display text-lg">More</div>
+              <button onClick={() => setMoreOpen(false)} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="grid gap-2">
+              <Link
+                href="/transport"
+                onClick={() => setMoreOpen(false)}
+                className="flex items-center gap-3 rounded-xl border border-[var(--line)] px-4 py-3"
+              >
+                <Truck size={18} className="text-[var(--accent)]" />
+                Transport
+              </Link>
+              <Link
+                href="/warehouses"
+                onClick={() => setMoreOpen(false)}
+                className="flex items-center gap-3 rounded-xl border border-[var(--line)] px-4 py-3"
+              >
+                <Warehouse size={18} className="text-[var(--accent)]" />
+                Warehouses
+              </Link>
+              <Link
+                href="/shipments/new"
+                onClick={() => setMoreOpen(false)}
+                className="flex items-center gap-3 rounded-xl bg-[var(--accent)] px-4 py-3 text-white"
+              >
+                <Package size={18} />
+                New shipment
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

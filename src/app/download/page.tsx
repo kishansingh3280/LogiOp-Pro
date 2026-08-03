@@ -1,44 +1,35 @@
-import type { Metadata } from "next";
-import Link from "next/link";
+"use client";
 
-export const metadata: Metadata = {
-  title: "Download LogiOp Pro Android APK",
-  description: "Download the LogiOp Pro Android app APK",
-};
+import Link from "next/link";
 
 export default function DownloadPage() {
   return (
-    <div className="mx-auto max-w-xl px-4 py-16">
-      <h1 className="font-display text-3xl tracking-tight">Download Android app</h1>
-      <p className="mt-3 text-[var(--muted)]">
-        LogiOp Pro for Android — works offline in Demo mode (no server needed).
+    <div className="mx-auto max-w-xl px-4 py-10">
+      <h1 className="font-display text-3xl tracking-tight">Web first</h1>
+      <p className="mt-3 text-[var(--muted)] leading-relaxed">
+        We are focusing on the <strong>Chrome web app</strong> (PC + phone browser)
+        until every feature is perfect. The Android APK will be rebuilt after that.
       </p>
 
-      <a
-        href="/downloads/LogiOp-Pro.apk"
-        className="mt-8 inline-flex w-full items-center justify-center rounded-xl bg-[var(--accent)] px-5 py-4 text-lg font-semibold text-white hover:bg-[var(--accent-hover)]"
-        download
+      <Link
+        href="/"
+        className="mt-8 inline-flex w-full items-center justify-center rounded-xl bg-[var(--accent)] px-5 py-4 text-lg font-semibold text-white"
       >
-        Download LogiOp-Pro.apk
-      </a>
+        Open LogiOp Pro web app
+      </Link>
 
-      <div className="mt-8 space-y-3 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 text-sm leading-relaxed">
-        <p className="font-semibold">How to install (beginner):</p>
-        <ol className="list-decimal space-y-2 pl-5 text-[var(--muted)]">
-          <li>On your Android phone, open this page and tap Download.</li>
-          <li>If Chrome warns “file may be harmful”, tap <strong>Download anyway</strong>.</li>
-          <li>Open the downloaded file.</li>
-          <li>If asked, allow <strong>Install unknown apps</strong> for Chrome/Files.</li>
-          <li>Tap Install → Open.</li>
-          <li>App opens with Demo mode ON — sample ledger & bags ready to explore.</li>
+      <div className="mt-8 space-y-3 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 text-sm leading-relaxed text-[var(--muted)]">
+        <p className="font-semibold text-[var(--ink)]">How to use on phone</p>
+        <ol className="list-decimal space-y-2 pl-5">
+          <li>Run the app on your PC (`npm run dev`).</li>
+          <li>On phone Chrome, open <code>http://YOUR-PC-IP:3000</code>.</li>
+          <li>Use bottom tabs just like the Android app.</li>
+          <li>Chrome menu → Add to Home screen (optional).</li>
         </ol>
+        <p className="pt-2">
+          Use <strong>Chrome</strong> or Edge — not Internet Explorer.
+        </p>
       </div>
-
-      <p className="mt-6 text-sm text-[var(--muted)]">
-        <Link href="/" className="text-[var(--accent)]">
-          ← Back to web app
-        </Link>
-      </p>
     </div>
   );
 }
