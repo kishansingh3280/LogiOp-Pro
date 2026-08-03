@@ -153,6 +153,7 @@ export default function PartyLedgerPage({
     let postCurrency: "INR" | "THB" = form.currency;
     let fxAmount: number | null = null;
     let fxCurrency: "INR" | "THB" | null = null;
+    let postFxRate: number | null = null;
 
     if (conversion && rateNum) {
       if (!saveAs) {
@@ -160,15 +161,16 @@ export default function PartyLedgerPage({
         return;
       }
       if (saveAs === form.currency) {
+        // Entered as-is — keep the amount only, no FX note on the entry
         postAmount = conversion.original.amount;
         postCurrency = conversion.original.currency;
-        fxAmount = conversion.converted.value;
-        fxCurrency = conversion.converted.to;
       } else {
+        // Actually converted to the other currency
         postAmount = conversion.converted.value;
         postCurrency = conversion.converted.to;
         fxAmount = conversion.original.amount;
         fxCurrency = conversion.original.currency;
+        postFxRate = rateNum;
       }
     }
 
@@ -181,7 +183,7 @@ export default function PartyLedgerPage({
         currency: postCurrency,
         description: form.description,
         entryDate: form.entryDate,
-        fxRate: rateNum,
+        fxRate: postFxRate,
         fxAmount,
         fxCurrency,
       });

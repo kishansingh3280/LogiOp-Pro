@@ -39,8 +39,6 @@ export function LedgerStatementModal({
       entries,
       fromDate: fromDate || null,
       toDate: toDate || null,
-      businessNote:
-        "India ↔ Thailand cargo & FX ledger. Debit increases receivable; credit reduces it.",
     }),
     [party, entries, fromDate, toDate]
   );
@@ -101,7 +99,7 @@ export function LedgerStatementModal({
       const summary = buildStatementSummaryText(options);
       const wa = party.phone ? phoneToWhatsApp(party.phone) : null;
       const text = encodeURIComponent(
-        `Namaste ${party.name},\n\nPlease find your account statement from LogiOp Pro.\n\n${summary}`
+        `Namaste ${party.name},\n\nPlease find your account statement.\n\n${summary}`
       );
       if (wa) {
         window.open(`https://wa.me/${wa}?text=${text}`, "_blank");
@@ -144,9 +142,9 @@ export function LedgerStatementModal({
   return (
     <Modal open={open} onClose={onClose} title="Send PDF statement" wide>
       <p className="mb-4 text-sm text-[var(--muted)]">
-        Clean account statement for <strong className="text-[var(--ink)]">{party.name}</strong>{" "}
-        — debit / credit, dual-currency closing balance, and running balance per
-        currency.
+        Simple account statement for{" "}
+        <strong className="text-[var(--ink)]">{party.name}</strong> — date,
+        particulars, debit, credit, and balance (INR / THB).
       </p>
 
       <div className="grid gap-3 sm:grid-cols-2">
