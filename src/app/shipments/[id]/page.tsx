@@ -26,12 +26,13 @@ type Bag = {
   weightKg: number | null;
   description: string | null;
   contents: string | null;
-  deliveryNotes?: string | null;
+  shippingCharge?: number | null;
   status: string;
   arrivedAt: string | null;
   deliveredAt: string | null;
   customer: { id: string; name: string } | null;
   warehouse: { name: string } | null;
+  items?: Array<{ id: string; name: string; quantity: number }>;
   transportAssignments: Array<{
     transportAssignment: {
       id: string;
@@ -108,10 +109,10 @@ export default function ShipmentDetailPage({
         bagNumber: editBag.bagNumber,
         weightKg: editBag.weightKg,
         description: editBag.description,
-        contents: editBag.contents,
-        deliveryNotes: editBag.deliveryNotes || null,
+        shippingCharge: editBag.shippingCharge ?? null,
         status: editBag.status,
         customerId: editBag.customer?.id || null,
+        items: editBag.items || [],
       });
       setEditBag(null);
       load();
@@ -244,10 +245,11 @@ export default function ShipmentDetailPage({
               </th>
               <th>Bag</th>
               <th>Weight</th>
+              <th>Items</th>
               <th>Deliver to</th>
+              <th>Ship charge</th>
               <th>Status</th>
               <th>Transport</th>
-              <th>Details</th>
               <th></th>
             </tr>
           </thead>
@@ -265,13 +267,21 @@ export default function ShipmentDetailPage({
                   </td>
                   <td className="font-medium">#{b.bagNumber}</td>
                   <td>{b.weightKg != null ? `${b.weightKg} kg` : "—"}</td>
+                  <td className="text-xs">
+                    {(b.items || []).length > 0
+                      ? (b.items || [])
+                          .map((it) => `${it.name} × ${it.quantity}`)
+                          .join(", ")
+                      : b.contents || b.description || "—"}
+                  </td>
+                  <td>{b.customer?.name || "—"}</td>
                   <td>
-                    <div>{b.customer?.name || "—"}</div>
-                    {b.deliveryNotes && (
-                      <div className="text-xs text-[var(--muted)]">
-                        {b.deliveryNotes}
-                      </div>
-                    )}
+                    {b.shippingCharge != null
+                      ? formatMoney(
+                          b.shippingCharge,
+                          shipment.shippingCurrency || "INR"
+                        )
+                      : "—"}
                   </td>
                   <td>
                     <Badge tone={statusTone(b.status)}>
@@ -290,9 +300,6 @@ export default function ShipmentDetailPage({
                     ) : (
                       "—"
                     )}
-                  </td>
-                  <td className="max-w-[160px] text-xs text-[var(--muted)]">
-                    {b.description || b.contents || "—"}
                   </td>
                   <td>
                     <button
@@ -329,22 +336,82 @@ export default function ShipmentDetailPage({
               }
             />
             <Input
-              label="Description"
-              value={editBag.description || ""}
-              onChange={(e) => setEditBag({ ...editBag, description: e.target.value })}
-            />
-            <Input
-              label="Contents"
-              value={editBag.contents || ""}
-              onChange={(e) => setEditBag({ ...editBag, contents: e.target.value })}
-            />
-            <Input
-              label="Delivery note (for Lalamove later)"
-              value={editBag.deliveryNotes || ""}
+              label="Shipping charge (this bag)"
+              type="number"
+              step="0.01"
+              value={editBag.shippingCharge ?? ""}
               onChange={(e) =>
-                setEditBag({ ...editBag, deliveryNotes: e.target.value })
+                setEditBag({
+                  ...editBag,
+                  shippingCharge: e.target.value
+                    ? Number(e.target.value)
+                    : null,
+                })
               }
             />
+            <Input
+              label="Description"
+              value={editBag.description || ""}
+              onChange={(e) =>
+                setEditBag({ ...editBag, description: e.target.value })
+              }
+            />
+            <div>
+              <div className="mb-1.5 text-sm text-[var(--muted)]">
+                Items (name + pcs)
+              </div>
+              <div className="space-y-1.5">
+                {(editBag.items || [{ id: "new", name: "", quantity: 1 }]).map(
+                  (it, j) => (
+                    <div key={it.id || j} className="flex gap-2">
+                      <input
+                        className="min-w-0 flex-1 rounded border border-[var(--line)] px-2 py-1 text-sm"
+                        placeholder="Item"
+                        value={it.name}
+                        onChange={(e) => {
+                          const items = [...(editBag.items || [])];
+                          if (!items[j])
+                            items[j] = { id: `tmp_${j}`, name: "", quantity: 1 };
+                          items[j] = { ...items[j], name: e.target.value };
+                          setEditBag({ ...editBag, items });
+                        }}
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        className="w-20 rounded border border-[var(--line)] px-2 py-1 text-sm"
+                        value={it.quantity}
+                        onChange={(e) => {
+                          const items = [...(editBag.items || [])];
+                          if (!items[j])
+                            items[j] = { id: `tmp_${j}`, name: "", quantity: 1 };
+                          items[j] = {
+                            ...items[j],
+                            quantity: Number(e.target.value) || 1,
+                          };
+                          setEditBag({ ...editBag, items });
+                        }}
+                      />
+                    </div>
+                  )
+                )}
+                <button
+                  type="button"
+                  className="text-xs text-[var(--accent)]"
+                  onClick={() =>
+                    setEditBag({
+                      ...editBag,
+                      items: [
+                        ...(editBag.items || []),
+                        { id: `tmp_${Date.now()}`, name: "", quantity: 1 },
+                      ],
+                    })
+                  }
+                >
+                  + Add item
+                </button>
+              </div>
+            </div>
             <Select
               label="Status"
               value={editBag.status}

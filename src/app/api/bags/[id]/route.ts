@@ -31,6 +31,10 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     data.weightKg = body.weightKg != null ? Number(body.weightKg) : null;
   if (body.description !== undefined) data.description = body.description || null;
   if (body.contents !== undefined) data.contents = body.contents || null;
+  if (body.shippingCharge !== undefined) {
+    data.shippingCharge =
+      body.shippingCharge != null ? Number(body.shippingCharge) : null;
+  }
   if (body.customerId !== undefined) data.customerId = body.customerId || null;
   if (body.deliveryNotes !== undefined)
     data.deliveryNotes = body.deliveryNotes || null;
@@ -44,6 +48,18 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   if (body.arrivedAt) data.arrivedAt = new Date(body.arrivedAt);
   if (body.deliveredAt) data.deliveredAt = new Date(body.deliveredAt);
 
+  if (Array.isArray(body.items)) {
+    await prisma.bagItem.deleteMany({ where: { bagId: id } });
+    data.items = {
+      create: body.items
+        .filter((it: { name?: string }) => it.name?.trim())
+        .map((it: { name: string; quantity?: number }) => ({
+          name: it.name.trim(),
+          quantity: Math.max(1, Number(it.quantity) || 1),
+        })),
+    };
+  }
+
   const bag = await prisma.bag.update({
     where: { id },
     data,
@@ -51,6 +67,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       shipment: true,
       customer: true,
       warehouse: true,
+      items: true,
     },
   });
   return NextResponse.json(bag);

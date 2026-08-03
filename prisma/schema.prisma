@@ -173,9 +173,10 @@ model Bag {
   warehouse       Warehouse? @relation(fields: [warehouseId], references: [id])
   weightKg        Float?
   description     String?
-  contents        String?
+  contents        String? // legacy free-text; prefer BagItem rows
   status          BagStatus  @default(CREATED)
-  // Optional delivery hint for local last-mile (Lalamove later)
+  // Per-bag shipping charge billed to goods owner (default rate × weight; editable)
+  shippingCharge  Float?
   deliveryNotes   String?
   deliveredAt     DateTime?
   arrivedAt       DateTime?
@@ -183,12 +184,24 @@ model Bag {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
+  items                BagItem[]
   transportAssignments TransportAssignmentBag[]
 
   @@unique([shipmentId, bagNumber])
   @@index([status])
   @@index([bagNumber])
   @@index([customerId])
+}
+
+model BagItem {
+  id        String   @id @default(cuid())
+  bagId     String
+  bag       Bag      @relation(fields: [bagId], references: [id], onDelete: Cascade)
+  name      String
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+
+  @@index([bagId])
 }
 
 model Invoice {

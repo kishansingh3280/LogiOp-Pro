@@ -68,9 +68,11 @@ type DemoState = {
       contents: string | null;
       customerId: string | null;
       deliveryNotes: string | null;
+      shippingCharge: number | null;
       warehouseId: string | null;
       arrivedAt: string | null;
       deliveredAt: string | null;
+      items: Array<{ id: string; name: string; quantity: number }>;
     }>;
   }>;
   invoices: Array<{
@@ -127,7 +129,7 @@ function seed(): DemoState {
     exchangeRate: 2.45,
     quoteMode: "INR_PER_THB",
     defaultCurrency: "INR",
-    carryRatePerKg: null,
+    carryRatePerKg: 200,
     carryRateCurrency: "INR",
     booksSharedUntil: null,
     isActive: true,
@@ -225,11 +227,21 @@ function seed(): DemoState {
     status: i < 5 ? "IN_TRANSIT" : "CREATED",
     description: i < 3 ? "Sample goods" : null,
     contents: null,
-    customerId: i < 5 ? "p_buyer" : null,
-    deliveryNotes: i < 2 ? "Sukhumvit — call on arrival" : null,
+    customerId: i < 3 ? "p_buyer" : i < 5 ? "p_siam" : null,
+    deliveryNotes: null,
+    shippingCharge: i < 5 ? (20 + i * 5) * 200 : null,
     warehouseId: "wh_delhi",
     arrivedAt: null,
     deliveredAt: null,
+    items:
+      i < 3
+        ? [
+            { id: `bi_${i}_1`, name: "Gift boxes", quantity: 10 + i },
+            { id: `bi_${i}_2`, name: "Scarves", quantity: 5 },
+          ]
+        : i < 5
+          ? [{ id: `bi_${i}_1`, name: "Mixed goods", quantity: 1 }]
+          : [],
   }));
 
   const entryAdvance: DemoEntry = {
@@ -650,27 +662,47 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
     const shippingCurrency = (b.shippingCurrency as "INR" | "THB") || "INR";
     const bags = Array.from({ length: count }, (_, i) => {
       const d = details[i] || {};
+      const weightKg = d.weightKg != null ? Number(d.weightKg) : null;
+      let shippingCharge =
+        d.shippingCharge != null ? Number(d.shippingCharge) : null;
+      if (
+        shippingCharge == null &&
+        shippingRatePerKg != null &&
+        weightKg != null &&
+        weightKg > 0
+      ) {
+        shippingCharge = shippingRatePerKg * weightKg;
+      }
+      const rawItems = Array.isArray(d.items)
+        ? (d.items as Array<{ name?: string; quantity?: number }>)
+        : [];
       return {
         id: id("bag"),
         bagNumber: String(d.bagNumber || String(i + 1).padStart(3, "0")),
-        weightKg: d.weightKg != null ? Number(d.weightKg) : null,
+        weightKg,
         status: "CREATED",
         description: (d.description as string) || null,
-        contents: (d.contents as string) || null,
+        contents: null,
         customerId: (d.customerId as string) || null,
-        deliveryNotes: (d.deliveryNotes as string) || null,
+        deliveryNotes: null,
+        shippingCharge,
         warehouseId: (b.originWarehouseId as string) || null,
         arrivedAt: null,
         deliveredAt: null,
+        items: rawItems
+          .filter((it) => it.name?.trim())
+          .map((it) => ({
+            id: id("bi"),
+            name: String(it.name).trim(),
+            quantity: Math.max(1, Number(it.quantity) || 1),
+          })),
       };
     });
     const totalWeight = bags.reduce((s, x) => s + (x.weightKg || 0), 0);
     const shippingChargeTotal =
       b.shippingChargeTotal != null
         ? Number(b.shippingChargeTotal)
-        : shippingRatePerKg != null && totalWeight > 0
-          ? shippingRatePerKg * totalWeight
-          : null;
+        : bags.reduce((s, x) => s + (x.shippingCharge || 0), 0) || null;
 
     const ship = {
       id: id("ship"),
@@ -773,9 +805,11 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       contents: null,
       customerId: null,
       deliveryNotes: null,
+      shippingCharge: null,
       warehouseId: s.originWarehouseId,
       arrivedAt: null,
       deliveredAt: null,
+      items: [],
     }));
     s.bags.push(...created);
     return created;

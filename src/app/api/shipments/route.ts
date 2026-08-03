@@ -12,6 +12,7 @@ export async function GET() {
       bags: {
         include: {
           customer: true,
+          items: true,
           transportAssignments: {
             include: { transportAssignment: { include: { carrier: true } } },
           },
@@ -30,32 +31,42 @@ export async function POST(req: NextRequest) {
   const bagCount = Number(body.bagCount) || 0;
   const bagDetails: Array<{
     bagNumber?: string;
-    weightKg?: number;
-    description?: string;
-    contents?: string;
+    weightKg?: number | null;
+    description?: string | null;
     customerId?: string | null;
-    deliveryNotes?: string | null;
+    shippingCharge?: number | null;
+    items?: Array<{ name: string; quantity: number }>;
     warehouseId?: string;
   }> = body.bags || [];
 
-  const ownerPartyId =
-    body.ownerPartyId || body.defaultCustomerId || null;
+  const ownerPartyId = body.ownerPartyId || body.defaultCustomerId || null;
   const shippingRatePerKg =
     body.shippingRatePerKg != null && body.shippingRatePerKg !== ""
       ? Number(body.shippingRatePerKg)
       : null;
   const shippingCurrency = (body.shippingCurrency || "INR") as Currency;
 
+  const bagCountFinal = Math.max(bagCount, bagDetails.length);
+
+  const shippingChargeTotal =
+    body.shippingChargeTotal != null && body.shippingChargeTotal !== ""
+      ? Number(body.shippingChargeTotal)
+      : bagDetails.reduce((s, d) => {
+          if (d.shippingCharge != null) return s + Number(d.shippingCharge);
+          if (
+            shippingRatePerKg != null &&
+            d.weightKg != null &&
+            Number(d.weightKg) > 0
+          ) {
+            return s + shippingRatePerKg * Number(d.weightKg);
+          }
+          return s;
+        }, 0) || null;
+
   const totalWeightFromBags = bagDetails.reduce(
     (s, b) => s + (b.weightKg != null ? Number(b.weightKg) : 0),
     0
   );
-  const shippingChargeTotal =
-    body.shippingChargeTotal != null && body.shippingChargeTotal !== ""
-      ? Number(body.shippingChargeTotal)
-      : shippingRatePerKg != null && totalWeightFromBags > 0
-        ? shippingRatePerKg * totalWeightFromBags
-        : null;
 
   const shipment = await prisma.$transaction(async (tx) => {
     const created = await tx.shipment.create({
@@ -70,38 +81,54 @@ export async function POST(req: NextRequest) {
         shipDate: body.shipDate ? new Date(body.shipDate) : null,
         shippingRatePerKg,
         shippingCurrency,
-        shippingChargeTotal,
+        shippingChargeTotal:
+          shippingChargeTotal != null && shippingChargeTotal > 0
+            ? shippingChargeTotal
+            : null,
         bags: {
-          create: Array.from(
-            { length: Math.max(bagCount, bagDetails.length) },
-            (_, i) => {
-              const detail = bagDetails[i] || {};
-              return {
-                bagNumber: detail.bagNumber || String(i + 1).padStart(3, "0"),
-                weightKg:
-                  detail.weightKg != null ? Number(detail.weightKg) : null,
-                description: detail.description || null,
-                contents: detail.contents || null,
-                // Deliver-to only — do not copy owner onto every bag
-                customerId: detail.customerId || null,
-                deliveryNotes: detail.deliveryNotes || null,
-                warehouseId:
-                  detail.warehouseId || body.originWarehouseId || null,
-                status: "CREATED" as const,
-              };
+          create: Array.from({ length: bagCountFinal }, (_, i) => {
+            const detail = bagDetails[i] || {};
+            const weightKg =
+              detail.weightKg != null ? Number(detail.weightKg) : null;
+            let shippingCharge =
+              detail.shippingCharge != null
+                ? Number(detail.shippingCharge)
+                : null;
+            if (
+              shippingCharge == null &&
+              shippingRatePerKg != null &&
+              weightKg != null &&
+              weightKg > 0
+            ) {
+              shippingCharge = shippingRatePerKg * weightKg;
             }
-          ),
+            const items = (detail.items || []).filter((it) => it.name?.trim());
+            return {
+              bagNumber: detail.bagNumber || String(i + 1).padStart(3, "0"),
+              weightKg,
+              description: detail.description || null,
+              customerId: detail.customerId || null,
+              shippingCharge,
+              warehouseId: detail.warehouseId || body.originWarehouseId || null,
+              status: "CREATED" as const,
+              items: {
+                create: items.map((it) => ({
+                  name: it.name.trim(),
+                  quantity: Math.max(1, Number(it.quantity) || 1),
+                })),
+              },
+            };
+          }),
         },
       },
       include: {
-        bags: true,
+        bags: { include: { customer: true, items: true } },
         originWarehouse: true,
         destWarehouse: true,
         ownerParty: true,
       },
     });
 
-    // Auto-invoice + ledger when shipping charges and owner are set
     if (
       ownerPartyId &&
       shippingChargeTotal != null &&
@@ -116,7 +143,7 @@ export async function POST(req: NextRequest) {
           currency: shippingCurrency,
           description: `Shipping charges · Lot ${created.lotNumber}${
             shippingRatePerKg != null
-              ? ` · ${shippingRatePerKg}/kg × ${totalWeightFromBags || "?"} kg`
+              ? ` · base ${shippingRatePerKg}/kg · ${totalWeightFromBags || "?"} kg`
               : ""
           }`,
           entryDate: created.shipDate || new Date(),
@@ -142,7 +169,7 @@ export async function POST(req: NextRequest) {
           shippingLedgerEntryId: ledger.id,
         },
         include: {
-          bags: { include: { customer: true } },
+          bags: { include: { customer: true, items: true } },
           originWarehouse: true,
           destWarehouse: true,
           ownerParty: true,

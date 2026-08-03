@@ -16,6 +16,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
         orderBy: { bagNumber: "asc" },
         include: {
           customer: true,
+          items: true,
           warehouse: true,
           transportAssignments: {
             include: {

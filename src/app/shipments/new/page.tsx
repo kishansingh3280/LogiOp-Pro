@@ -17,19 +17,44 @@ import {
   formatMoney,
 } from "@/lib/utils";
 import { apiGet, apiPost } from "@/lib/client-api";
+import { Plus, Trash2 } from "lucide-react";
 
 type Warehouse = { id: string; name: string; city: string };
-type Party = { id: string; name: string; type: string };
+type Party = {
+  id: string;
+  name: string;
+  type: string;
+  carryRatePerKg?: number | null;
+  carryRateCurrency?: "INR" | "THB";
+  phone?: string | null;
+  city?: string | null;
+};
+
+type ItemDraft = { name: string; quantity: string };
 
 type BagDraft = {
   bagNumber: string;
   weightKg: string;
   description: string;
-  contents: string;
+  items: ItemDraft[];
   /** Deliver-to end customer (not the goods owner) */
   customerId: string;
-  deliveryNotes: string;
+  /** Editable per-bag shipping; empty = auto from rate × weight */
+  shippingCharge: string;
+  shippingManual: boolean;
 };
+
+function emptyBag(n: number): BagDraft {
+  return {
+    bagNumber: String(n).padStart(3, "0"),
+    weightKg: "",
+    description: "",
+    items: [{ name: "", quantity: "1" }],
+    customerId: "",
+    shippingCharge: "",
+    shippingManual: false,
+  };
+}
 
 export default function NewShipmentPage() {
   const router = useRouter();
@@ -48,7 +73,6 @@ export default function NewShipmentPage() {
     destWarehouseId: "",
     shipDate: new Date().toISOString().slice(0, 10),
     notes: "",
-    /** "" = not chosen; "__NONE__" = no owner; else party id */
     ownerPartyId: "",
     shippingRatePerKg: "",
     shippingCurrency: "INR" as "INR" | "THB",
@@ -69,9 +93,10 @@ export default function NewShipmentPage() {
           ...f,
           originWarehouseId: delhi?.id || "",
           destWarehouseId: bkk?.id || "",
-          lotNumber: `LOT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(
-            Math.random() * 900 + 100
-          )}`,
+          lotNumber: `LOT-${new Date()
+            .toISOString()
+            .slice(0, 10)
+            .replace(/-/g, "")}-${Math.floor(Math.random() * 900 + 100)}`,
         }));
       })
       .catch((e) =>
@@ -84,21 +109,75 @@ export default function NewShipmentPage() {
     return raw;
   }
 
+  function onOwnerChange(value: string) {
+    const owner = parties.find((p) => p.id === value);
+    setForm((f) => ({
+      ...f,
+      ownerPartyId: value,
+      shippingRatePerKg:
+        owner?.carryRatePerKg != null
+          ? String(owner.carryRatePerKg)
+          : f.shippingRatePerKg,
+      shippingCurrency: owner?.carryRateCurrency || f.shippingCurrency,
+    }));
+    // Recalc non-manual bag charges when owner/rate changes
+    setBags((prev) =>
+      prev.map((b) => {
+        if (b.shippingManual) return b;
+        const w = Number(b.weightKg);
+        const rate =
+          owner?.carryRatePerKg != null
+            ? owner.carryRatePerKg
+            : Number(form.shippingRatePerKg);
+        if (w > 0 && rate > 0) {
+          return { ...b, shippingCharge: String(+(w * rate).toFixed(2)) };
+        }
+        return { ...b, shippingCharge: "" };
+      })
+    );
+  }
+
   function generateBagRows(count: number) {
     if (count < 1) {
       alert("Enter how many bags first.");
       return;
     }
-    const rows: BagDraft[] = Array.from({ length: count }, (_, i) => ({
-      bagNumber: String(i + 1).padStart(3, "0"),
-      weightKg: "",
-      description: "",
-      contents: "",
-      customerId: "",
-      deliveryNotes: "",
-    }));
-    setBags(rows);
+    setBags(Array.from({ length: count }, (_, i) => emptyBag(i + 1)));
     setShowDetails(true);
+  }
+
+  function updateBag(i: number, patch: Partial<BagDraft>) {
+    setBags((prev) => {
+      const next = [...prev];
+      const bag = { ...next[i], ...patch };
+      if (
+        !bag.shippingManual &&
+        (patch.weightKg !== undefined || patch.shippingManual === false)
+      ) {
+        const w = Number(bag.weightKg);
+        const rate = Number(form.shippingRatePerKg);
+        bag.shippingCharge =
+          w > 0 && rate > 0 ? String(+(w * rate).toFixed(2)) : "";
+      }
+      next[i] = bag;
+      return next;
+    });
+  }
+
+  function onRateChange(rateStr: string) {
+    setForm((f) => ({ ...f, shippingRatePerKg: rateStr }));
+    const rate = Number(rateStr);
+    setBags((prev) =>
+      prev.map((b) => {
+        if (b.shippingManual) return b;
+        const w = Number(b.weightKg);
+        return {
+          ...b,
+          shippingCharge:
+            w > 0 && rate > 0 ? String(+(w * rate).toFixed(2)) : "",
+        };
+      })
+    );
   }
 
   const totalWeight = useMemo(
@@ -110,11 +189,23 @@ export default function NewShipmentPage() {
     [bags]
   );
 
-  const shippingTotal = useMemo(() => {
-    const rate = Number(form.shippingRatePerKg);
-    if (!rate || rate <= 0 || totalWeight <= 0) return null;
-    return rate * totalWeight;
-  }, [form.shippingRatePerKg, totalWeight]);
+  const shippingTotal = useMemo(
+    () =>
+      bags.reduce((sum, b) => {
+        const c = Number(b.shippingCharge);
+        return sum + (Number.isFinite(c) && c > 0 ? c : 0);
+      }, 0),
+    [bags]
+  );
+
+  const deliverToCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const b of bags) {
+      if (!b.customerId) continue;
+      map.set(b.customerId, (map.get(b.customerId) || 0) + 1);
+    }
+    return map;
+  }, [bags]);
 
   async function submit() {
     if (!form.ownerPartyId) {
@@ -143,15 +234,22 @@ export default function NewShipmentPage() {
           ? Number(form.shippingRatePerKg)
           : null,
         shippingCurrency: form.shippingCurrency,
-        shippingChargeTotal: shippingTotal,
+        shippingChargeTotal: shippingTotal > 0 ? shippingTotal : null,
         bags: showDetails
           ? bags.map((b) => ({
               bagNumber: b.bagNumber,
               weightKg: b.weightKg ? Number(b.weightKg) : null,
               description: b.description || null,
-              contents: b.contents || null,
               customerId: b.customerId || null,
-              deliveryNotes: b.deliveryNotes || null,
+              shippingCharge: b.shippingCharge
+                ? Number(b.shippingCharge)
+                : null,
+              items: b.items
+                .filter((it) => it.name.trim())
+                .map((it) => ({
+                  name: it.name.trim(),
+                  quantity: Math.max(1, Number(it.quantity) || 1),
+                })),
             }))
           : [],
       });
@@ -182,7 +280,7 @@ export default function NewShipmentPage() {
     <div>
       <PageHeader
         title="New shipment"
-        subtitle="Owner pays shipping · each bag can deliver to a different end customer (Lalamove-ready)"
+        subtitle="Owner pays shipping · assign each bag to an end customer (same customer can have many bags)"
         actions={
           <Link href="/shipments">
             <Button variant="secondary">Cancel</Button>
@@ -247,9 +345,7 @@ export default function NewShipmentPage() {
           <Select
             label="Goods owner / billing customer *"
             value={form.ownerPartyId}
-            onChange={(e) =>
-              setForm({ ...form, ownerPartyId: e.target.value })
-            }
+            onChange={(e) => onOwnerChange(e.target.value)}
           >
             <option value="" disabled>
               Select owner…
@@ -258,6 +354,9 @@ export default function NewShipmentPage() {
             {owners.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
+                {c.carryRatePerKg != null
+                  ? ` · ${c.carryRateCurrency === "THB" ? "฿" : "₹"}${c.carryRatePerKg}/kg`
+                  : ""}
               </option>
             ))}
           </Select>
@@ -279,9 +378,9 @@ export default function NewShipmentPage() {
           </div>
         </div>
         <p className="mt-3 text-xs text-[var(--muted)]">
-          Owner = who the goods belong to and who you bill (e.g. Lalit Ji). In bag
-          details below, set who each bag should be delivered to among their
-          customers.
+          Owner = who the goods belong to (e.g. Lalit Ji). Per bag, pick which of
+          their end customers receives it — one customer may get several bags.
+          Address/phone come from the party record (for Lalamove later).
         </p>
 
         <div className="mt-4 flex flex-wrap gap-2">
@@ -292,9 +391,6 @@ export default function NewShipmentPage() {
           >
             Fill bag details
           </Button>
-          <span className="self-center text-xs text-[var(--muted)]">
-            Weight, deliver-to customer, and delivery notes per bag.
-          </span>
         </div>
       </Card>
 
@@ -304,104 +400,176 @@ export default function NewShipmentPage() {
             <div className="border-b border-[var(--line)] px-4 py-3 font-display text-lg">
               Bag details ({bags.length})
             </div>
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Weight kg</th>
-                  <th>Description</th>
-                  <th>Contents</th>
-                  <th>Deliver to (end customer)</th>
-                  <th>Delivery note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bags.map((b, i) => (
-                  <tr key={i}>
-                    <td>
+            <div className="divide-y divide-[var(--line)]">
+              {bags.map((b, i) => {
+                const deliverName = deliverTo.find(
+                  (c) => c.id === b.customerId
+                )?.name;
+                const sameCount = b.customerId
+                  ? deliverToCounts.get(b.customerId) || 0
+                  : 0;
+                return (
+                  <div key={i} className="grid gap-3 px-4 py-4 lg:grid-cols-12">
+                    <div className="lg:col-span-1">
+                      <label className="mb-1 block text-xs text-[var(--muted)]">
+                        Bag #
+                      </label>
                       <input
-                        className="w-20 rounded border border-[var(--line)] px-2 py-1"
+                        className="w-full rounded border border-[var(--line)] px-2 py-1.5 text-sm"
                         value={b.bagNumber}
-                        onChange={(e) => {
-                          const next = [...bags];
-                          next[i] = { ...b, bagNumber: e.target.value };
-                          setBags(next);
-                        }}
+                        onChange={(e) =>
+                          updateBag(i, { bagNumber: e.target.value })
+                        }
                       />
-                    </td>
-                    <td>
+                    </div>
+                    <div className="lg:col-span-1">
+                      <label className="mb-1 block text-xs text-[var(--muted)]">
+                        Weight kg
+                      </label>
                       <input
                         type="number"
                         step="0.01"
-                        className="w-24 rounded border border-[var(--line)] px-2 py-1"
+                        className="w-full rounded border border-[var(--line)] px-2 py-1.5 text-sm"
                         value={b.weightKg}
-                        onChange={(e) => {
-                          const next = [...bags];
-                          next[i] = { ...b, weightKg: e.target.value };
-                          setBags(next);
-                        }}
+                        onChange={(e) =>
+                          updateBag(i, { weightKg: e.target.value })
+                        }
                       />
-                    </td>
-                    <td>
-                      <input
-                        className="w-full min-w-[100px] rounded border border-[var(--line)] px-2 py-1"
-                        value={b.description}
-                        onChange={(e) => {
-                          const next = [...bags];
-                          next[i] = { ...b, description: e.target.value };
-                          setBags(next);
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className="w-full min-w-[100px] rounded border border-[var(--line)] px-2 py-1"
-                        value={b.contents}
-                        onChange={(e) => {
-                          const next = [...bags];
-                          next[i] = { ...b, contents: e.target.value };
-                          setBags(next);
-                        }}
-                      />
-                    </td>
-                    <td>
+                    </div>
+                    <div className="lg:col-span-4">
+                      <div className="mb-1 flex items-center justify-between">
+                        <label className="text-xs text-[var(--muted)]">
+                          Items (name + pcs)
+                        </label>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-xs text-[var(--accent)]"
+                          onClick={() =>
+                            updateBag(i, {
+                              items: [
+                                ...b.items,
+                                { name: "", quantity: "1" },
+                              ],
+                            })
+                          }
+                        >
+                          <Plus size={12} /> Add item
+                        </button>
+                      </div>
+                      <div className="space-y-1.5">
+                        {b.items.map((it, j) => (
+                          <div key={j} className="flex gap-1.5">
+                            <input
+                              className="min-w-0 flex-1 rounded border border-[var(--line)] px-2 py-1 text-sm"
+                              placeholder="Item name"
+                              value={it.name}
+                              onChange={(e) => {
+                                const items = [...b.items];
+                                items[j] = { ...it, name: e.target.value };
+                                updateBag(i, { items });
+                              }}
+                            />
+                            <input
+                              type="number"
+                              min={1}
+                              className="w-16 rounded border border-[var(--line)] px-2 py-1 text-sm"
+                              title="Pcs"
+                              placeholder="Pcs"
+                              value={it.quantity}
+                              onChange={(e) => {
+                                const items = [...b.items];
+                                items[j] = {
+                                  ...it,
+                                  quantity: e.target.value,
+                                };
+                                updateBag(i, { items });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="rounded border border-[var(--line)] px-2 text-[var(--muted)] hover:text-red-600"
+                              disabled={b.items.length <= 1}
+                              onClick={() =>
+                                updateBag(i, {
+                                  items: b.items.filter((_, k) => k !== j),
+                                })
+                              }
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="lg:col-span-3">
+                      <label className="mb-1 block text-xs text-[var(--muted)]">
+                        Deliver to (end customer)
+                      </label>
                       <select
-                        className="min-w-[140px] rounded border border-[var(--line)] px-2 py-1"
+                        className="w-full rounded border border-[var(--line)] px-2 py-1.5 text-sm"
                         value={b.customerId}
-                        onChange={(e) => {
-                          const next = [...bags];
-                          next[i] = { ...b, customerId: e.target.value };
-                          setBags(next);
-                        }}
+                        onChange={(e) =>
+                          updateBag(i, { customerId: e.target.value })
+                        }
                       >
                         <option value="">Select deliver-to…</option>
                         {deliverTo.map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.name}
+                            {c.city ? ` · ${c.city}` : ""}
                           </option>
                         ))}
                       </select>
-                    </td>
-                    <td>
+                      {deliverName && sameCount > 1 && (
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          {deliverName}: {sameCount} bags in this lot
+                        </p>
+                      )}
+                    </div>
+                    <div className="lg:col-span-3">
+                      <label className="mb-1 block text-xs text-[var(--muted)]">
+                        Shipping charge (this bag)
+                      </label>
                       <input
-                        className="w-full min-w-[120px] rounded border border-[var(--line)] px-2 py-1"
-                        placeholder="Address / phone (Lalamove later)"
-                        value={b.deliveryNotes}
-                        onChange={(e) => {
-                          const next = [...bags];
-                          next[i] = { ...b, deliveryNotes: e.target.value };
-                          setBags(next);
-                        }}
+                        type="number"
+                        step="0.01"
+                        className="w-full rounded border border-[var(--line)] px-2 py-1.5 text-sm"
+                        value={b.shippingCharge}
+                        onChange={(e) =>
+                          updateBag(i, {
+                            shippingCharge: e.target.value,
+                            shippingManual: true,
+                          })
+                        }
+                        placeholder="Auto from rate × kg"
                       />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <button
+                        type="button"
+                        className="mt-1 text-xs text-[var(--accent)]"
+                        onClick={() => {
+                          const w = Number(b.weightKg);
+                          const rate = Number(form.shippingRatePerKg);
+                          updateBag(i, {
+                            shippingManual: false,
+                            shippingCharge:
+                              w > 0 && rate > 0
+                                ? String(+(w * rate).toFixed(2))
+                                : "",
+                          });
+                        }}
+                      >
+                        Reset to rate × weight
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] bg-[var(--bg)] px-4 py-3 text-sm">
               <span className="text-[var(--muted)]">
                 Bags with weight:{" "}
-                {bags.filter((b) => Number(b.weightKg) > 0).length} / {bags.length}
+                {bags.filter((b) => Number(b.weightKg) > 0).length} /{" "}
+                {bags.length}
               </span>
               <span className="font-display text-lg">
                 Total weight:{" "}
@@ -416,10 +584,14 @@ export default function NewShipmentPage() {
           </Card>
 
           <Card className="mb-6">
-            <h2 className="font-display text-lg">Shipping charges (bill to owner)</h2>
+            <h2 className="font-display text-lg">
+              Shipping charges (bill to owner)
+            </h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Rate × total weight. On create, this amount is saved as an invoice
-              and posted to the owner&apos;s ledger (You gave).
+              Rate from the owner&apos;s party transportation charges — editable
+              for this shipment. Each bag shows its own charge (rate × weight);
+              override any bag for expensive items. Totals invoice + ledger on
+              create.
             </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <Input
@@ -427,10 +599,8 @@ export default function NewShipmentPage() {
                 type="number"
                 step="0.01"
                 value={form.shippingRatePerKg}
-                onChange={(e) =>
-                  setForm({ ...form, shippingRatePerKg: e.target.value })
-                }
-                placeholder="e.g. 200"
+                onChange={(e) => onRateChange(e.target.value)}
+                placeholder="From party, editable"
               />
               <Select
                 label="Currency"
@@ -447,10 +617,10 @@ export default function NewShipmentPage() {
               </Select>
               <div>
                 <div className="mb-1.5 text-sm text-[var(--muted)]">
-                  Shipping total
+                  Shipping total (all bags)
                 </div>
                 <div className="rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 font-display text-lg">
-                  {shippingTotal != null
+                  {shippingTotal > 0
                     ? formatMoney(shippingTotal, form.shippingCurrency)
                     : "—"}
                 </div>
