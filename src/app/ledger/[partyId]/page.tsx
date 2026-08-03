@@ -141,9 +141,8 @@ export default function PartyLedgerPage({
   }, [form.amount, form.fxRate, form.currency, party?.quoteMode]);
 
   useEffect(() => {
-    if (conversion && !saveAs) setSaveAs(form.currency);
     if (!conversion) setSaveAs(null);
-  }, [conversion, form.currency, saveAs]);
+  }, [conversion]);
 
   async function saveEntry() {
     if (!form.amount) return;
@@ -551,18 +550,13 @@ export default function PartyLedgerPage({
 
           {conversion && (
             <div className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-4">
-              <div className="font-medium text-[var(--accent-ink)]">Currency conversion</div>
-              <div className="mt-1 text-sm">
-                {formatMoney(conversion.original.amount, conversion.original.currency)} @{" "}
-                {form.fxRate} ={" "}
-                <strong>
-                  {formatMoney(conversion.converted.value, conversion.converted.to)}
-                </strong>
-              </div>
-              <div className="mt-3 text-sm text-[var(--accent-ink)]">
+              <div className="font-medium text-[var(--accent-ink)]">
                 How do you want to save this entry?
               </div>
-              <div className="mt-2 flex flex-wrap gap-2">
+              <p className="mt-1 text-sm text-[var(--muted)]">
+                Choose one — nothing is selected until you tap.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => setSaveAs(conversion.original.currency)}
@@ -625,8 +619,15 @@ export default function PartyLedgerPage({
           <Button variant="secondary" onClick={() => setOpen(false)}>
             Cancel
           </Button>
-          <Button onClick={saveEntry} disabled={!form.amount || saving}>
-            {saving ? "Saving…" : "Save entry"}
+          <Button
+            onClick={saveEntry}
+            disabled={!form.amount || saving || (!!conversion && !saveAs)}
+          >
+            {saving
+              ? "Saving…"
+              : conversion && !saveAs
+                ? "Choose how to save"
+                : "Save entry"}
           </Button>
         </div>
       </Modal>
