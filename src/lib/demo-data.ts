@@ -72,19 +72,48 @@ type DemoState = {
       warehouseId: string | null;
       arrivedAt: string | null;
       deliveredAt: string | null;
-      items: Array<{ id: string; name: string; quantity: number }>;
+      items: Array<{
+        id: string;
+        name: string;
+        quantity: number;
+        catalogItemId: string | null;
+      }>;
     }>;
+  }>;
+  catalogItems: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    unit: string;
+    defaultRate: number | null;
+    currency: "INR" | "THB";
+    isActive: boolean;
   }>;
   invoices: Array<{
     id: string;
     number: string;
     partyId: string;
     shipmentId: string | null;
+    status: "SENT" | "PAID" | "DRAFT" | "CANCELLED";
     amount: number;
+    subtotal: number;
     currency: "INR" | "THB";
     description: string | null;
+    notes: string | null;
     issueDate: string;
+    dueDate: string | null;
+    paidAt: string | null;
     ledgerEntryId: string | null;
+    lines: Array<{
+      id: string;
+      description: string;
+      quantity: number;
+      unit: string;
+      unitPrice: number;
+      amount: number;
+      sortOrder: number;
+      catalogItemId: string | null;
+    }>;
   }>;
   transports: Array<{
     id: string;
@@ -220,6 +249,39 @@ function seed(): DemoState {
     isActive: true,
   };
 
+  const catalogItems: DemoState["catalogItems"] = [
+    {
+      id: "ci_gift",
+      name: "Gift boxes",
+      description: null,
+      unit: "pcs",
+      defaultRate: null,
+      currency: "INR",
+      isActive: true,
+    },
+    {
+      id: "ci_scarf",
+      name: "Scarves",
+      description: null,
+      unit: "pcs",
+      defaultRate: null,
+      currency: "INR",
+      isActive: true,
+    },
+    {
+      id: "ci_mixed",
+      name: "Mixed goods",
+      description: null,
+      unit: "pcs",
+      defaultRate: null,
+      currency: "INR",
+      isActive: true,
+    },
+  ];
+  const catalogByName = Object.fromEntries(
+    catalogItems.map((c) => [c.name, c.id])
+  );
+
   const bags = Array.from({ length: 25 }, (_, i) => ({
     id: `bag_${String(i + 1).padStart(3, "0")}`,
     bagNumber: String(i + 1).padStart(3, "0"),
@@ -236,11 +298,28 @@ function seed(): DemoState {
     items:
       i < 3
         ? [
-            { id: `bi_${i}_1`, name: "Gift boxes", quantity: 10 + i },
-            { id: `bi_${i}_2`, name: "Scarves", quantity: 5 },
+            {
+              id: `bi_${i}_1`,
+              name: "Gift boxes",
+              quantity: 10 + i,
+              catalogItemId: catalogByName["Gift boxes"],
+            },
+            {
+              id: `bi_${i}_2`,
+              name: "Scarves",
+              quantity: 5,
+              catalogItemId: catalogByName["Scarves"],
+            },
           ]
         : i < 5
-          ? [{ id: `bi_${i}_1`, name: "Mixed goods", quantity: 1 }]
+          ? [
+              {
+                id: `bi_${i}_1`,
+                name: "Mixed goods",
+                quantity: 1,
+                catalogItemId: catalogByName["Mixed goods"],
+              },
+            ]
           : [],
   }));
 
@@ -316,13 +395,61 @@ function seed(): DemoState {
         number: "INV-LOT-DEMO-001",
         partyId: "p_rajesh",
         shipmentId: "ship_demo",
+        status: "SENT",
         amount: 30000,
+        subtotal: 30000,
         currency: "INR",
         description: "Shipping charges for lot LOT-DEMO-001",
+        notes: null,
         issueDate: new Date().toISOString(),
+        dueDate: null,
+        paidAt: null,
         ledgerEntryId: null,
+        lines: [
+          {
+            id: "il_demo_ship",
+            description: "Shipping charges · Lot LOT-DEMO-001 · 200/kg × 150 kg",
+            quantity: 1,
+            unit: "lot",
+            unitPrice: 30000,
+            amount: 30000,
+            sortOrder: 0,
+            catalogItemId: null,
+          },
+          {
+            id: "il_demo_gift",
+            description: "Goods shipped · Gift boxes",
+            quantity: 33,
+            unit: "pcs",
+            unitPrice: 0,
+            amount: 0,
+            sortOrder: 1,
+            catalogItemId: "ci_gift",
+          },
+          {
+            id: "il_demo_scarf",
+            description: "Goods shipped · Scarves",
+            quantity: 15,
+            unit: "pcs",
+            unitPrice: 0,
+            amount: 0,
+            sortOrder: 2,
+            catalogItemId: "ci_scarf",
+          },
+          {
+            id: "il_demo_mixed",
+            description: "Goods shipped · Mixed goods",
+            quantity: 2,
+            unit: "pcs",
+            unitPrice: 0,
+            amount: 0,
+            sortOrder: 3,
+            catalogItemId: "ci_mixed",
+          },
+        ],
       },
     ],
+    catalogItems,
     transports: [
       {
         id: "tr_demo",
@@ -467,10 +594,288 @@ function enrichBag(bag: DemoState["shipments"][0]["bags"][0], shipment: DemoStat
   };
 }
 
+function upsertCatalogItem(opts: {
+  name: string;
+  unit?: string;
+  defaultRate?: number | null;
+  currency?: "INR" | "THB";
+  description?: string | null;
+}): DemoState["catalogItems"][0] {
+  const name = opts.name.trim();
+  const existing = state.catalogItems.find((c) => c.name === name);
+  if (existing) {
+    existing.isActive = true;
+    if (opts.description !== undefined) existing.description = opts.description;
+    if (opts.unit != null) existing.unit = opts.unit;
+    if (opts.defaultRate !== undefined) existing.defaultRate = opts.defaultRate;
+    if (opts.currency != null) existing.currency = opts.currency;
+    return existing;
+  }
+  const item: DemoState["catalogItems"][0] = {
+    id: id("ci"),
+    name,
+    description: opts.description ?? null,
+    unit: opts.unit || "pcs",
+    defaultRate: opts.defaultRate ?? null,
+    currency: opts.currency || "INR",
+    isActive: true,
+  };
+  state.catalogItems.push(item);
+  return item;
+}
+
+function lineAmount(qty: number, price: number) {
+  return Math.round(qty * price * 100) / 100;
+}
+
+function enrichInvoice(inv: DemoState["invoices"][0]) {
+  const shipment = inv.shipmentId
+    ? state.shipments.find((s) => s.id === inv.shipmentId)
+    : null;
+  return {
+    ...inv,
+    party: partyMap()[inv.partyId] || null,
+    shipment: shipment
+      ? { id: shipment.id, lotNumber: shipment.lotNumber }
+      : null,
+    lines: [...inv.lines].sort((a, b) => a.sortOrder - b.sortOrder),
+  };
+}
+
+function enrichInvoiceDetail(inv: DemoState["invoices"][0]) {
+  const shipment = inv.shipmentId
+    ? state.shipments.find((s) => s.id === inv.shipmentId)
+    : null;
+  return {
+    ...inv,
+    party: partyMap()[inv.partyId] || null,
+    shipment: shipment || null,
+    lines: [...inv.lines]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((l) => ({
+        ...l,
+        catalogItem: l.catalogItemId
+          ? state.catalogItems.find((c) => c.id === l.catalogItemId) || null
+          : null,
+      })),
+  };
+}
+
 export async function demoHandle(method: string, path: string, body?: unknown): Promise<unknown> {
   const url = new URL(path, "http://demo.local");
   const p = url.pathname;
   const q = url.searchParams;
+
+  // Catalog items
+  if (method === "GET" && p === "/api/items") {
+    return state.catalogItems
+      .filter((c) => c.isActive)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  if (method === "POST" && p === "/api/items") {
+    const b = body as Record<string, unknown>;
+    const name = String(b.name || "").trim();
+    if (!name) throw Object.assign(new Error("Name required"), { status: 400 });
+    const existing = state.catalogItems.find((c) => c.name === name);
+    if (existing) {
+      existing.isActive = true;
+      if (b.description !== undefined)
+        existing.description = (b.description as string) || null;
+      if (b.unit != null) existing.unit = String(b.unit);
+      if (b.defaultRate !== undefined) {
+        existing.defaultRate =
+          b.defaultRate != null ? Number(b.defaultRate) : null;
+      }
+      if (b.currency != null)
+        existing.currency = b.currency as "INR" | "THB";
+      return existing;
+    }
+    const item: DemoState["catalogItems"][0] = {
+      id: id("ci"),
+      name,
+      description: (b.description as string) || null,
+      unit: (b.unit as string) || "pcs",
+      defaultRate: b.defaultRate != null ? Number(b.defaultRate) : null,
+      currency: (b.currency as "INR" | "THB") || "INR",
+      isActive: true,
+    };
+    state.catalogItems.push(item);
+    return item;
+  }
+  const itemMatch = p.match(/^\/api\/items\/([^/]+)$/);
+  if (method === "PATCH" && itemMatch) {
+    const item = state.catalogItems.find((c) => c.id === itemMatch[1]);
+    if (!item) throw Object.assign(new Error("Not found"), { status: 404 });
+    const b = (body || {}) as Record<string, unknown>;
+    if (b.name != null) item.name = String(b.name).trim();
+    if (b.description !== undefined)
+      item.description = (b.description as string) || null;
+    if (b.unit != null) item.unit = String(b.unit);
+    if (b.defaultRate !== undefined) {
+      item.defaultRate = b.defaultRate != null ? Number(b.defaultRate) : null;
+    }
+    if (b.currency != null) item.currency = b.currency as "INR" | "THB";
+    if (b.isActive != null) item.isActive = Boolean(b.isActive);
+    return item;
+  }
+  if (method === "DELETE" && itemMatch) {
+    const item = state.catalogItems.find((c) => c.id === itemMatch[1]);
+    if (!item) throw Object.assign(new Error("Not found"), { status: 404 });
+    item.isActive = false;
+    return { ok: true };
+  }
+
+  // Invoices
+  if (method === "GET" && p === "/api/invoices") {
+    const status = q.get("status");
+    const partyId = q.get("partyId");
+    return state.invoices
+      .filter((inv) => (!status || inv.status === status) && (!partyId || inv.partyId === partyId))
+      .sort((a, b) => b.issueDate.localeCompare(a.issueDate))
+      .map(enrichInvoice);
+  }
+  if (method === "POST" && p === "/api/invoices") {
+    const b = body as Record<string, unknown>;
+    if (!b.partyId)
+      throw Object.assign(new Error("Customer required"), { status: 400 });
+    const rawLines = (Array.isArray(b.lines) ? b.lines : []) as Array<
+      Record<string, unknown>
+    >;
+    if (rawLines.length === 0)
+      throw Object.assign(new Error("Add at least one line"), { status: 400 });
+
+    const currency = (b.currency as "INR" | "THB") || "INR";
+    const prepared = rawLines.map((l, i) => {
+      const quantity = Number(l.quantity) || 0;
+      const unitPrice = Number(l.unitPrice) || 0;
+      return {
+        id: id("il"),
+        catalogItemId: (l.catalogItemId as string) || null,
+        description: String(l.description || "Item").trim(),
+        quantity,
+        unit: (l.unit as string) || "pcs",
+        unitPrice,
+        amount: lineAmount(quantity, unitPrice),
+        sortOrder: i,
+      };
+    });
+    const subtotal = prepared.reduce((s, l) => s + l.amount, 0);
+    const amount = subtotal;
+    const status =
+      (b.status as DemoState["invoices"][0]["status"]) || "SENT";
+    const number =
+      (b.number as string) ||
+      `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(
+        Math.random() * 9000 + 1000
+      )}`;
+
+    for (const l of prepared) {
+      if (!l.description) continue;
+      const existing = state.catalogItems.find((c) => c.name === l.description);
+      if (!existing) {
+        const created = upsertCatalogItem({
+          name: l.description,
+          unit: l.unit,
+          defaultRate: l.unitPrice,
+          currency,
+        });
+        l.catalogItemId = created.id;
+      } else if (!l.catalogItemId) {
+        l.catalogItemId = existing.id;
+      }
+    }
+
+    let ledgerEntryId: string | null = null;
+    if (status === "SENT" || status === "PAID") {
+      const ledger: DemoEntry = {
+        id: id("le"),
+        partyId: String(b.partyId),
+        direction: "YOU_GAVE",
+        amount,
+        currency,
+        description: `Invoice ${number}${b.description ? ` · ${b.description}` : ""}`,
+        entryDate: (b.issueDate as string) || new Date().toISOString(),
+        fxRate: null,
+        fxAmount: null,
+        fxCurrency: null,
+        isAutoSynced: true,
+        attachments: [],
+      };
+      state.entries.unshift(ledger);
+      ledgerEntryId = ledger.id;
+    }
+
+    const inv: DemoState["invoices"][0] = {
+      id: id("inv"),
+      number,
+      partyId: String(b.partyId),
+      shipmentId: (b.shipmentId as string) || null,
+      status,
+      currency,
+      subtotal,
+      amount,
+      description: (b.description as string) || null,
+      notes: (b.notes as string) || null,
+      issueDate: (b.issueDate as string) || new Date().toISOString(),
+      dueDate: (b.dueDate as string) || null,
+      paidAt: status === "PAID" ? new Date().toISOString() : null,
+      ledgerEntryId,
+      lines: prepared,
+    };
+    state.invoices.unshift(inv);
+    return enrichInvoiceDetail(inv);
+  }
+
+  const invMatch = p.match(/^\/api\/invoices\/([^/]+)$/);
+  if (method === "GET" && invMatch) {
+    const inv = state.invoices.find((x) => x.id === invMatch[1]);
+    if (!inv) throw Object.assign(new Error("Not found"), { status: 404 });
+    return enrichInvoiceDetail(inv);
+  }
+  if (method === "PATCH" && invMatch) {
+    const inv = state.invoices.find((x) => x.id === invMatch[1]);
+    if (!inv) throw Object.assign(new Error("Not found"), { status: 404 });
+    const b = (body || {}) as Record<string, unknown>;
+    const nextStatus =
+      (b.status as DemoState["invoices"][0]["status"]) || inv.status;
+
+    if (nextStatus === "PAID" && inv.status !== "PAID") {
+      const ledger: DemoEntry = {
+        id: id("le"),
+        partyId: inv.partyId,
+        direction: "YOU_GOT",
+        amount: inv.amount,
+        currency: inv.currency,
+        description: `Payment received · Invoice ${inv.number}`,
+        entryDate: new Date().toISOString(),
+        fxRate: null,
+        fxAmount: null,
+        fxCurrency: null,
+        isAutoSynced: true,
+        attachments: [],
+      };
+      state.entries.unshift(ledger);
+    }
+
+    if (b.status != null)
+      inv.status = b.status as DemoState["invoices"][0]["status"];
+    if (b.notes !== undefined) inv.notes = (b.notes as string) || null;
+    if (b.description !== undefined)
+      inv.description = (b.description as string) || null;
+    if (b.dueDate !== undefined) inv.dueDate = (b.dueDate as string) || null;
+    if (nextStatus === "PAID" && !inv.paidAt) {
+      inv.paidAt = new Date().toISOString();
+    } else if (nextStatus !== "PAID" && b.status != null) {
+      inv.paidAt = null;
+    }
+    return enrichInvoiceDetail(inv);
+  }
+  if (method === "DELETE" && invMatch) {
+    const inv = state.invoices.find((x) => x.id === invMatch[1]);
+    if (!inv) throw Object.assign(new Error("Not found"), { status: 404 });
+    inv.status = "CANCELLED";
+    return { ok: true };
+  }
 
   // Dashboard
   if (method === "GET" && p === "/api/dashboard") {
@@ -695,6 +1100,7 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
             id: id("bi"),
             name: String(it.name).trim(),
             quantity: Math.max(1, Number(it.quantity) || 1),
+            catalogItemId: null as string | null,
           })),
       };
     });
@@ -723,35 +1129,93 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
     };
 
     if (ownerPartyId && shippingChargeTotal != null && shippingChargeTotal > 0) {
-      const ledger = {
+      const invNumber = `INV-${ship.lotNumber}`;
+
+      const itemNames = new Map<string, number>();
+      for (const bag of bags) {
+        for (const it of bag.items) {
+          const key = it.name.trim();
+          if (!key) continue;
+          itemNames.set(key, (itemNames.get(key) || 0) + it.quantity);
+        }
+      }
+      const catalogIds = new Map<string, string>();
+      for (const [name] of itemNames) {
+        const cat = upsertCatalogItem({
+          name,
+          unit: "pcs",
+          currency: shippingCurrency,
+        });
+        catalogIds.set(name, cat.id);
+      }
+      for (const bag of bags) {
+        for (const it of bag.items) {
+          const cid = catalogIds.get(it.name.trim());
+          if (cid) it.catalogItemId = cid;
+        }
+      }
+
+      const lines: DemoState["invoices"][0]["lines"] = [
+        {
+          id: id("il"),
+          catalogItemId: null,
+          description: `Shipping charges · Lot ${ship.lotNumber}${
+            shippingRatePerKg != null
+              ? ` · ${shippingRatePerKg}/kg × ${totalWeight || "?"} kg`
+              : ""
+          }`,
+          quantity: 1,
+          unit: "lot",
+          unitPrice: shippingChargeTotal,
+          amount: shippingChargeTotal,
+          sortOrder: 0,
+        },
+      ];
+      let sort = 1;
+      for (const [name, qty] of itemNames) {
+        lines.push({
+          id: id("il"),
+          catalogItemId: catalogIds.get(name) || null,
+          description: `Goods shipped · ${name}`,
+          quantity: qty,
+          unit: "pcs",
+          unitPrice: 0,
+          amount: 0,
+          sortOrder: sort++,
+        });
+      }
+
+      const ledger: DemoEntry = {
         id: id("le"),
         partyId: ownerPartyId,
-        direction: "YOU_GAVE" as const,
+        direction: "YOU_GAVE",
         amount: shippingChargeTotal,
         currency: shippingCurrency,
-        description: `Shipping charges · Lot ${ship.lotNumber}`,
+        description: `Invoice ${invNumber} · Shipping · Lot ${ship.lotNumber}`,
         entryDate: ship.shipDate,
         fxRate: null,
         fxAmount: null,
         fxCurrency: null,
         isAutoSynced: true,
-        attachments: [] as Array<{
-          id: string;
-          fileName: string;
-          filePath: string;
-        }>,
+        attachments: [],
       };
       state.entries.unshift(ledger);
-      const inv = {
+      const inv: DemoState["invoices"][0] = {
         id: id("inv"),
-        number: `INV-${ship.lotNumber}`,
+        number: invNumber,
         partyId: ownerPartyId,
         shipmentId: ship.id,
+        status: "SENT",
         amount: shippingChargeTotal,
+        subtotal: shippingChargeTotal,
         currency: shippingCurrency,
         description: `Shipping charges for lot ${ship.lotNumber}`,
+        notes: null,
         issueDate: ship.shipDate,
+        dueDate: null,
+        paidAt: null,
         ledgerEntryId: ledger.id,
+        lines,
       };
       state.invoices.unshift(inv);
       ship.shippingInvoicedAt = new Date().toISOString();
