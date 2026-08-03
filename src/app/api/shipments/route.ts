@@ -135,17 +135,81 @@ export async function POST(req: NextRequest) {
       shippingChargeTotal > 0
     ) {
       const invNumber = `INV-${created.lotNumber}`;
+
+      // Remember bag item names in catalog
+      const itemNames = new Map<string, number>();
+      for (const bag of created.bags) {
+        for (const it of bag.items || []) {
+          const key = it.name.trim();
+          if (!key) continue;
+          itemNames.set(key, (itemNames.get(key) || 0) + it.quantity);
+        }
+      }
+      const catalogIds = new Map<string, string>();
+      for (const [name] of itemNames) {
+        const cat = await tx.catalogItem.upsert({
+          where: { name },
+          create: { name, unit: "pcs", currency: shippingCurrency },
+          update: { isActive: true },
+        });
+        catalogIds.set(name, cat.id);
+      }
+      // Link bag items to catalog
+      for (const bag of created.bags) {
+        for (const it of bag.items || []) {
+          const cid = catalogIds.get(it.name.trim());
+          if (cid) {
+            await tx.bagItem.update({
+              where: { id: it.id },
+              data: { catalogItemId: cid },
+            });
+          }
+        }
+      }
+
+      const lines: Array<{
+        catalogItemId: string | null;
+        description: string;
+        quantity: number;
+        unit: string;
+        unitPrice: number;
+        amount: number;
+        sortOrder: number;
+      }> = [
+        {
+          catalogItemId: null,
+          description: `Shipping charges · Lot ${created.lotNumber}${
+            shippingRatePerKg != null
+              ? ` · ${shippingRatePerKg}/kg × ${totalWeightFromBags || "?"} kg`
+              : ""
+          }`,
+          quantity: 1,
+          unit: "lot",
+          unitPrice: shippingChargeTotal,
+          amount: shippingChargeTotal,
+          sortOrder: 0,
+        },
+      ];
+      let sort = 1;
+      for (const [name, qty] of itemNames) {
+        lines.push({
+          catalogItemId: catalogIds.get(name) || null,
+          description: `Goods shipped · ${name}`,
+          quantity: qty,
+          unit: "pcs",
+          unitPrice: 0,
+          amount: 0,
+          sortOrder: sort++,
+        });
+      }
+
       const ledger = await tx.ledgerEntry.create({
         data: {
           partyId: ownerPartyId,
           direction: "YOU_GAVE",
           amount: shippingChargeTotal,
           currency: shippingCurrency,
-          description: `Shipping charges · Lot ${created.lotNumber}${
-            shippingRatePerKg != null
-              ? ` · base ${shippingRatePerKg}/kg · ${totalWeightFromBags || "?"} kg`
-              : ""
-          }`,
+          description: `Invoice ${invNumber} · Shipping · Lot ${created.lotNumber}`,
           entryDate: created.shipDate || new Date(),
           isAutoSynced: true,
         },
@@ -155,11 +219,14 @@ export async function POST(req: NextRequest) {
           number: invNumber,
           partyId: ownerPartyId,
           shipmentId: created.id,
+          status: "SENT",
           amount: shippingChargeTotal,
+          subtotal: shippingChargeTotal,
           currency: shippingCurrency,
           description: `Shipping charges for lot ${created.lotNumber}`,
           issueDate: created.shipDate || new Date(),
           ledgerEntryId: ledger.id,
+          lines: { create: lines },
         },
       });
       return tx.shipment.update({
@@ -173,7 +240,7 @@ export async function POST(req: NextRequest) {
           originWarehouse: true,
           destWarehouse: true,
           ownerParty: true,
-          invoices: true,
+          invoices: { include: { lines: true } },
         },
       });
     }

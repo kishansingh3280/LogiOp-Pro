@@ -203,10 +203,16 @@ export default function ShipmentDetailPage({
           </div>
           {shipment.shippingInvoicedAt && (
             <div className="mt-1 text-xs text-emerald-700">
-              Invoiced
-              {shipment.invoices?.[0]
-                ? ` · ${shipment.invoices[0].number}`
-                : ""}{" "}
+              {shipment.invoices?.[0] ? (
+                <Link
+                  href={`/billing/${shipment.invoices[0].id}`}
+                  className="underline"
+                >
+                  Invoice {shipment.invoices[0].number}
+                </Link>
+              ) : (
+                "Invoiced"
+              )}{" "}
               · on owner ledger
             </div>
           )}

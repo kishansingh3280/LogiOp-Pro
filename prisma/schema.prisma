@@ -43,6 +43,13 @@ enum LedgerDirection {
   YOU_GOT
 }
 
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  CANCELLED
+}
+
 enum ShipmentDirection {
   IN_TO_TH
   TH_TO_IN
@@ -90,6 +97,23 @@ model Party {
   carryRateCurrency  Currency @default(INR)
   // Last date through which books were shared / discussed with this party
   booksSharedUntil   DateTime?
+}
+
+model CatalogItem {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  unit         String   @default("pcs")
+  defaultRate  Float?
+  currency     Currency @default(INR)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  invoiceLines InvoiceLine[]
+  bagItems     BagItem[]
+
+  @@unique([name])
 }
 
 model LedgerEntry {
@@ -194,33 +218,60 @@ model Bag {
 }
 
 model BagItem {
-  id        String   @id @default(cuid())
-  bagId     String
-  bag       Bag      @relation(fields: [bagId], references: [id], onDelete: Cascade)
-  name      String
-  quantity  Int      @default(1)
-  createdAt DateTime @default(now())
+  id            String       @id @default(cuid())
+  bagId         String
+  bag           Bag          @relation(fields: [bagId], references: [id], onDelete: Cascade)
+  catalogItemId String?
+  catalogItem   CatalogItem? @relation(fields: [catalogItemId], references: [id], onDelete: SetNull)
+  name          String
+  quantity      Int          @default(1)
+  createdAt     DateTime     @default(now())
 
   @@index([bagId])
+  @@index([catalogItemId])
 }
 
 model Invoice {
-  id            String   @id @default(cuid())
-  number        String   @unique
+  id            String        @id @default(cuid())
+  number        String        @unique
   partyId       String
-  party         Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  party         Party         @relation(fields: [partyId], references: [id], onDelete: Cascade)
   shipmentId    String?
-  shipment      Shipment? @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
-  amount        Float
+  shipment      Shipment?     @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  status        InvoiceStatus @default(SENT)
   currency      Currency
+  subtotal      Float         @default(0)
+  amount        Float
   description   String?
-  issueDate     DateTime @default(now())
+  notes         String?
+  issueDate     DateTime      @default(now())
+  dueDate       DateTime?
+  paidAt        DateTime?
   ledgerEntryId String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  lines InvoiceLine[]
 
   @@index([partyId])
   @@index([shipmentId])
+  @@index([status])
+}
+
+model InvoiceLine {
+  id            String       @id @default(cuid())
+  invoiceId     String
+  invoice       Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  catalogItemId String?
+  catalogItem   CatalogItem? @relation(fields: [catalogItemId], references: [id], onDelete: SetNull)
+  description   String
+  quantity      Float        @default(1)
+  unit          String       @default("pcs")
+  unitPrice     Float
+  amount        Float
+  sortOrder     Int          @default(0)
+
+  @@index([invoiceId])
 }
 
 model TransportAssignment {

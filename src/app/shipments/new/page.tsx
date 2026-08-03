@@ -60,6 +60,9 @@ export default function NewShipmentPage() {
   const router = useRouter();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
+  const [catalog, setCatalog] = useState<Array<{ id: string; name: string }>>(
+    []
+  );
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bagCount, setBagCount] = useState("");
@@ -82,10 +85,12 @@ export default function NewShipmentPage() {
     Promise.all([
       apiGet<Warehouse[]>("/api/warehouses"),
       apiGet<Party[]>("/api/parties"),
+      apiGet<Array<{ id: string; name: string }>>("/api/items"),
     ])
-      .then(([w, p]) => {
+      .then(([w, p, items]) => {
         setWarehouses(w);
         setParties(p);
+        setCatalog(items);
         setLoadError(null);
         const delhi = w.find((x) => x.city === "Delhi");
         const bkk = w.find((x) => x.city === "Bangkok");
@@ -462,6 +467,7 @@ export default function NewShipmentPage() {
                             <input
                               className="min-w-0 flex-1 rounded border border-[var(--line)] px-2 py-1 text-sm"
                               placeholder="Item name"
+                              list="shipment-catalog-items"
                               value={it.name}
                               onChange={(e) => {
                                 const items = [...b.items];
@@ -565,6 +571,11 @@ export default function NewShipmentPage() {
                 );
               })}
             </div>
+            <datalist id="shipment-catalog-items">
+              {catalog.map((c) => (
+                <option key={c.id} value={c.name} />
+              ))}
+            </datalist>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] bg-[var(--bg)] px-4 py-3 text-sm">
               <span className="text-[var(--muted)]">
                 Bags with weight:{" "}

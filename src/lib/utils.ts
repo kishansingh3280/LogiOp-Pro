@@ -106,3 +106,10 @@ export const BAG_STATUS_FLOW = [
   "ARRIVED",
   "DELIVERED",
 ] as const;
+
+export const INVOICE_STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Draft",
+  SENT: "Sent",
+  PAID: "Paid",
+  CANCELLED: "Cancelled",
+};

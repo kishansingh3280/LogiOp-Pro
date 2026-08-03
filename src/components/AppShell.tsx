@@ -13,6 +13,8 @@ import {
   Menu,
   X,
   MoreHorizontal,
+  Receipt,
+  Tags,
 } from "lucide-react";
 import { useState } from "react";
 import clsx from "clsx";
@@ -21,6 +23,8 @@ import { DemoBanner } from "@/components/DemoBanner";
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/parties", label: "Parties", icon: Users },
+  { href: "/items", label: "Items", icon: Tags },
+  { href: "/billing", label: "Billing", icon: Receipt },
   { href: "/ledger", label: "Ledger", icon: BookOpen },
   { href: "/shipments", label: "Shipments", icon: Package },
   { href: "/bags", label: "Bags", icon: Boxes },
@@ -31,9 +35,9 @@ const NAV = [
 /** Bottom tabs on phone — same idea as the Android app */
 const MOBILE_TABS = [
   { href: "/", label: "Home", icon: LayoutDashboard },
-  { href: "/ledger", label: "Ledger", icon: BookOpen },
+  { href: "/billing", label: "Billing", icon: Receipt },
   { href: "/shipments", label: "Ship", icon: Package },
-  { href: "/bags", label: "Bags", icon: Boxes },
+  { href: "/ledger", label: "Ledger", icon: BookOpen },
   { href: "/parties", label: "Parties", icon: Users },
 ];
 
@@ -166,6 +170,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </button>
             </div>
             <div className="grid gap-2">
+              <Link
+                href="/items"
+                onClick={() => setMoreOpen(false)}
+                className="flex items-center gap-3 rounded-xl border border-[var(--line)] px-4 py-3"
+              >
+                <Tags size={18} className="text-[var(--accent)]" />
+                Items
+              </Link>
+              <Link
+                href="/billing"
+                onClick={() => setMoreOpen(false)}
+                className="flex items-center gap-3 rounded-xl border border-[var(--line)] px-4 py-3"
+              >
+                <Receipt size={18} className="text-[var(--accent)]" />
+                Billing
+              </Link>
               <Link
                 href="/transport"
                 onClick={() => setMoreOpen(false)}
