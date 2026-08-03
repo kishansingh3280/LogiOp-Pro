@@ -26,7 +26,8 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_IMAGES"
       ],
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "versionCode": 1
     },
     "web": {
       "bundler": "metro",

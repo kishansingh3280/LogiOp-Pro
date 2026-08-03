@@ -64,7 +64,7 @@ export default function DashboardScreen() {
         />
       }
     >
-      <Title subtitle="India ↔ Thailand · live operations">LogiOp Pro</Title>
+      <Title subtitle="Demo data ready · India ↔ Thailand operations">LogiOp Pro</Title>
 
       {error ? (
         <Card>

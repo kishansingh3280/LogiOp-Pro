@@ -62,3 +62,11 @@ mobile/node_modules/
 mobile/.expo/
 mobile/dist/
 
+
+# Android APKs / native build (too large for git)
+*.apk
+*.aab
+*.jks
+mobile/android/
+mobile/LogiOp-Pro.apk
+public/downloads/*.apk

@@ -1,7 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
+import { demoHandle } from "@/lib/demo-data";
 
-const STORAGE_KEY = "logiop_api_base";
+const API_KEY = "logiop_api_base";
+const DEMO_KEY = "logiop_demo_mode";
 
 /** Default API host. Android emulator uses 10.0.2.2 for host machine localhost. */
 export function defaultApiBase(): string {
@@ -10,12 +12,23 @@ export function defaultApiBase(): string {
 }
 
 export async function getApiBase(): Promise<string> {
-  const saved = await AsyncStorage.getItem(STORAGE_KEY);
+  const saved = await AsyncStorage.getItem(API_KEY);
   return (saved || defaultApiBase()).replace(/\/$/, "");
 }
 
 export async function setApiBase(url: string): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEY, url.replace(/\/$/, ""));
+  await AsyncStorage.setItem(API_KEY, url.replace(/\/$/, ""));
+}
+
+/** Demo mode is ON by default so beginners can use the APK without a server. */
+export async function getDemoMode(): Promise<boolean> {
+  const saved = await AsyncStorage.getItem(DEMO_KEY);
+  if (saved == null) return true;
+  return saved === "1";
+}
+
+export async function setDemoMode(on: boolean): Promise<void> {
+  await AsyncStorage.setItem(DEMO_KEY, on ? "1" : "0");
 }
 
 export class ApiError extends Error {
@@ -30,6 +43,25 @@ export async function api<T = unknown>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const demo = await getDemoMode();
+  if (demo) {
+    const method = (options.method || "GET").toUpperCase();
+    let body: unknown = undefined;
+    if (options.body && typeof options.body === "string") {
+      try {
+        body = JSON.parse(options.body);
+      } catch {
+        body = undefined;
+      }
+    }
+    try {
+      return (await demoHandle(method, path, body)) as T;
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      throw new ApiError(err.status || 500, err.message || "Demo error");
+    }
+  }
+
   const base = await getApiBase();
   const res = await fetch(`${base}${path}`, {
     ...options,
@@ -65,7 +97,18 @@ export const apiPatch = <T = unknown>(path: string, body: unknown) =>
 export const apiDelete = <T = unknown>(path: string) =>
   api<T>(path, { method: "DELETE" });
 
-export async function uploadAttachment(entryId: string, uri: string, name: string, mimeType?: string) {
+export async function uploadAttachment(
+  entryId: string,
+  uri: string,
+  name: string,
+  mimeType?: string
+) {
+  const demo = await getDemoMode();
+  if (demo) {
+    return demoHandle("POST", `/api/ledger/${entryId}/attachments`, {
+      fileName: name,
+    });
+  }
   const base = await getApiBase();
   const form = new FormData();
   form.append("file", {
