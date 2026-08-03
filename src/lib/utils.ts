@@ -113,3 +113,56 @@ export const INVOICE_STATUS_LABELS: Record<string, string> = {
   PAID: "Paid",
   CANCELLED: "Cancelled",
 };
+
+/** Overall shipment status derived from its bags (lowest progress wins if mixed). */
+export const SHIPMENT_STATUS_LABELS: Record<string, string> = {
+  EMPTY: "No bags",
+  CREATED: "Created",
+  AT_WAREHOUSE: "At warehouse",
+  ASSIGNED: "Assigned",
+  IN_TRANSIT: "In transit",
+  ARRIVED: "Arrived",
+  DELIVERED: "Delivered",
+  RETURNED: "Returned",
+  LOST: "Has lost bags",
+  MIXED: "In progress",
+};
+
+const STATUS_RANK: Record<string, number> = {
+  LOST: 0,
+  RETURNED: 1,
+  CREATED: 2,
+  AT_WAREHOUSE: 3,
+  ASSIGNED: 4,
+  IN_TRANSIT: 5,
+  ARRIVED: 6,
+  DELIVERED: 7,
+};
+
+export function deriveShipmentStatus(
+  bags: Array<{ status: string }>
+): { key: string; label: string } {
+  if (!bags.length) return { key: "EMPTY", label: SHIPMENT_STATUS_LABELS.EMPTY };
+  const unique = [...new Set(bags.map((b) => b.status))];
+  if (unique.length === 1) {
+    const key = unique[0];
+    return {
+      key,
+      label: SHIPMENT_STATUS_LABELS[key] || BAG_STATUS_LABELS[key] || key,
+    };
+  }
+  if (unique.includes("LOST")) {
+    return { key: "LOST", label: SHIPMENT_STATUS_LABELS.LOST };
+  }
+  // Prefer the furthest-along common stage label as "In progress" when mixed
+  const furthest = unique.reduce((a, b) =>
+    (STATUS_RANK[a] ?? 0) >= (STATUS_RANK[b] ?? 0) ? a : b
+  );
+  if (unique.every((s) => STATUS_RANK[s] != null && STATUS_RANK[s] >= 5)) {
+    return {
+      key: furthest,
+      label: SHIPMENT_STATUS_LABELS[furthest] || furthest,
+    };
+  }
+  return { key: "MIXED", label: SHIPMENT_STATUS_LABELS.MIXED };
+}

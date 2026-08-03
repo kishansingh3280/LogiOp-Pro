@@ -2,8 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { PageHeader, Card, Button, Badge, EmptyState, statusTone } from "@/components/ui";
-import { BAG_STATUS_LABELS } from "@/lib/utils";
+import {
+  PageHeader,
+  Card,
+  Button,
+  Badge,
+  EmptyState,
+  statusTone,
+} from "@/components/ui";
+import { deriveShipmentStatus, formatMoney } from "@/lib/utils";
 import { format } from "date-fns";
 import { apiGet } from "@/lib/client-api";
 
@@ -33,7 +40,9 @@ export default function ShipmentsPage() {
         setShipments(s);
         setError(null);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
+      .catch((e) =>
+        setError(e instanceof Error ? e.message : "Failed to load")
+      );
   }, []);
 
   if (error && !shipments) {
@@ -52,7 +61,7 @@ export default function ShipmentsPage() {
     <div>
       <PageHeader
         title="Shipments"
-        subtitle="Lots & batches — create bags, assign transport, track to delivery"
+        subtitle="Each lot keeps its bags together — open a shipment for bag details, status, and packing list"
         actions={
           <Link href="/shipments/new">
             <Button>New shipment</Button>
@@ -66,60 +75,80 @@ export default function ShipmentsPage() {
           hint="Create a lot with bags (e.g. 25 bags) to start tracking."
         />
       ) : (
-        <div className="grid gap-4">
-          {shipments.map((s) => {
-            const statusSummary = s.bags.reduce<Record<string, number>>((acc, b) => {
-              acc[b.status] = (acc[b.status] || 0) + 1;
-              return acc;
-            }, {});
-            return (
-              <Card key={s.id}>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <Link
-                      href={`/shipments/${s.id}`}
-                      className="font-display text-xl text-[var(--accent)] hover:underline"
-                    >
-                      Lot {s.lotNumber}
-                    </Link>
-                    {s.batchNumber && (
-                      <div className="text-sm text-[var(--muted)]">
-                        Batch {s.batchNumber}
-                      </div>
-                    )}
-                    <div className="mt-2 text-sm text-[var(--muted)]">
-                      {s.ownerParty
-                        ? `Owner: ${s.ownerParty.name} · `
-                        : ""}
-                      {s.originWarehouse
-                        ? `${s.originWarehouse.city}`
-                        : "Origin TBA"}{" "}
-                      →{" "}
-                      {s.destWarehouse ? s.destWarehouse.city : "Dest TBA"} ·{" "}
-                      {s.direction === "IN_TO_TH" ? "India → Thailand" : "Thailand → India"}
-                      {s.shipDate &&
-                        ` · ${format(new Date(s.shipDate), "dd MMM yyyy")}`}
-                    </div>
-                    {s.notes && (
-                      <p className="mt-1 text-sm text-[var(--muted)]">{s.notes}</p>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    <div className="font-display text-2xl">{s._count.bags}</div>
-                    <div className="text-xs text-[var(--muted)]">bags</div>
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {Object.entries(statusSummary).map(([st, n]) => (
-                    <Badge key={st} tone={statusTone(st)}>
-                      {BAG_STATUS_LABELS[st] || st}: {n}
-                    </Badge>
-                  ))}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
+        <Card className="overflow-x-auto p-0">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Shipment (lot)</th>
+                <th>Owner</th>
+                <th>Route</th>
+                <th>Bags</th>
+                <th>Status</th>
+                <th>Shipping</th>
+                <th>Date</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {shipments.map((s) => {
+                const status = deriveShipmentStatus(s.bags);
+                return (
+                  <tr key={s.id}>
+                    <td>
+                      <Link
+                        href={`/shipments/${s.id}`}
+                        className="font-medium text-[var(--accent)] hover:underline"
+                      >
+                        Lot {s.lotNumber}
+                      </Link>
+                      {s.batchNumber && (
+                        <div className="text-xs text-[var(--muted)]">
+                          Batch {s.batchNumber}
+                        </div>
+                      )}
+                    </td>
+                    <td>{s.ownerParty?.name || "—"}</td>
+                    <td className="text-xs text-[var(--muted)]">
+                      {s.originWarehouse?.city || "?"} →{" "}
+                      {s.destWarehouse?.city || "?"}
+                      <br />
+                      {s.direction === "IN_TO_TH"
+                        ? "India → Thailand"
+                        : "Thailand → India"}
+                    </td>
+                    <td className="font-display text-lg">{s._count.bags}</td>
+                    <td>
+                      <Badge tone={statusTone(status.key)}>
+                        {status.label}
+                      </Badge>
+                    </td>
+                    <td>
+                      {s.shippingChargeTotal != null
+                        ? formatMoney(
+                            s.shippingChargeTotal,
+                            s.shippingCurrency || "INR"
+                          )
+                        : "—"}
+                    </td>
+                    <td className="whitespace-nowrap text-sm text-[var(--muted)]">
+                      {s.shipDate
+                        ? format(new Date(s.shipDate), "dd MMM yyyy")
+                        : "—"}
+                    </td>
+                    <td>
+                      <Link
+                        href={`/shipments/${s.id}`}
+                        className="text-sm text-[var(--accent)] hover:underline"
+                      >
+                        Open
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Card>
       )}
     </div>
   );

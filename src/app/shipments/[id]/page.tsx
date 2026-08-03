@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, use, useMemo } from "react";
 import Link from "next/link";
 import {
   PageHeader,
@@ -15,10 +15,13 @@ import {
 import {
   BAG_STATUS_LABELS,
   TRANSPORT_MODE_LABELS,
+  deriveShipmentStatus,
   formatMoney,
 } from "@/lib/utils";
 import { format } from "date-fns";
 import { apiGet, apiPost, apiPatch } from "@/lib/client-api";
+import { PackingListModal } from "@/components/PackingListModal";
+import { FileText } from "lucide-react";
 
 type Bag = {
   id: string;
@@ -30,7 +33,12 @@ type Bag = {
   status: string;
   arrivedAt: string | null;
   deliveredAt: string | null;
-  customer: { id: string; name: string } | null;
+  customer: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+  } | null;
   warehouse: { name: string } | null;
   items?: Array<{ id: string; name: string; quantity: number; unit?: string }>;
   transportAssignments: Array<{
@@ -52,12 +60,22 @@ type Shipment = {
   direction: string;
   notes: string | null;
   shipDate: string | null;
-  ownerParty?: { id: string; name: string } | null;
+  ownerParty?: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+  } | null;
   shippingRatePerKg?: number | null;
   shippingCurrency?: "INR" | "THB";
   shippingChargeTotal?: number | null;
   shippingInvoicedAt?: string | null;
-  invoices?: Array<{ id: string; number: string; amount: number; currency: string }>;
+  invoices?: Array<{
+    id: string;
+    number: string;
+    amount: number;
+    currency: string;
+  }>;
   originWarehouse: { name: string; city: string } | null;
   destWarehouse: { name: string; city: string } | null;
   bags: Bag[];
@@ -74,6 +92,7 @@ export default function ShipmentDetailPage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editBag, setEditBag] = useState<Bag | null>(null);
   const [addCount, setAddCount] = useState("1");
+  const [packingOpen, setPackingOpen] = useState(false);
 
   const load = () =>
     apiGet<Shipment>(`/api/shipments/${id}`)
@@ -132,6 +151,57 @@ export default function ShipmentDetailPage({
     }
   }
 
+  const bagsByDeliverTo = useMemo(() => {
+    const bags = shipment?.bags || [];
+    const groups = new Map<
+      string,
+      { key: string; label: string; bags: Bag[] }
+    >();
+    for (const b of bags) {
+      const key = b.customer?.id || "__none__";
+      const label = b.customer?.name || "No deliver-to assigned";
+      const g = groups.get(key) || { key, label, bags: [] };
+      g.bags.push(b);
+      groups.set(key, g);
+    }
+    return [...groups.values()].sort((a, b) =>
+      a.label.localeCompare(b.label)
+    );
+  }, [shipment?.bags]);
+
+  const packingRecipients = useMemo(() => {
+    if (!shipment) return [];
+    const list: Array<{
+      id: string;
+      name: string;
+      phone?: string | null;
+      email?: string | null;
+      role: string;
+    }> = [];
+    if (shipment.ownerParty) {
+      list.push({
+        id: `owner-${shipment.ownerParty.id}`,
+        name: shipment.ownerParty.name,
+        phone: shipment.ownerParty.phone,
+        email: shipment.ownerParty.email,
+        role: "Goods owner",
+      });
+    }
+    const seen = new Set(list.map((r) => r.name));
+    for (const b of shipment.bags) {
+      if (!b.customer || seen.has(b.customer.name)) continue;
+      seen.add(b.customer.name);
+      list.push({
+        id: `deliver-${b.customer.id}`,
+        name: b.customer.name,
+        phone: b.customer.phone,
+        email: b.customer.email,
+        role: "Deliver to",
+      });
+    }
+    return list;
+  }, [shipment]);
+
   if (error && !shipment) {
     return (
       <Card>
@@ -155,12 +225,16 @@ export default function ShipmentDetailPage({
     0
   );
 
+  const shipmentStatus = deriveShipmentStatus(shipment.bags);
+
   return (
     <div>
       <PageHeader
         title={`Lot ${shipment.lotNumber}`}
         subtitle={`${
-          shipment.direction === "IN_TO_TH" ? "India → Thailand" : "Thailand → India"
+          shipment.direction === "IN_TO_TH"
+            ? "India → Thailand"
+            : "Thailand → India"
         }${shipment.batchNumber ? ` · Batch ${shipment.batchNumber}` : ""} · ${
           shipment.originWarehouse?.city || "?"
         } → ${shipment.destWarehouse?.city || "?"}`}
@@ -169,6 +243,10 @@ export default function ShipmentDetailPage({
             <Link href="/shipments">
               <Button variant="secondary">All shipments</Button>
             </Link>
+            <Button variant="secondary" onClick={() => setPackingOpen(true)}>
+              <FileText size={16} />
+              Packing list
+            </Button>
             <Link href={assignHref}>
               <Button disabled={selected.size === 0}>
                 Assign transport ({selected.size})
@@ -178,7 +256,24 @@ export default function ShipmentDetailPage({
         }
       />
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <div className="text-sm text-[var(--muted)]">Shipment status</div>
+          <div className="mt-2">
+            <Badge tone={statusTone(shipmentStatus.key)}>
+              {shipmentStatus.label}
+            </Badge>
+          </div>
+          <div className="mt-2 text-xs text-[var(--muted)]">
+            From bag progress across this lot
+          </div>
+        </Card>
+        <Card>
+          <div className="text-sm text-[var(--muted)]">Bags in this shipment</div>
+          <div className="mt-1 font-display text-xl">
+            {shipment.bags.length}
+          </div>
+        </Card>
         <Card>
           <div className="text-sm text-[var(--muted)]">Goods owner</div>
           <div className="mt-1 font-display text-xl">
@@ -188,32 +283,29 @@ export default function ShipmentDetailPage({
         <Card>
           <div className="text-sm text-[var(--muted)]">Total weight</div>
           <div className="mt-1 font-display text-xl">
-            {totalWeight.toLocaleString("en-IN", { maximumFractionDigits: 2 })} kg
+            {totalWeight.toLocaleString("en-IN", {
+              maximumFractionDigits: 2,
+            })}{" "}
+            kg
           </div>
-        </Card>
-        <Card>
-          <div className="text-sm text-[var(--muted)]">Shipping charges</div>
-          <div className="mt-1 font-display text-xl">
-            {shipment.shippingChargeTotal != null
-              ? formatMoney(
-                  shipment.shippingChargeTotal,
-                  shipment.shippingCurrency || "INR"
-                )
-              : "—"}
-          </div>
-          {shipment.shippingInvoicedAt && (
-            <div className="mt-1 text-xs text-emerald-700">
-              {shipment.invoices?.[0] ? (
-                <Link
-                  href={`/billing/${shipment.invoices[0].id}`}
-                  className="underline"
-                >
-                  Invoice {shipment.invoices[0].number}
-                </Link>
-              ) : (
-                "Invoiced"
-              )}{" "}
-              · on owner ledger
+          {shipment.shippingChargeTotal != null && (
+            <div className="mt-1 text-sm text-[var(--muted)]">
+              Shipping{" "}
+              {formatMoney(
+                shipment.shippingChargeTotal,
+                shipment.shippingCurrency || "INR"
+              )}
+              {shipment.invoices?.[0] && (
+                <>
+                  {" · "}
+                  <Link
+                    href={`/billing/${shipment.invoices[0].id}`}
+                    className="text-[var(--accent)] underline"
+                  >
+                    {shipment.invoices[0].number}
+                  </Link>
+                </>
+              )}
             </div>
           )}
         </Card>
@@ -232,98 +324,153 @@ export default function ShipmentDetailPage({
           Add bags
         </Button>
         <div className="ml-auto text-sm text-[var(--muted)]">
-          {shipment.bags.length} bags · select bags to assign air / sea / land / carry person
+          Bags stay under this shipment · select to assign transport
         </div>
       </Card>
 
-      <Card className="overflow-x-auto p-0">
-        <table className="data">
-          <thead>
-            <tr>
-              <th>
-                <input
-                  type="checkbox"
-                  checked={
-                    shipment.bags.length > 0 && selected.size === shipment.bags.length
-                  }
-                  onChange={toggleAll}
-                />
-              </th>
-              <th>Bag</th>
-              <th>Weight</th>
-              <th>Items</th>
-              <th>Deliver to</th>
-              <th>Ship charge</th>
-              <th>Status</th>
-              <th>Transport</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {shipment.bags.map((b) => {
-              const ta = b.transportAssignments[0]?.transportAssignment;
-              return (
-                <tr key={b.id}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(b.id)}
-                      onChange={() => toggle(b.id)}
-                    />
-                  </td>
-                  <td className="font-medium">#{b.bagNumber}</td>
-                  <td>{b.weightKg != null ? `${b.weightKg} kg` : "—"}</td>
-                  <td className="text-xs">
-                    {(b.items || []).length > 0
-                      ? (b.items || [])
-                          .map(
-                            (it) =>
-                              `${it.name} × ${it.quantity} ${it.unit || "pcs"}`
-                          )
-                          .join(", ")
-                      : b.contents || b.description || "—"}
-                  </td>
-                  <td>{b.customer?.name || "—"}</td>
-                  <td>
-                    {b.shippingCharge != null
-                      ? formatMoney(
-                          b.shippingCharge,
-                          shipment.shippingCurrency || "INR"
-                        )
-                      : "—"}
-                  </td>
-                  <td>
-                    <Badge tone={statusTone(b.status)}>
-                      {BAG_STATUS_LABELS[b.status] || b.status}
-                    </Badge>
-                  </td>
-                  <td className="text-xs">
-                    {ta ? (
-                      <>
-                        {TRANSPORT_MODE_LABELS[ta.mode] || ta.mode}
-                        <br />
-                        {ta.carrier?.name || ta.carrierName || "—"}
-                        <br />
-                        {format(new Date(ta.assignedDate), "dd MMM yyyy")}
-                      </>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td>
-                    <button
-                      className="text-sm text-[var(--accent)]"
-                      onClick={() => setEditBag(b)}
-                    >
-                      Edit
-                    </button>
-                  </td>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 className="font-display text-lg">
+          Bags in Lot {shipment.lotNumber}
+        </h2>
+        <label className="flex items-center gap-2 text-sm text-[var(--muted)]">
+          <input
+            type="checkbox"
+            checked={
+              shipment.bags.length > 0 &&
+              selected.size === shipment.bags.length
+            }
+            onChange={toggleAll}
+          />
+          Select all
+        </label>
+      </div>
+
+      <div className="space-y-4">
+        {bagsByDeliverTo.map((group) => (
+          <Card key={group.key} className="overflow-x-auto p-0">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] bg-[var(--bg)] px-4 py-2.5">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-[var(--muted)]">
+                  Deliver to
+                </div>
+                <div className="font-medium">{group.label}</div>
+              </div>
+              <div className="text-sm text-[var(--muted)]">
+                {group.bags.length} bag{group.bags.length === 1 ? "" : "s"}
+              </div>
+            </div>
+            <table className="data">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Bag</th>
+                  <th>Weight</th>
+                  <th>Items</th>
+                  <th>Ship charge</th>
+                  <th>Status</th>
+                  <th>Transport</th>
+                  <th></th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </Card>
+              </thead>
+              <tbody>
+                {group.bags.map((b) => {
+                  const ta = b.transportAssignments[0]?.transportAssignment;
+                  return (
+                    <tr key={b.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(b.id)}
+                          onChange={() => toggle(b.id)}
+                        />
+                      </td>
+                      <td className="font-medium">#{b.bagNumber}</td>
+                      <td>
+                        {b.weightKg != null ? `${b.weightKg} kg` : "—"}
+                      </td>
+                      <td className="text-xs">
+                        {(b.items || []).length > 0
+                          ? (b.items || [])
+                              .map(
+                                (it) =>
+                                  `${it.name} × ${it.quantity} ${it.unit || "pcs"}`
+                              )
+                              .join(", ")
+                          : b.contents || b.description || "—"}
+                      </td>
+                      <td>
+                        {b.shippingCharge != null
+                          ? formatMoney(
+                              b.shippingCharge,
+                              shipment.shippingCurrency || "INR"
+                            )
+                          : "—"}
+                      </td>
+                      <td>
+                        <Badge tone={statusTone(b.status)}>
+                          {BAG_STATUS_LABELS[b.status] || b.status}
+                        </Badge>
+                      </td>
+                      <td className="text-xs">
+                        {ta ? (
+                          <>
+                            {TRANSPORT_MODE_LABELS[ta.mode] || ta.mode}
+                            <br />
+                            {ta.carrier?.name || ta.carrierName || "—"}
+                            <br />
+                            {format(new Date(ta.assignedDate), "dd MMM yyyy")}
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          className="text-sm text-[var(--accent)]"
+                          onClick={() => setEditBag(b)}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+        ))}
+      </div>
+
+      <PackingListModal
+        open={packingOpen}
+        onClose={() => setPackingOpen(false)}
+        shipment={{
+          lotNumber: shipment.lotNumber,
+          batchNumber: shipment.batchNumber,
+          direction: shipment.direction,
+          shipDate: shipment.shipDate,
+          notes: shipment.notes,
+          originCity: shipment.originWarehouse?.city || null,
+          destCity: shipment.destWarehouse?.city || null,
+          ownerName: shipment.ownerParty?.name || null,
+          shippingCurrency: shipment.shippingCurrency || "INR",
+          shippingChargeTotal: shipment.shippingChargeTotal,
+          bags: shipment.bags.map((b) => ({
+            bagNumber: b.bagNumber,
+            weightKg: b.weightKg,
+            status: b.status,
+            customerName: b.customer?.name || null,
+            shippingCharge: b.shippingCharge,
+            items: (b.items || []).map((it) => ({
+              name: it.name,
+              quantity: it.quantity,
+              unit: it.unit,
+            })),
+            description: b.description || b.contents,
+          })),
+        }}
+        recipients={packingRecipients}
+      />
 
       <Modal open={!!editBag} onClose={() => setEditBag(null)} title="Edit bag">
         {editBag && (

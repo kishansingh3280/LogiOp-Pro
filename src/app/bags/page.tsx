@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   PageHeader,
@@ -11,7 +11,11 @@ import {
   statusTone,
   EmptyState,
 } from "@/components/ui";
-import { BAG_STATUS_LABELS, TRANSPORT_MODE_LABELS } from "@/lib/utils";
+import {
+  BAG_STATUS_LABELS,
+  TRANSPORT_MODE_LABELS,
+  deriveShipmentStatus,
+} from "@/lib/utils";
 import { apiGet } from "@/lib/client-api";
 
 type Bag = {
@@ -55,18 +59,40 @@ export default function BagsPage() {
         setBags(b);
         setError(null);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
+      .catch((e) =>
+        setError(e instanceof Error ? e.message : "Failed to load")
+      );
   }
 
   useEffect(() => {
     load();
   }, []);
 
+  const byShipment = useMemo(() => {
+    if (!bags) return [];
+    const map = new Map<
+      string,
+      {
+        shipment: Bag["shipment"];
+        bags: Bag[];
+      }
+    >();
+    for (const b of bags) {
+      const key = b.shipment.id;
+      const g = map.get(key) || { shipment: b.shipment, bags: [] };
+      g.bags.push(b);
+      map.set(key, g);
+    }
+    return [...map.values()].sort((a, b) =>
+      b.shipment.lotNumber.localeCompare(a.shipment.lotNumber)
+    );
+  }, [bags]);
+
   return (
     <div>
       <PageHeader
         title="Bag tracker"
-        subtitle="Real-time status by lot / batch — where every bag is right now"
+        subtitle="Bags grouped under their shipment — open a lot for full details"
       />
 
       <Card className="mb-4">
@@ -111,80 +137,93 @@ export default function BagsPage() {
       ) : !bags ? (
         <div className="text-[var(--muted)]">Loading bags…</div>
       ) : bags.length === 0 ? (
-        <EmptyState title="No bags found" hint="Create a shipment or clear filters." />
+        <EmptyState
+          title="No bags found"
+          hint="Create a shipment or clear filters."
+        />
       ) : (
-        <Card className="overflow-x-auto p-0">
-          <table className="data">
-            <thead>
-              <tr>
-                <th>Lot / Batch</th>
-                <th>Bag</th>
-                <th>Route</th>
-                <th>Customer</th>
-                <th>Weight</th>
-                <th>Transport</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bags.map((b) => {
-                const ta = b.transportAssignments[0]?.transportAssignment;
-                return (
-                  <tr key={b.id}>
-                    <td>
-                      <Link
-                        href={`/shipments/${b.shipment.id}`}
-                        className="font-medium text-[var(--accent)] hover:underline"
-                      >
-                        {b.shipment.lotNumber}
-                      </Link>
-                      {b.shipment.batchNumber && (
-                        <div className="text-xs text-[var(--muted)]">
-                          Batch {b.shipment.batchNumber}
-                        </div>
-                      )}
-                    </td>
-                    <td>#{b.bagNumber}</td>
-                    <td className="text-xs text-[var(--muted)]">
-                      {b.shipment.originWarehouse?.city || "?"} →{" "}
-                      {b.shipment.destWarehouse?.city || "?"}
-                      {b.warehouse && (
-                        <>
-                          <br />
-                          Now: {b.warehouse.name}
-                        </>
-                      )}
-                    </td>
-                    <td>{b.customer?.name || "—"}</td>
-                    <td>{b.weightKg != null ? `${b.weightKg} kg` : "—"}</td>
-                    <td className="text-xs">
-                      {ta ? (
-                        <>
-                          {TRANSPORT_MODE_LABELS[ta.mode] || ta.mode}
-                          <br />
-                          {ta.carrier?.name || ta.carrierName || "—"}
-                          {ta.deliveredToCustomer && (
-                            <>
-                              <br />
-                              <Badge tone="ok">Delivered to customer</Badge>
-                            </>
-                          )}
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>
-                      <Badge tone={statusTone(b.status)}>
-                        {BAG_STATUS_LABELS[b.status] || b.status}
-                      </Badge>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
+        <div className="space-y-4">
+          {byShipment.map(({ shipment, bags: groupBags }) => {
+            const lotStatus = deriveShipmentStatus(groupBags);
+            return (
+              <Card key={shipment.id} className="overflow-x-auto p-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] bg-[var(--bg)] px-4 py-3">
+                  <div>
+                    <Link
+                      href={`/shipments/${shipment.id}`}
+                      className="font-display text-lg text-[var(--accent)] hover:underline"
+                    >
+                      Lot {shipment.lotNumber}
+                    </Link>
+                    <div className="text-xs text-[var(--muted)]">
+                      {shipment.originWarehouse?.city || "?"} →{" "}
+                      {shipment.destWarehouse?.city || "?"}
+                      {shipment.batchNumber
+                        ? ` · Batch ${shipment.batchNumber}`
+                        : ""}
+                      {` · ${groupBags.length} bag${
+                        groupBags.length === 1 ? "" : "s"
+                      }`}
+                    </div>
+                  </div>
+                  <Badge tone={statusTone(lotStatus.key)}>
+                    {lotStatus.label}
+                  </Badge>
+                </div>
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>Bag</th>
+                      <th>Customer</th>
+                      <th>Weight</th>
+                      <th>Transport</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupBags.map((b) => {
+                      const ta =
+                        b.transportAssignments[0]?.transportAssignment;
+                      return (
+                        <tr key={b.id}>
+                          <td>#{b.bagNumber}</td>
+                          <td>{b.customer?.name || "—"}</td>
+                          <td>
+                            {b.weightKg != null ? `${b.weightKg} kg` : "—"}
+                          </td>
+                          <td className="text-xs">
+                            {ta ? (
+                              <>
+                                {TRANSPORT_MODE_LABELS[ta.mode] || ta.mode}
+                                <br />
+                                {ta.carrier?.name || ta.carrierName || "—"}
+                                {ta.deliveredToCustomer && (
+                                  <>
+                                    <br />
+                                    <Badge tone="ok">
+                                      Delivered to customer
+                                    </Badge>
+                                  </>
+                                )}
+                              </>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td>
+                            <Badge tone={statusTone(b.status)}>
+                              {BAG_STATUS_LABELS[b.status] || b.status}
+                            </Badge>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </Card>
+            );
+          })}
+        </div>
       )}
     </div>
   );

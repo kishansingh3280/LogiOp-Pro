@@ -217,6 +217,7 @@ export function statusTone(status: string): "neutral" | "ok" | "warn" | "danger"
       return "info";
     case "IN_TRANSIT":
     case "ASSIGNED":
+    case "MIXED":
       return "accent";
     case "LOST":
       return "danger";
