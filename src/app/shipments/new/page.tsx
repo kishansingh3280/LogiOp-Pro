@@ -71,6 +71,12 @@ export default function NewShipmentPage() {
     bagIndex: number;
     itemIndex: number;
   } | null>(null);
+  const [newItemOpen, setNewItemOpen] = useState(false);
+  const [newItemBag, setNewItemBag] = useState({
+    name: "",
+    unit: "pcs",
+  });
+  const [newItemBagIndex, setNewItemBagIndex] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bagCount, setBagCount] = useState("");
@@ -453,24 +459,37 @@ export default function NewShipmentPage() {
                       />
                     </div>
                     <div className="lg:col-span-4">
-                      <div className="mb-1 flex items-center justify-between">
+                      <div className="mb-1 flex items-center justify-between gap-2">
                         <label className="text-xs text-[var(--muted)]">
                           Items (name + qty + unit)
                         </label>
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 text-xs text-[var(--accent)]"
-                          onClick={() =>
-                            updateBag(i, {
-                              items: [
-                                ...b.items,
-                                { name: "", quantity: "1", unit: "pcs" },
-                              ],
-                            })
-                          }
-                        >
-                          <Plus size={12} /> Add item
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-xs text-[var(--accent)]"
+                            onClick={() => {
+                              setNewItemBagIndex(i);
+                              setNewItemForm({ name: "", unit: "pcs" });
+                              setNewItemOpen(true);
+                            }}
+                          >
+                            <Plus size={12} /> New item…
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-xs text-[var(--accent)]"
+                            onClick={() =>
+                              updateBag(i, {
+                                items: [
+                                  ...b.items,
+                                  { name: "", quantity: "1", unit: "pcs" },
+                                ],
+                              })
+                            }
+                          >
+                            <Plus size={12} /> Add more item
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-1.5">
                         {b.items.map((it, j) => (
@@ -702,6 +721,115 @@ export default function NewShipmentPage() {
       </div>
 
       <Modal
+        open={newItemOpen}
+        onClose={() => {
+          setNewItemOpen(false);
+          setNewItemBagIndex(null);
+        }}
+        title="Create new item"
+      >
+        <p className="mb-3 text-sm text-[var(--muted)]">
+          Saved to your Items catalog and added to this bag.
+        </p>
+        <div className="grid gap-3">
+          <Input
+            label="Item name *"
+            value={newItemForm.name}
+            onChange={(e) =>
+              setNewItemForm({ ...newItemForm, name: e.target.value })
+            }
+            placeholder="e.g. Fabrics"
+          />
+          <Select
+            label="Default unit"
+            value={newItemForm.unit}
+            onChange={(e) => {
+              if (e.target.value === "__new__") {
+                setUnitTarget(null);
+                setNewUnitName("");
+                setNewUnitOpen(true);
+                return;
+              }
+              setNewItemForm({ ...newItemForm, unit: e.target.value });
+            }}
+          >
+            {units.map((u) => (
+              <option key={u.id} value={u.name}>
+                {u.name}
+              </option>
+            ))}
+            <option value="__new__">+ New unit…</option>
+          </Select>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setNewItemOpen(false);
+              setNewItemBagIndex(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={async () => {
+              const name = newItemForm.name.trim();
+              if (!name) return;
+              try {
+                const created = await apiPost<{
+                  id: string;
+                  name: string;
+                  unit?: string;
+                }>("/api/items", {
+                  name,
+                  unit: newItemForm.unit || "pcs",
+                });
+                setCatalog((prev) => {
+                  if (prev.some((c) => c.id === created.id)) {
+                    return prev.map((c) =>
+                      c.id === created.id
+                        ? { ...c, name: created.name, unit: created.unit }
+                        : c
+                    );
+                  }
+                  return [...prev, created].sort((a, b) =>
+                    a.name.localeCompare(b.name)
+                  );
+                });
+                if (newItemBagIndex != null) {
+                  const bagIdx = newItemBagIndex;
+                  setBags((prev) => {
+                    const next = [...prev];
+                    const bag = { ...next[bagIdx] };
+                    const items = [...bag.items];
+                    const emptyIdx = items.findIndex((x) => !x.name.trim());
+                    const row = {
+                      name: created.name,
+                      quantity: "1",
+                      unit: created.unit || newItemForm.unit || "pcs",
+                    };
+                    if (emptyIdx >= 0) items[emptyIdx] = row;
+                    else items.push(row);
+                    bag.items = items;
+                    next[bagIdx] = bag;
+                    return next;
+                  });
+                }
+                setNewItemOpen(false);
+                setNewItemBagIndex(null);
+                setNewItemForm({ name: "", unit: "pcs" });
+              } catch (e) {
+                alert(e instanceof Error ? e.message : "Failed to create item");
+              }
+            }}
+            disabled={!newItemForm.name.trim()}
+          >
+            Save item
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
         open={newUnitOpen}
         onClose={() => {
           setNewUnitOpen(false);
@@ -743,6 +871,10 @@ export default function NewShipmentPage() {
                     a.name.localeCompare(b.name)
                   );
                 });
+                // If creating unit from New item modal, apply as default unit
+                if (!unitTarget && newItemOpen) {
+                  setNewItemForm((f) => ({ ...f, unit: created.name }));
+                }
                 if (unitTarget) {
                   const { bagIndex, itemIndex } = unitTarget;
                   setBags((prev) => {
