@@ -11,7 +11,8 @@ const SETTING_KEY = "google_maps";
  *   2. Places API   (Autocomplete + Place Details in the browser)
  *   3. Geocoding API (pin reverse-geocode)
  *
- * Restrict the key by HTTP referrer. Places search runs in the browser.
+ * Prefer GOOGLE_MAPS_API_KEY in `.env.local` (never commit the key).
+ * Restrict the key by HTTP referrer (localhost:3000 + your domain).
  */
 
 type MapsSettings = {
@@ -24,14 +25,12 @@ function defaultSettings(): MapsSettings {
   return { connected: false, apiKey: "", connectedAt: null };
 }
 
-async function readSettings(): Promise<MapsSettings> {
-  const row = await prisma.appSetting.findUnique({ where: { key: SETTING_KEY } });
-  if (!row) return defaultSettings();
-  try {
-    return { ...defaultSettings(), ...JSON.parse(row.value) };
-  } catch {
-    return defaultSettings();
-  }
+function envApiKey(): string {
+  return (
+    process.env.GOOGLE_MAPS_API_KEY?.trim() ||
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim() ||
+    ""
+  );
 }
 
 async function writeSettings(next: MapsSettings) {
@@ -41,6 +40,31 @@ async function writeSettings(next: MapsSettings) {
     create: { key: SETTING_KEY, value },
     update: { value },
   });
+}
+
+async function readSettings(): Promise<MapsSettings> {
+  const row = await prisma.appSetting.findUnique({ where: { key: SETTING_KEY } });
+  let settings = defaultSettings();
+  if (row) {
+    try {
+      settings = { ...defaultSettings(), ...JSON.parse(row.value) };
+    } catch {
+      settings = defaultSettings();
+    }
+  }
+
+  // Env key wins / fills in so you don't paste the key in the UI every machine.
+  const fromEnv = envApiKey();
+  if (fromEnv && (!settings.connected || !settings.apiKey || settings.apiKey !== fromEnv)) {
+    settings = {
+      connected: true,
+      apiKey: fromEnv,
+      connectedAt: settings.connectedAt || new Date().toISOString(),
+    };
+    await writeSettings(settings);
+  }
+
+  return settings;
 }
 
 export async function GET(req: NextRequest) {
@@ -57,6 +81,7 @@ export async function GET(req: NextRequest) {
       connected: Boolean(key),
       provider: "google",
       browserKey: key,
+      fromEnv: Boolean(envApiKey()),
     });
   }
 
@@ -79,23 +104,31 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "apiKey is required" }, { status: 400 });
     }
 
-    // Soft probe — browser-restricted keys often fail server-side; we still save.
+    // Soft probe against Places API (New). HTTP-referrer keys may still fail server-side.
     let probeOk = false;
     let probeNote: string | null = null;
     try {
-      const url = new URL("https://maps.googleapis.com/maps/api/place/autocomplete/json");
-      url.searchParams.set("input", "Bangkok");
-      url.searchParams.set("key", apiKey);
-      const res = await fetch(url.toString());
-      const data = (await res.json()) as { status?: string; error_message?: string };
-      if (data.status === "OK" || data.status === "ZERO_RESULTS") {
+      const res = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+        },
+        body: JSON.stringify({ input: "Bangkok" }),
+      });
+      const data = (await res.json()) as {
+        suggestions?: unknown[];
+        error?: { message?: string; status?: string };
+      };
+      if (res.ok && Array.isArray(data.suggestions)) {
         probeOk = true;
-      } else if (data.status === "REQUEST_DENIED") {
+      } else if (data.error?.message?.includes("not been used") || data.error?.message?.includes("disabled")) {
         probeNote =
-          data.error_message ||
-          "Server probe denied (common with HTTP-referrer–restricted keys). Key saved — Places search runs in the browser.";
-      } else {
-        probeNote = data.error_message || data.status || "Probe inconclusive; key saved for browser use.";
+          "Key saved, but enable Places API (New) + Maps JavaScript API + Geocoding API in Google Cloud Console, then wait ~1–2 minutes.";
+      } else if (!res.ok) {
+        probeNote =
+          data.error?.message ||
+          "Server probe denied (common with HTTP-referrer–restricted keys). Key saved — browser search may still work once APIs are enabled.";
       }
     } catch {
       probeNote = "Could not probe from server; key saved for browser Places search.";

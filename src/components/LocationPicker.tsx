@@ -20,6 +20,9 @@ type Suggestion = {
   description: string;
   mainText: string;
   secondaryText: string;
+  /** Places API (New) prediction — used for toPlace()/fetchFields */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  placePrediction?: any;
 };
 
 type Props = {
@@ -61,13 +64,13 @@ let mapsScriptPromise: Promise<void> | null = null;
 
 function loadGoogleMaps(apiKey: string): Promise<void> {
   if (typeof window === "undefined") return Promise.reject(new Error("SSR"));
-  if (window.google?.maps?.places) return Promise.resolve();
+  if (window.google?.maps) return Promise.resolve();
   if (mapsScriptPromise) return mapsScriptPromise;
 
   mapsScriptPromise = new Promise((resolve, reject) => {
     const existing = document.querySelector<HTMLScriptElement>("script[data-logiop-maps]");
     if (existing) {
-      if (window.google?.maps?.places) {
+      if (window.google?.maps) {
         resolve();
         return;
       }
@@ -80,7 +83,8 @@ function loadGoogleMaps(apiKey: string): Promise<void> {
     script.dataset.logiopMaps = "1";
     script.async = true;
     script.defer = true;
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&callback=__logiopMapsInit`;
+    // loading=async + places library; Places API (New) via AutocompleteSuggestion
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&v=weekly&loading=async&callback=__logiopMapsInit`;
     script.onerror = () => {
       mapsScriptPromise = null;
       reject(new Error("Google Maps failed to load — check API key and Maps JavaScript API"));
@@ -105,6 +109,7 @@ export function LocationPicker({
   const [browserKey, setBrowserKey] = useState<string | null>(null);
   const [mapsReady, setMapsReady] = useState(false);
   const [mapsError, setMapsError] = useState<string | null>(null);
+  const [usePlacesNew, setUsePlacesNew] = useState(false);
   const [connectKey, setConnectKey] = useState("");
   const [connectMsg, setConnectMsg] = useState<string | null>(null);
   const [showConnect, setShowConnect] = useState(false);
@@ -117,6 +122,7 @@ export function LocationPicker({
   const geocoderRef = useRef<google.maps.Geocoder | null>(null);
   const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
   const skipSearchRef = useRef(false);
+  const searchGenRef = useRef(0);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -157,11 +163,28 @@ export function LocationPicker({
     let cancelled = false;
     setMapsError(null);
     void loadGoogleMaps(browserKey)
-      .then(() => {
+      .then(async () => {
         if (cancelled) return;
-        autocompleteRef.current = new window.google!.maps.places.AutocompleteService();
+        // Prefer Places API (New) AutocompleteSuggestion when available
+        const placesLib = (await google.maps.importLibrary(
+          "places"
+        )) as google.maps.PlacesLibrary;
+        const hasNew =
+          typeof (
+            placesLib as unknown as {
+              AutocompleteSuggestion?: { fetchAutocompleteSuggestions?: unknown };
+            }
+          ).AutocompleteSuggestion?.fetchAutocompleteSuggestions === "function";
+
+        sessionTokenRef.current = new placesLib.AutocompleteSessionToken();
         geocoderRef.current = new window.google!.maps.Geocoder();
-        sessionTokenRef.current = new window.google!.maps.places.AutocompleteSessionToken();
+
+        if (hasNew) {
+          setUsePlacesNew(true);
+        } else {
+          setUsePlacesNew(false);
+          autocompleteRef.current = new placesLib.AutocompleteService();
+        }
         setMapsReady(true);
       })
       .catch((err: Error) => {
@@ -201,22 +224,19 @@ export function LocationPicker({
       markerRef.current.addListener("dragend", () => {
         const pos = markerRef.current?.getPosition();
         if (!pos) return;
-        const lat = pos.lat();
-        const lng = pos.lng();
-        void reverseGeocode(lat, lng);
+        void reverseGeocode(pos.lat(), pos.lng());
       });
       mapRef.current.addListener("click", (e: google.maps.MapMouseEvent) => {
         if (!e.latLng) return;
-        const lat = e.latLng.lat();
-        const lng = e.latLng.lng();
         markerRef.current?.setPosition(e.latLng);
-        void reverseGeocode(lat, lng);
+        void reverseGeocode(e.latLng.lat(), e.latLng.lng());
       });
     } else if (value.latitude != null && value.longitude != null) {
       const pos = { lat: value.latitude, lng: value.longitude };
       mapRef.current.setCenter(pos);
       markerRef.current?.setPosition(pos);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapsReady, value.latitude, value.longitude]);
 
   function reverseGeocode(lat: number, lng: number) {
@@ -260,49 +280,116 @@ export function LocationPicker({
     });
   }
 
-  // Google Places Autocomplete suggestions as you type
+  // Google Places Autocomplete — Places API (New) first, legacy fallback
   useEffect(() => {
     if (skipSearchRef.current) {
       skipSearchRef.current = false;
       return;
     }
     const q = query.trim();
-    if (!mapsReady || !autocompleteRef.current || q.length < 2) {
+    if (!mapsReady || q.length < 2) {
       setSuggestions([]);
       return;
     }
-    const handle = window.setTimeout(() => {
-      setBusy(true);
-      autocompleteRef.current!.getPlacePredictions(
-        {
-          input: q,
-          sessionToken: sessionTokenRef.current || undefined,
-        },
-        (predictions, status) => {
-          setBusy(false);
-          if (
-            status !== window.google!.maps.places.PlacesServiceStatus.OK ||
-            !predictions?.length
-          ) {
-            setSuggestions([]);
-            return;
-          }
-          setSuggestions(
-            predictions.map((p) => ({
-              placeId: p.place_id,
-              description: p.description,
-              mainText: p.structured_formatting?.main_text || p.description,
-              secondaryText: p.structured_formatting?.secondary_text || "",
-            }))
-          );
-          setOpen(true);
-        }
-      );
-    }, 220);
-    return () => window.clearTimeout(handle);
-  }, [query, mapsReady]);
 
-  function pickSuggestion(s: Suggestion) {
+    const gen = ++searchGenRef.current;
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        setBusy(true);
+        try {
+          if (usePlacesNew && window.google?.maps?.places) {
+            const placesLib = (await google.maps.importLibrary(
+              "places"
+            )) as google.maps.PlacesLibrary & {
+              AutocompleteSuggestion: {
+                fetchAutocompleteSuggestions: (req: {
+                  input: string;
+                  sessionToken?: google.maps.places.AutocompleteSessionToken;
+                }) => Promise<{
+                  suggestions: Array<{
+                    placePrediction?: {
+                      placeId?: string;
+                      text?: { text?: string };
+                      mainText?: { text?: string };
+                      secondaryText?: { text?: string };
+                      toPlace: () => google.maps.places.Place;
+                    };
+                  }>;
+                }>;
+              };
+            };
+
+            const { suggestions: raw } =
+              await placesLib.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+                input: q,
+                sessionToken: sessionTokenRef.current || undefined,
+              });
+
+            if (gen !== searchGenRef.current) return;
+
+            const mapped: Suggestion[] = (raw || [])
+              .map((s) => {
+                const p = s.placePrediction;
+                if (!p) return null;
+                const description = p.text?.text || p.mainText?.text || "";
+                return {
+                  placeId: p.placeId || description,
+                  description,
+                  mainText: p.mainText?.text || description,
+                  secondaryText: p.secondaryText?.text || "",
+                  placePrediction: p,
+                };
+              })
+              .filter(Boolean) as Suggestion[];
+
+            setSuggestions(mapped);
+            if (mapped.length) setOpen(true);
+          } else if (autocompleteRef.current) {
+            await new Promise<void>((resolve) => {
+              autocompleteRef.current!.getPlacePredictions(
+                {
+                  input: q,
+                  sessionToken: sessionTokenRef.current || undefined,
+                },
+                (predictions, status) => {
+                  if (gen !== searchGenRef.current) {
+                    resolve();
+                    return;
+                  }
+                  if (
+                    status !== window.google!.maps.places.PlacesServiceStatus.OK ||
+                    !predictions?.length
+                  ) {
+                    setSuggestions([]);
+                    resolve();
+                    return;
+                  }
+                  setSuggestions(
+                    predictions.map((p) => ({
+                      placeId: p.place_id,
+                      description: p.description,
+                      mainText: p.structured_formatting?.main_text || p.description,
+                      secondaryText: p.structured_formatting?.secondary_text || "",
+                    }))
+                  );
+                  setOpen(true);
+                  resolve();
+                }
+              );
+            });
+          }
+        } catch {
+          if (gen === searchGenRef.current) setSuggestions([]);
+        } finally {
+          if (gen === searchGenRef.current) setBusy(false);
+        }
+      })();
+    }, 220);
+
+    return () => window.clearTimeout(handle);
+  }, [query, mapsReady, usePlacesNew]);
+
+  async function pickSuggestion(s: Suggestion) {
     setOpen(false);
     setSuggestions([]);
     skipSearchRef.current = true;
@@ -335,47 +422,94 @@ export function LocationPicker({
       }
     };
 
-    if (placesRef.current) {
-      placesRef.current.getDetails(
-        {
-          placeId: s.placeId,
-          fields: [
-            "formatted_address",
-            "geometry",
-            "place_id",
-            "name",
-            "address_components",
-          ],
-          sessionToken: sessionTokenRef.current || undefined,
-        },
-        (place, status) => {
-          if (
-            status === window.google!.maps.places.PlacesServiceStatus.OK &&
-            place?.geometry?.location
-          ) {
-            const parsed = parseAddressComponents(place.address_components);
-            finish(
-              place.geometry.location.lat(),
-              place.geometry.location.lng(),
-              place.formatted_address || place.name || s.description,
-              place.place_id || s.placeId,
-              parsed.city,
-              parsed.country
-            );
-          } else {
-            setBusy(false);
-            onChange({
-              address: s.description,
-              city: value.city,
-              country: value.country,
-              latitude: null,
-              longitude: null,
-              placeId: s.placeId,
-            });
+    try {
+      if (s.placePrediction && typeof s.placePrediction.toPlace === "function") {
+        const place = s.placePrediction.toPlace() as google.maps.places.Place;
+        await place.fetchFields({
+          fields: ["displayName", "formattedAddress", "location", "id", "addressComponents"],
+        });
+        const loc = place.location;
+        if (loc) {
+          let city = "";
+          let country = "";
+          const comps = place.addressComponents || [];
+          for (const c of comps) {
+            const types = c.types || [];
+            if (types.includes("locality") || types.includes("administrative_area_level_2")) {
+              if (!city) city = c.longText || c.shortText || "";
+            }
+            if (types.includes("administrative_area_level_1") && !city) {
+              city = c.longText || c.shortText || "";
+            }
+            if (types.includes("country")) {
+              country = c.longText || c.shortText || "";
+            }
           }
+          finish(
+            loc.lat(),
+            loc.lng(),
+            place.formattedAddress || place.displayName || s.description,
+            place.id || s.placeId,
+            city,
+            country
+          );
+          return;
         }
-      );
-    } else {
+      }
+
+      if (placesRef.current) {
+        placesRef.current.getDetails(
+          {
+            placeId: s.placeId,
+            fields: [
+              "formatted_address",
+              "geometry",
+              "place_id",
+              "name",
+              "address_components",
+            ],
+            sessionToken: sessionTokenRef.current || undefined,
+          },
+          (place, status) => {
+            if (
+              status === window.google!.maps.places.PlacesServiceStatus.OK &&
+              place?.geometry?.location
+            ) {
+              const parsed = parseAddressComponents(place.address_components);
+              finish(
+                place.geometry.location.lat(),
+                place.geometry.location.lng(),
+                place.formatted_address || place.name || s.description,
+                place.place_id || s.placeId,
+                parsed.city,
+                parsed.country
+              );
+            } else {
+              setBusy(false);
+              onChange({
+                address: s.description,
+                city: value.city,
+                country: value.country,
+                latitude: null,
+                longitude: null,
+                placeId: s.placeId,
+              });
+            }
+          }
+        );
+        return;
+      }
+
+      setBusy(false);
+      onChange({
+        address: s.description,
+        city: value.city,
+        country: value.country,
+        latitude: null,
+        longitude: null,
+        placeId: s.placeId,
+      });
+    } catch {
       setBusy(false);
       onChange({
         address: s.description,
@@ -474,10 +608,11 @@ export function LocationPicker({
       {showConnect && !mapsConnected ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 space-y-2">
           <p className="text-xs text-amber-950">
-            Paste your <strong>Google Maps JavaScript API</strong> key. In Google Cloud, enable{" "}
-            <strong>Maps JavaScript API</strong> and <strong>Places API</strong> (and{" "}
-            <strong>Geocoding API</strong> for pin reverse-geocode). Restrict the key by HTTP
-            referrer to your site.
+            Prefer <code className="text-[10px]">GOOGLE_MAPS_API_KEY</code> in{" "}
+            <code className="text-[10px]">.env.local</code>. In Google Cloud enable{" "}
+            <strong>Maps JavaScript API</strong>, <strong>Places API (New)</strong>, and{" "}
+            <strong>Geocoding API</strong>. Restrict the key to{" "}
+            <code className="text-[10px]">http://localhost:3000/*</code>.
           </p>
           <div className="flex flex-wrap gap-2">
             <input
@@ -498,7 +633,7 @@ export function LocationPicker({
       {connectMsg ? <p className="text-xs text-slate-600">{connectMsg}</p> : null}
       {mapsError ? (
         <p className="text-xs text-rose-700">
-          {mapsError}. Enable Maps JavaScript API + Places API for this key.
+          {mapsError}. Enable Maps JavaScript API + Places API (New) for this key.
         </p>
       ) : null}
 
@@ -541,7 +676,7 @@ export function LocationPicker({
                 <button
                   type="button"
                   className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-slate-50"
-                  onClick={() => pickSuggestion(s)}
+                  onClick={() => void pickSuggestion(s)}
                 >
                   <span className="text-sm font-medium text-ink">{s.mainText}</span>
                   {s.secondaryText ? (
