@@ -20,8 +20,10 @@ type Party = {
   name: string;
   type: string;
   phone: string | null;
+  email?: string | null;
   city: string | null;
   country: string | null;
+  notes?: string | null;
   exchangeRate: number | null;
   quoteMode: string;
   defaultCurrency: string;
@@ -46,6 +48,7 @@ export default function PartiesPage() {
   const [parties, setParties] = useState<Party[]>([]);
   const [filter, setFilter] = useState("ALL");
   const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
@@ -61,19 +64,53 @@ export default function PartiesPage() {
   const filtered =
     filter === "ALL" ? parties : parties.filter((p) => p.type === filter);
 
+  function openCreate() {
+    setEditId(null);
+    setForm(emptyForm);
+    setOpen(true);
+  }
+
+  function openEdit(p: Party) {
+    setEditId(p.id);
+    setForm({
+      name: p.name,
+      type: p.type,
+      phone: p.phone || "",
+      email: p.email || "",
+      city: p.city || "",
+      country: p.country || "",
+      notes: p.notes || "",
+      exchangeRate: p.exchangeRate != null ? String(p.exchangeRate) : "",
+      quoteMode: p.quoteMode || "INR_PER_THB",
+      defaultCurrency: p.defaultCurrency || "INR",
+      carryRatePerKg: p.carryRatePerKg != null ? String(p.carryRatePerKg) : "",
+    });
+    setOpen(true);
+  }
+
   async function save() {
     setSaving(true);
-    await fetch("/api/parties", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...form,
-        exchangeRate: form.exchangeRate ? Number(form.exchangeRate) : null,
-        carryRatePerKg: form.carryRatePerKg ? Number(form.carryRatePerKg) : null,
-      }),
-    });
+    const payload = {
+      ...form,
+      exchangeRate: form.exchangeRate ? Number(form.exchangeRate) : null,
+      carryRatePerKg: form.carryRatePerKg ? Number(form.carryRatePerKg) : null,
+    };
+    if (editId) {
+      await fetch(`/api/parties/${editId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      await fetch("/api/parties", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
     setSaving(false);
     setOpen(false);
+    setEditId(null);
     setForm(emptyForm);
     load();
   }
@@ -83,7 +120,7 @@ export default function PartiesPage() {
       <PageHeader
         title="Parties"
         subtitle="Customers, carry persons and agents — with per-party FX quotes"
-        actions={<Button onClick={() => setOpen(true)}>Add party</Button>}
+        actions={<Button onClick={openCreate}>Add party</Button>}
       />
 
       <div className="mb-4 flex flex-wrap gap-2">
@@ -151,7 +188,13 @@ export default function PartiesPage() {
                   <td>
                     {p.carryRatePerKg != null ? `₹${p.carryRatePerKg}/kg` : "—"}
                   </td>
-                  <td>
+                  <td className="space-x-3 whitespace-nowrap">
+                    <button
+                      className="text-sm text-[var(--muted)] hover:text-[var(--ink)]"
+                      onClick={() => openEdit(p)}
+                    >
+                      Edit
+                    </button>
                     <Link
                       href={`/ledger/${p.id}`}
                       className="text-sm text-[var(--accent)] hover:underline"
@@ -166,7 +209,12 @@ export default function PartiesPage() {
         </Card>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Add party" wide>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editId ? "Edit party" : "Add party"}
+        wide
+      >
         <div className="grid gap-3 sm:grid-cols-2">
           <Input
             label="Name *"
@@ -249,7 +297,7 @@ export default function PartiesPage() {
             Cancel
           </Button>
           <Button onClick={save} disabled={!form.name || saving}>
-            {saving ? "Saving…" : "Save party"}
+            {saving ? "Saving…" : editId ? "Update party" : "Save party"}
           </Button>
         </div>
       </Modal>
