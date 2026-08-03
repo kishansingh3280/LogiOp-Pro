@@ -10,6 +10,7 @@ import {
   Select,
   statusTone,
   EmptyState,
+  Button,
 } from "@/components/ui";
 import {
   BAG_STATUS_LABELS,
@@ -17,6 +18,7 @@ import {
   deriveShipmentStatus,
 } from "@/lib/utils";
 import { apiGet } from "@/lib/client-api";
+import { ChevronDown, ChevronRight, Package } from "lucide-react";
 
 type Bag = {
   id: string;
@@ -49,6 +51,7 @@ export default function BagsPage() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   function load(query = q, st = status) {
     const params = new URLSearchParams();
@@ -78,21 +81,43 @@ export default function BagsPage() {
       }
     >();
     for (const b of bags) {
-      const key = b.shipment.id;
-      const g = map.get(key) || { shipment: b.shipment, bags: [] };
+      const key = b.shipment?.id || b.shipment?.lotNumber || "unknown";
+      const g = map.get(key) || {
+        shipment: b.shipment,
+        bags: [],
+      };
       g.bags.push(b);
       map.set(key, g);
     }
-    return [...map.values()].sort((a, b) =>
-      b.shipment.lotNumber.localeCompare(a.shipment.lotNumber)
-    );
+    return [...map.values()]
+      .map((g) => ({
+        ...g,
+        bags: [...g.bags].sort((a, b) =>
+          a.bagNumber.localeCompare(b.bagNumber, undefined, { numeric: true })
+        ),
+      }))
+      .sort((a, b) =>
+        (b.shipment?.lotNumber || "").localeCompare(a.shipment?.lotNumber || "")
+      );
   }, [bags]);
+
+  const statusBreakdown = (groupBags: Bag[]) => {
+    const counts: Record<string, number> = {};
+    for (const b of groupBags) {
+      counts[b.status] = (counts[b.status] || 0) + 1;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  };
+
+  function toggleLot(id: string) {
+    setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
 
   return (
     <div>
       <PageHeader
         title="Bag tracker"
-        subtitle="Bags grouped under their shipment — open a lot for full details"
+        subtitle="Organised by shipment lot — each lot shows how many bags it holds"
       />
 
       <Card className="mb-4">
@@ -120,12 +145,7 @@ export default function BagsPage() {
             ))}
           </Select>
           <div className="flex items-end">
-            <button
-              onClick={() => load()}
-              className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white"
-            >
-              Search
-            </button>
+            <Button onClick={() => load()}>Search</Button>
           </div>
         </div>
       </Card>
@@ -142,88 +162,167 @@ export default function BagsPage() {
           hint="Create a shipment or clear filters."
         />
       ) : (
-        <div className="space-y-4">
-          {byShipment.map(({ shipment, bags: groupBags }) => {
-            const lotStatus = deriveShipmentStatus(groupBags);
-            return (
-              <Card key={shipment.id} className="overflow-x-auto p-0">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] bg-[var(--bg)] px-4 py-3">
-                  <div>
-                    <Link
-                      href={`/shipments/${shipment.id}`}
-                      className="font-display text-lg text-[var(--accent)] hover:underline"
-                    >
-                      Lot {shipment.lotNumber}
-                    </Link>
-                    <div className="text-xs text-[var(--muted)]">
-                      {shipment.originWarehouse?.city || "?"} →{" "}
-                      {shipment.destWarehouse?.city || "?"}
-                      {shipment.batchNumber
-                        ? ` · Batch ${shipment.batchNumber}`
-                        : ""}
-                      {` · ${groupBags.length} bag${
-                        groupBags.length === 1 ? "" : "s"
-                      }`}
+        <>
+          <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5">
+              <Package size={14} />
+              <strong className="text-[var(--ink)]">{byShipment.length}</strong>{" "}
+              shipment{byShipment.length === 1 ? "" : "s"}
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5">
+              <strong className="text-[var(--ink)]">{bags.length}</strong> bags
+              total
+            </span>
+          </div>
+
+          <div className="space-y-5">
+            {byShipment.map(({ shipment, bags: groupBags }) => {
+              const lotId = shipment?.id || shipment?.lotNumber || "unknown";
+              const isCollapsed = Boolean(collapsed[lotId]);
+              const lotStatus = deriveShipmentStatus(groupBags);
+              const totalWeight = groupBags.reduce(
+                (s, b) => s + (b.weightKg != null ? b.weightKg : 0),
+                0
+              );
+              const breakdown = statusBreakdown(groupBags);
+
+              return (
+                <section
+                  key={lotId}
+                  className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)] shadow-sm"
+                >
+                  {/* Shipment lot header — highlighted */}
+                  <div className="border-b border-[var(--line)] bg-[var(--accent-soft)] px-4 py-4 sm:px-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-medium uppercase tracking-wide text-[var(--accent-ink)]">
+                          Shipment lot
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleLot(lotId)}
+                            className="inline-flex items-center gap-1 text-[var(--accent-ink)]"
+                            aria-label={isCollapsed ? "Expand lot" : "Collapse lot"}
+                          >
+                            {isCollapsed ? (
+                              <ChevronRight size={20} />
+                            ) : (
+                              <ChevronDown size={20} />
+                            )}
+                          </button>
+                          <Link
+                            href={`/shipments/${shipment.id}`}
+                            className="font-display text-2xl text-[var(--accent)] hover:underline sm:text-3xl"
+                          >
+                            Lot {shipment.lotNumber}
+                          </Link>
+                          <Badge tone={statusTone(lotStatus.key)}>
+                            {lotStatus.label}
+                          </Badge>
+                        </div>
+                        <div className="mt-2 text-sm text-[var(--muted)]">
+                          {shipment.originWarehouse?.city || "?"} →{" "}
+                          {shipment.destWarehouse?.city || "?"}
+                          {shipment.batchNumber
+                            ? ` · Batch ${shipment.batchNumber}`
+                            : ""}
+                          {totalWeight > 0
+                            ? ` · ${totalWeight.toLocaleString("en-IN", {
+                                maximumFractionDigits: 2,
+                              })} kg`
+                            : ""}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {breakdown.map(([st, n]) => (
+                            <Badge key={st} tone={statusTone(st)}>
+                              {BAG_STATUS_LABELS[st] || st}: {n}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-[var(--accent)]/25 bg-[var(--panel)] px-4 py-3 text-center">
+                        <div className="font-display text-3xl text-[var(--accent)]">
+                          {groupBags.length}
+                        </div>
+                        <div className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+                          bag{groupBags.length === 1 ? "" : "s"} in this lot
+                        </div>
+                        <Link
+                          href={`/shipments/${shipment.id}`}
+                          className="mt-2 inline-block text-xs text-[var(--accent)] hover:underline"
+                        >
+                          Open shipment →
+                        </Link>
+                      </div>
                     </div>
                   </div>
-                  <Badge tone={statusTone(lotStatus.key)}>
-                    {lotStatus.label}
-                  </Badge>
-                </div>
-                <table className="data">
-                  <thead>
-                    <tr>
-                      <th>Bag</th>
-                      <th>Customer</th>
-                      <th>Weight</th>
-                      <th>Transport</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupBags.map((b) => {
-                      const ta =
-                        b.transportAssignments[0]?.transportAssignment;
-                      return (
-                        <tr key={b.id}>
-                          <td>#{b.bagNumber}</td>
-                          <td>{b.customer?.name || "—"}</td>
-                          <td>
-                            {b.weightKg != null ? `${b.weightKg} kg` : "—"}
-                          </td>
-                          <td className="text-xs">
-                            {ta ? (
-                              <>
-                                {TRANSPORT_MODE_LABELS[ta.mode] || ta.mode}
-                                <br />
-                                {ta.carrier?.name || ta.carrierName || "—"}
-                                {ta.deliveredToCustomer && (
-                                  <>
-                                    <br />
-                                    <Badge tone="ok">
-                                      Delivered to customer
-                                    </Badge>
-                                  </>
-                                )}
-                              </>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td>
-                            <Badge tone={statusTone(b.status)}>
-                              {BAG_STATUS_LABELS[b.status] || b.status}
-                            </Badge>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </Card>
-            );
-          })}
-        </div>
+
+                  {!isCollapsed && (
+                    <div className="overflow-x-auto">
+                      <table className="data">
+                        <thead>
+                          <tr>
+                            <th>Bag #</th>
+                            <th>Deliver to</th>
+                            <th>Weight</th>
+                            <th>Transport</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {groupBags.map((b) => {
+                            const ta =
+                              b.transportAssignments[0]?.transportAssignment;
+                            return (
+                              <tr key={b.id}>
+                                <td className="font-medium">#{b.bagNumber}</td>
+                                <td>{b.customer?.name || "—"}</td>
+                                <td>
+                                  {b.weightKg != null
+                                    ? `${b.weightKg} kg`
+                                    : "—"}
+                                </td>
+                                <td className="text-xs">
+                                  {ta ? (
+                                    <>
+                                      {TRANSPORT_MODE_LABELS[ta.mode] ||
+                                        ta.mode}
+                                      <br />
+                                      {ta.carrier?.name ||
+                                        ta.carrierName ||
+                                        "—"}
+                                      {ta.deliveredToCustomer && (
+                                        <>
+                                          <br />
+                                          <Badge tone="ok">
+                                            Delivered to customer
+                                          </Badge>
+                                        </>
+                                      )}
+                                    </>
+                                  ) : (
+                                    "—"
+                                  )}
+                                </td>
+                                <td>
+                                  <Badge tone={statusTone(b.status)}>
+                                    {BAG_STATUS_LABELS[b.status] || b.status}
+                                  </Badge>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );
