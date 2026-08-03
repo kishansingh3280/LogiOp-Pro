@@ -248,13 +248,14 @@ export default function PartiesPage() {
             value={form.country}
             onChange={(e) => setForm({ ...form, country: e.target.value })}
           />
-          <Input
-            label="Street address (for Lalamove dropoff)"
-            className="sm:col-span-2"
-            value={form.address}
-            onChange={(e) => setForm({ ...form, address: e.target.value })}
-            placeholder="Building, road, area"
-          />
+          <div className="sm:col-span-2">
+            <Input
+              label="Street address (for Lalamove dropoff)"
+              value={form.address}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+              placeholder="Building, road, area"
+            />
+          </div>
           <Select
             label="Default currency"
             value={form.defaultCurrency}
