@@ -463,33 +463,17 @@ export default function NewShipmentPage() {
                         <label className="text-xs text-[var(--muted)]">
                           Items (name + qty + unit)
                         </label>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 text-xs text-[var(--accent)]"
-                            onClick={() => {
-                              setNewItemBagIndex(i);
-                              setNewItemForm({ name: "", unit: "pcs" });
-                              setNewItemOpen(true);
-                            }}
-                          >
-                            <Plus size={12} /> New item…
-                          </button>
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 text-xs text-[var(--accent)]"
-                            onClick={() =>
-                              updateBag(i, {
-                                items: [
-                                  ...b.items,
-                                  { name: "", quantity: "1", unit: "pcs" },
-                                ],
-                              })
-                            }
-                          >
-                            <Plus size={12} /> Add more item
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-xs text-[var(--accent)]"
+                          onClick={() => {
+                            setNewItemBagIndex(i);
+                            setNewItemForm({ name: "", unit: "pcs" });
+                            setNewItemOpen(true);
+                          }}
+                        >
+                          <Plus size={12} /> New item…
+                        </button>
                       </div>
                       <div className="space-y-1.5">
                         {b.items.map((it, j) => (
