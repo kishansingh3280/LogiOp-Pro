@@ -37,3 +37,18 @@ Open [http://localhost:3000](http://localhost:3000).
 4. Assign bags to a carry person / cargo mode
 5. Confirm ledger sync for agent payment
 6. Update arrival & delivery — track every bag live
+
+## Android app
+
+Native Android client lives in `mobile/` (Expo / React Native).
+
+```bash
+# Terminal 1 — API
+npm run dev
+
+# Terminal 2 — Android
+cd mobile && npm start
+```
+
+See [mobile/README.md](mobile/README.md) for Expo Go, emulator, and APK build steps.
+

@@ -56,3 +56,9 @@ next-env.d.ts
 skills-lock.json
 AGENTS.md
 CLAUDE.md
+
+# Mobile
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+
