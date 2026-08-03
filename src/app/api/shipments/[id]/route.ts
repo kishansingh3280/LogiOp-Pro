@@ -10,6 +10,8 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
     include: {
       originWarehouse: true,
       destWarehouse: true,
+      ownerParty: true,
+      invoices: true,
       bags: {
         orderBy: { bagNumber: "asc" },
         include: {

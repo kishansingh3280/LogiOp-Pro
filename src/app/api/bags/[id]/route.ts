@@ -32,6 +32,8 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   if (body.description !== undefined) data.description = body.description || null;
   if (body.contents !== undefined) data.contents = body.contents || null;
   if (body.customerId !== undefined) data.customerId = body.customerId || null;
+  if (body.deliveryNotes !== undefined)
+    data.deliveryNotes = body.deliveryNotes || null;
   if (body.warehouseId !== undefined) data.warehouseId = body.warehouseId || null;
   if (body.notes !== undefined) data.notes = body.notes || null;
   if (body.status != null) {

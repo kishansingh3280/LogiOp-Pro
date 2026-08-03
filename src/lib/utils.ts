@@ -85,8 +85,15 @@ export const PARTY_TYPE_DESCRIPTIONS: Record<string, string> = {
   INDIVIDUAL: "Personal ledger with people (business or personal)",
 };
 
-/** Parties who can be linked to shipments / bags */
+/** Parties who can own a shipment (billing / goods owner) */
 export const SHIPMENT_PARTY_TYPES = ["LOGISTIC_CUSTOMER", "BUYER"] as const;
+
+/** Parties who can receive a bag (end customer / deliver-to) */
+export const DELIVER_TO_PARTY_TYPES = [
+  "LOGISTIC_CUSTOMER",
+  "BUYER",
+  "INDIVIDUAL",
+] as const;
 
 /** Parties who can be assigned as transport carriers */
 export const TRANSPORT_PARTY_TYPES = ["CARRIER", "TRANSPORTER"] as const;

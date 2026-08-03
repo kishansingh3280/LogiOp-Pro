@@ -14,6 +14,9 @@ type Shipment = {
   direction: string;
   shipDate: string | null;
   notes: string | null;
+  ownerParty?: { id: string; name: string } | null;
+  shippingChargeTotal?: number | null;
+  shippingCurrency?: "INR" | "THB";
   originWarehouse: { name: string; city: string } | null;
   destWarehouse: { name: string; city: string } | null;
   bags: Array<{ id: string; status: string }>;
@@ -85,6 +88,9 @@ export default function ShipmentsPage() {
                       </div>
                     )}
                     <div className="mt-2 text-sm text-[var(--muted)]">
+                      {s.ownerParty
+                        ? `Owner: ${s.ownerParty.name} · `
+                        : ""}
                       {s.originWarehouse
                         ? `${s.originWarehouse.city}`
                         : "Origin TBA"}{" "}

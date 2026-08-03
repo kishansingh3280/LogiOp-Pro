@@ -15,6 +15,7 @@ import {
 import {
   BAG_STATUS_LABELS,
   TRANSPORT_MODE_LABELS,
+  formatMoney,
 } from "@/lib/utils";
 import { format } from "date-fns";
 import { apiGet, apiPost, apiPatch } from "@/lib/client-api";
@@ -25,6 +26,7 @@ type Bag = {
   weightKg: number | null;
   description: string | null;
   contents: string | null;
+  deliveryNotes?: string | null;
   status: string;
   arrivedAt: string | null;
   deliveredAt: string | null;
@@ -49,6 +51,12 @@ type Shipment = {
   direction: string;
   notes: string | null;
   shipDate: string | null;
+  ownerParty?: { id: string; name: string } | null;
+  shippingRatePerKg?: number | null;
+  shippingCurrency?: "INR" | "THB";
+  shippingChargeTotal?: number | null;
+  shippingInvoicedAt?: string | null;
+  invoices?: Array<{ id: string; number: string; amount: number; currency: string }>;
   originWarehouse: { name: string; city: string } | null;
   destWarehouse: { name: string; city: string } | null;
   bags: Bag[];
@@ -101,6 +109,7 @@ export default function ShipmentDetailPage({
         weightKg: editBag.weightKg,
         description: editBag.description,
         contents: editBag.contents,
+        deliveryNotes: editBag.deliveryNotes || null,
         status: editBag.status,
         customerId: editBag.customer?.id || null,
       });
@@ -140,6 +149,11 @@ export default function ShipmentDetailPage({
       ? `/transport/new?bags=${Array.from(selected).join(",")}`
       : "/transport/new";
 
+  const totalWeight = shipment.bags.reduce(
+    (s, b) => s + (b.weightKg != null ? b.weightKg : 0),
+    0
+  );
+
   return (
     <div>
       <PageHeader
@@ -162,6 +176,41 @@ export default function ShipmentDetailPage({
           </>
         }
       />
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <Card>
+          <div className="text-sm text-[var(--muted)]">Goods owner</div>
+          <div className="mt-1 font-display text-xl">
+            {shipment.ownerParty?.name || "—"}
+          </div>
+        </Card>
+        <Card>
+          <div className="text-sm text-[var(--muted)]">Total weight</div>
+          <div className="mt-1 font-display text-xl">
+            {totalWeight.toLocaleString("en-IN", { maximumFractionDigits: 2 })} kg
+          </div>
+        </Card>
+        <Card>
+          <div className="text-sm text-[var(--muted)]">Shipping charges</div>
+          <div className="mt-1 font-display text-xl">
+            {shipment.shippingChargeTotal != null
+              ? formatMoney(
+                  shipment.shippingChargeTotal,
+                  shipment.shippingCurrency || "INR"
+                )
+              : "—"}
+          </div>
+          {shipment.shippingInvoicedAt && (
+            <div className="mt-1 text-xs text-emerald-700">
+              Invoiced
+              {shipment.invoices?.[0]
+                ? ` · ${shipment.invoices[0].number}`
+                : ""}{" "}
+              · on owner ledger
+            </div>
+          )}
+        </Card>
+      </div>
 
       <Card className="mb-4 flex flex-wrap items-end gap-3">
         <Input
@@ -195,7 +244,7 @@ export default function ShipmentDetailPage({
               </th>
               <th>Bag</th>
               <th>Weight</th>
-              <th>Customer</th>
+              <th>Deliver to</th>
               <th>Status</th>
               <th>Transport</th>
               <th>Details</th>
@@ -216,7 +265,14 @@ export default function ShipmentDetailPage({
                   </td>
                   <td className="font-medium">#{b.bagNumber}</td>
                   <td>{b.weightKg != null ? `${b.weightKg} kg` : "—"}</td>
-                  <td>{b.customer?.name || "—"}</td>
+                  <td>
+                    <div>{b.customer?.name || "—"}</div>
+                    {b.deliveryNotes && (
+                      <div className="text-xs text-[var(--muted)]">
+                        {b.deliveryNotes}
+                      </div>
+                    )}
+                  </td>
                   <td>
                     <Badge tone={statusTone(b.status)}>
                       {BAG_STATUS_LABELS[b.status] || b.status}
@@ -281,6 +337,13 @@ export default function ShipmentDetailPage({
               label="Contents"
               value={editBag.contents || ""}
               onChange={(e) => setEditBag({ ...editBag, contents: e.target.value })}
+            />
+            <Input
+              label="Delivery note (for Lalamove later)"
+              value={editBag.deliveryNotes || ""}
+              onChange={(e) =>
+                setEditBag({ ...editBag, deliveryNotes: e.target.value })
+              }
             />
             <Select
               label="Status"

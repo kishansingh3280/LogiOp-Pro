@@ -82,6 +82,8 @@ model Party {
 
   ledgerEntries      LedgerEntry[]
   bagsAsCustomer     Bag[]              @relation("BagCustomer")
+  ownedShipments     Shipment[]         @relation("ShipmentOwner")
+  invoices           Invoice[]
   transportLegs      TransportAssignment[]
   // Transportation charges quoted to this carrier/transporter (or customer if relevant)
   carryRatePerKg     Float?
@@ -137,15 +139,26 @@ model Shipment {
   originWarehouse Warehouse?        @relation("OriginWarehouse", fields: [originWarehouseId], references: [id])
   destWarehouseId String?
   destWarehouse   Warehouse?        @relation("DestinationWarehouse", fields: [destWarehouseId], references: [id])
+  // Goods owner / billing customer (e.g. Lalit Ji) — pays shipping
+  ownerPartyId    String?
+  ownerParty      Party?            @relation("ShipmentOwner", fields: [ownerPartyId], references: [id])
   notes           String?
   shipDate        DateTime?
+  // Shipping charges billed to owner (rate × total bag weight)
+  shippingRatePerKg   Float?
+  shippingCurrency    Currency @default(INR)
+  shippingChargeTotal Float?
+  shippingInvoicedAt  DateTime?
+  shippingLedgerEntryId String?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  bags Bag[]
+  bags     Bag[]
+  invoices Invoice[]
 
   @@index([lotNumber])
   @@index([batchNumber])
+  @@index([ownerPartyId])
 }
 
 model Bag {
@@ -153,6 +166,7 @@ model Bag {
   bagNumber       String
   shipmentId      String
   shipment        Shipment   @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  // End recipient / deliver-to party (owner's customer in Bangkok etc.)
   customerId      String?
   customer        Party?     @relation("BagCustomer", fields: [customerId], references: [id])
   warehouseId     String?
@@ -161,7 +175,8 @@ model Bag {
   description     String?
   contents        String?
   status          BagStatus  @default(CREATED)
-  // Optional tracking fields
+  // Optional delivery hint for local last-mile (Lalamove later)
+  deliveryNotes   String?
   deliveredAt     DateTime?
   arrivedAt       DateTime?
   notes           String?
@@ -173,6 +188,26 @@ model Bag {
   @@unique([shipmentId, bagNumber])
   @@index([status])
   @@index([bagNumber])
+  @@index([customerId])
+}
+
+model Invoice {
+  id            String   @id @default(cuid())
+  number        String   @unique
+  partyId       String
+  party         Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  shipmentId    String?
+  shipment      Shipment? @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  amount        Float
+  currency      Currency
+  description   String?
+  issueDate     DateTime @default(now())
+  ledgerEntryId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([partyId])
+  @@index([shipmentId])
 }
 
 model TransportAssignment {

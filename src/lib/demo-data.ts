@@ -51,8 +51,14 @@ type DemoState = {
     direction: string;
     originWarehouseId: string;
     destWarehouseId: string;
+    ownerPartyId: string | null;
     notes: string | null;
     shipDate: string;
+    shippingRatePerKg: number | null;
+    shippingCurrency: "INR" | "THB";
+    shippingChargeTotal: number | null;
+    shippingInvoicedAt: string | null;
+    shippingLedgerEntryId: string | null;
     bags: Array<{
       id: string;
       bagNumber: string;
@@ -61,10 +67,22 @@ type DemoState = {
       description: string | null;
       contents: string | null;
       customerId: string | null;
+      deliveryNotes: string | null;
       warehouseId: string | null;
       arrivedAt: string | null;
       deliveredAt: string | null;
     }>;
+  }>;
+  invoices: Array<{
+    id: string;
+    number: string;
+    partyId: string;
+    shipmentId: string | null;
+    amount: number;
+    currency: "INR" | "THB";
+    description: string | null;
+    issueDate: string;
+    ledgerEntryId: string | null;
   }>;
   transports: Array<{
     id: string;
@@ -207,7 +225,8 @@ function seed(): DemoState {
     status: i < 5 ? "IN_TRANSIT" : "CREATED",
     description: i < 3 ? "Sample goods" : null,
     contents: null,
-    customerId: "p_rajesh",
+    customerId: i < 5 ? "p_buyer" : null,
+    deliveryNotes: i < 2 ? "Sukhumvit — call on arrival" : null,
     warehouseId: "wh_delhi",
     arrivedAt: null,
     deliveredAt: null,
@@ -268,9 +287,28 @@ function seed(): DemoState {
         direction: "IN_TO_TH",
         originWarehouseId: delhi.id,
         destWarehouseId: bkk.id,
+        ownerPartyId: "p_rajesh",
         notes: "Demo shipment — 25 bags Delhi → Bangkok",
         shipDate: new Date().toISOString(),
+        shippingRatePerKg: 200,
+        shippingCurrency: "INR",
+        shippingChargeTotal: 30000,
+        shippingInvoicedAt: new Date().toISOString(),
+        shippingLedgerEntryId: null,
         bags,
+      },
+    ],
+    invoices: [
+      {
+        id: "inv_demo",
+        number: "INV-LOT-DEMO-001",
+        partyId: "p_rajesh",
+        shipmentId: "ship_demo",
+        amount: 30000,
+        currency: "INR",
+        description: "Shipping charges for lot LOT-DEMO-001",
+        issueDate: new Date().toISOString(),
+        ledgerEntryId: null,
       },
     ],
     transports: [
@@ -585,10 +623,13 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
 
   if (method === "GET" && p === "/api/shipments") {
     const wh = warehouseMap();
+    const parties = partyMap();
     return state.shipments.map((s) => ({
       ...s,
       originWarehouse: wh[s.originWarehouseId] || null,
       destWarehouse: wh[s.destWarehouseId] || null,
+      ownerParty: s.ownerPartyId ? parties[s.ownerPartyId] || null : null,
+      invoices: state.invoices.filter((inv) => inv.shipmentId === s.id),
       bags: s.bags.map((b) => enrichBag(b, s)),
       _count: { bags: s.bags.length },
     }));
@@ -597,6 +638,40 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
   if (method === "POST" && p === "/api/shipments") {
     const b = body as Record<string, unknown>;
     const count = Number(b.bagCount) || 0;
+    const details = (Array.isArray(b.bags) ? b.bags : []) as Array<
+      Record<string, unknown>
+    >;
+    const ownerPartyId =
+      (b.ownerPartyId as string) ||
+      (b.defaultCustomerId as string) ||
+      null;
+    const shippingRatePerKg =
+      b.shippingRatePerKg != null ? Number(b.shippingRatePerKg) : null;
+    const shippingCurrency = (b.shippingCurrency as "INR" | "THB") || "INR";
+    const bags = Array.from({ length: count }, (_, i) => {
+      const d = details[i] || {};
+      return {
+        id: id("bag"),
+        bagNumber: String(d.bagNumber || String(i + 1).padStart(3, "0")),
+        weightKg: d.weightKg != null ? Number(d.weightKg) : null,
+        status: "CREATED",
+        description: (d.description as string) || null,
+        contents: (d.contents as string) || null,
+        customerId: (d.customerId as string) || null,
+        deliveryNotes: (d.deliveryNotes as string) || null,
+        warehouseId: (b.originWarehouseId as string) || null,
+        arrivedAt: null,
+        deliveredAt: null,
+      };
+    });
+    const totalWeight = bags.reduce((s, x) => s + (x.weightKg || 0), 0);
+    const shippingChargeTotal =
+      b.shippingChargeTotal != null
+        ? Number(b.shippingChargeTotal)
+        : shippingRatePerKg != null && totalWeight > 0
+          ? shippingRatePerKg * totalWeight
+          : null;
+
     const ship = {
       id: id("ship"),
       lotNumber: String(b.lotNumber),
@@ -604,27 +679,62 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       direction: String(b.direction || "IN_TO_TH"),
       originWarehouseId: String(b.originWarehouseId || ""),
       destWarehouseId: String(b.destWarehouseId || ""),
+      ownerPartyId,
       notes: (b.notes as string) || null,
-      shipDate: new Date().toISOString(),
-      bags: Array.from({ length: count }, (_, i) => ({
-        id: id("bag"),
-        bagNumber: String(i + 1).padStart(3, "0"),
-        weightKg: null,
-        status: "CREATED",
-        description: null,
-        contents: null,
-        customerId: (b.defaultCustomerId as string) || null,
-        warehouseId: (b.originWarehouseId as string) || null,
-        arrivedAt: null,
-        deliveredAt: null,
-      })),
+      shipDate: (b.shipDate as string) || new Date().toISOString(),
+      shippingRatePerKg,
+      shippingCurrency,
+      shippingChargeTotal,
+      shippingInvoicedAt: null as string | null,
+      shippingLedgerEntryId: null as string | null,
+      bags,
     };
+
+    if (ownerPartyId && shippingChargeTotal != null && shippingChargeTotal > 0) {
+      const ledger = {
+        id: id("le"),
+        partyId: ownerPartyId,
+        direction: "YOU_GAVE" as const,
+        amount: shippingChargeTotal,
+        currency: shippingCurrency,
+        description: `Shipping charges · Lot ${ship.lotNumber}`,
+        entryDate: ship.shipDate,
+        fxRate: null,
+        fxAmount: null,
+        fxCurrency: null,
+        isAutoSynced: true,
+        attachments: [] as Array<{
+          id: string;
+          fileName: string;
+          filePath: string;
+        }>,
+      };
+      state.entries.unshift(ledger);
+      const inv = {
+        id: id("inv"),
+        number: `INV-${ship.lotNumber}`,
+        partyId: ownerPartyId,
+        shipmentId: ship.id,
+        amount: shippingChargeTotal,
+        currency: shippingCurrency,
+        description: `Shipping charges for lot ${ship.lotNumber}`,
+        issueDate: ship.shipDate,
+        ledgerEntryId: ledger.id,
+      };
+      state.invoices.unshift(inv);
+      ship.shippingInvoicedAt = new Date().toISOString();
+      ship.shippingLedgerEntryId = ledger.id;
+    }
+
     state.shipments.unshift(ship);
     const wh = warehouseMap();
+    const parties = partyMap();
     return {
       ...ship,
       originWarehouse: wh[ship.originWarehouseId] || null,
       destWarehouse: wh[ship.destWarehouseId] || null,
+      ownerParty: ship.ownerPartyId ? parties[ship.ownerPartyId] || null : null,
+      invoices: state.invoices.filter((inv) => inv.shipmentId === ship.id),
       bags: ship.bags,
     };
   }
@@ -634,11 +744,16 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
     const s = state.shipments.find((x) => x.id === shipMatch[1]);
     if (!s) throw Object.assign(new Error("Not found"), { status: 404 });
     const wh = warehouseMap();
+    const parties = partyMap();
     return {
       ...s,
       originWarehouse: wh[s.originWarehouseId] || null,
       destWarehouse: wh[s.destWarehouseId] || null,
-      bags: s.bags.map((b) => enrichBag(b, s)).sort((a, b) => a.bagNumber.localeCompare(b.bagNumber)),
+      ownerParty: s.ownerPartyId ? parties[s.ownerPartyId] || null : null,
+      invoices: state.invoices.filter((inv) => inv.shipmentId === s.id),
+      bags: s.bags
+        .map((b) => enrichBag(b, s))
+        .sort((a, b) => a.bagNumber.localeCompare(b.bagNumber)),
     };
   }
 
@@ -657,6 +772,7 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       description: null,
       contents: null,
       customerId: null,
+      deliveryNotes: null,
       warehouseId: s.originWarehouseId,
       arrivedAt: null,
       deliveredAt: null,
