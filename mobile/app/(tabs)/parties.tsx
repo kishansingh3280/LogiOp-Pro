@@ -136,7 +136,7 @@ export default function PartiesScreen() {
             onChangeText={(exchangeRate) => setForm({ ...form, exchangeRate })}
           />
           <Field
-            label="Carry rate ₹/kg"
+            label="Transportation charges ₹/kg"
             keyboardType="decimal-pad"
             value={form.carryRatePerKg}
             onChangeText={(carryRatePerKg) => setForm({ ...form, carryRatePerKg })}

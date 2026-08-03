@@ -150,7 +150,7 @@ export default function PartiesPage() {
                 <th>Location</th>
                 <th>Quoted FX</th>
                 <th>Default</th>
-                <th>Carry / transport rate</th>
+                <th>Transportation charges</th>
                 <th></th>
               </tr>
             </thead>
