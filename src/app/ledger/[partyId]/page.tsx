@@ -85,6 +85,7 @@ export default function PartyLedgerPage({
   const [party, setParty] = useState<Party | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
   const [statementOpen, setStatementOpen] = useState(false);
   const [attachFor, setAttachFor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -177,7 +178,7 @@ export default function PartyLedgerPage({
 
     setSaving(true);
     try {
-      const entry = await apiPost<{ id: string }>("/api/ledger", {
+      const payload = {
         partyId,
         direction: form.direction,
         amount: postAmount,
@@ -187,11 +188,19 @@ export default function PartyLedgerPage({
         fxRate: postFxRate,
         fxAmount,
         fxCurrency,
-      });
-      if (pendingBill && entry?.id) {
-        await uploadAttachment(entry.id, pendingBill);
+      };
+      let entryId = editId;
+      if (editId) {
+        await apiPatch(`/api/ledger/${editId}`, payload);
+      } else {
+        const entry = await apiPost<{ id: string }>("/api/ledger", payload);
+        entryId = entry?.id || null;
+      }
+      if (pendingBill && entryId) {
+        await uploadAttachment(entryId, pendingBill);
       }
       setOpen(false);
+      setEditId(null);
       setPendingBill(null);
       setSaveAs(null);
       setForm((f) => ({
@@ -208,6 +217,52 @@ export default function PartyLedgerPage({
     }
   }
 
+  function openCreate() {
+    setEditId(null);
+    setPendingBill(null);
+    setSaveAs(null);
+    setForm({
+      direction: "YOU_GAVE",
+      amount: "",
+      currency: party?.defaultCurrency || "INR",
+      description: "",
+      entryDate: new Date().toISOString().slice(0, 10),
+      fxRate: party?.exchangeRate != null ? String(party.exchangeRate) : "",
+    });
+    setOpen(true);
+  }
+
+  function openModify(e: Entry) {
+    setEditId(e.id);
+    setPendingBill(null);
+    const converted =
+      e.fxAmount != null &&
+      e.fxCurrency != null &&
+      e.fxCurrency !== e.currency;
+    if (converted) {
+      setForm({
+        direction: e.direction,
+        amount: String(e.fxAmount),
+        currency: e.fxCurrency as "INR" | "THB",
+        description: e.description || "",
+        entryDate: e.entryDate.slice(0, 10),
+        fxRate: e.fxRate != null ? String(e.fxRate) : "",
+      });
+      setSaveAs(e.currency);
+    } else {
+      setForm({
+        direction: e.direction,
+        amount: String(e.amount),
+        currency: e.currency,
+        description: e.description || "",
+        entryDate: e.entryDate.slice(0, 10),
+        fxRate: "",
+      });
+      setSaveAs(null);
+    }
+    setOpen(true);
+  }
+
   async function uploadBill(entryId: string, file: File) {
     try {
       await uploadAttachment(entryId, file);
@@ -222,6 +277,8 @@ export default function PartyLedgerPage({
     if (!confirm("Delete this ledger entry?")) return;
     try {
       await apiDelete(`/api/ledger/${id}`);
+      setOpen(false);
+      setEditId(null);
       load();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to delete entry");
@@ -287,15 +344,7 @@ export default function PartyLedgerPage({
               <FileText className="h-4 w-4" />
               PDF statement
             </Button>
-            <Button
-              onClick={() => {
-                setPendingBill(null);
-                setSaveAs(null);
-                setOpen(true);
-              }}
-            >
-              Add entry
-            </Button>
+            <Button onClick={openCreate}>Add entry</Button>
           </>
         }
       />
@@ -451,10 +500,10 @@ export default function PartyLedgerPage({
                   </td>
                   <td>
                     <button
-                      className="text-xs text-red-600"
-                      onClick={() => deleteEntry(e.id)}
+                      className="text-xs text-[var(--accent)] hover:underline"
+                      onClick={() => openModify(e)}
                     >
-                      Delete
+                      Modify
                     </button>
                   </td>
                 </tr>
@@ -466,7 +515,15 @@ export default function PartyLedgerPage({
         </Card>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Add ledger entry" wide>
+      <Modal
+        open={open}
+        onClose={() => {
+          setOpen(false);
+          setEditId(null);
+        }}
+        title={editId ? "Modify ledger entry" : "Add ledger entry"}
+        wide
+      >
         <div className="space-y-4">
           <div>
             <div className="mb-1.5 text-sm text-[var(--muted)]">Direction</div>
@@ -615,20 +672,41 @@ export default function PartyLedgerPage({
           </div>
         </div>
 
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={saveEntry}
-            disabled={!form.amount || saving || (!!conversion && !saveAs)}
-          >
-            {saving
-              ? "Saving…"
-              : conversion && !saveAs
-                ? "Choose how to save"
-                : "Save entry"}
-          </Button>
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+          {editId ? (
+            <Button
+              variant="danger"
+              onClick={() => editId && deleteEntry(editId)}
+              disabled={saving}
+            >
+              Delete entry
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setOpen(false);
+                setEditId(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={saveEntry}
+              disabled={!form.amount || saving || (!!conversion && !saveAs)}
+            >
+              {saving
+                ? "Saving…"
+                : conversion && !saveAs
+                  ? "Choose how to save"
+                  : editId
+                    ? "Save changes"
+                    : "Save entry"}
+            </Button>
+          </div>
         </div>
       </Modal>
 

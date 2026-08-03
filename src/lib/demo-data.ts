@@ -530,6 +530,26 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
   }
 
   const ledgerMatch = p.match(/^\/api\/ledger\/([^/]+)$/);
+  if (method === "PATCH" && ledgerMatch) {
+    const entry = state.entries.find((e) => e.id === ledgerMatch[1]);
+    if (!entry) throw Object.assign(new Error("Not found"), { status: 404 });
+    const b = (body || {}) as Record<string, unknown>;
+    if (b.direction != null) entry.direction = b.direction as "YOU_GAVE" | "YOU_GOT";
+    if (b.amount != null) entry.amount = Number(b.amount);
+    if (b.currency != null) entry.currency = b.currency as "INR" | "THB";
+    if (b.description !== undefined) entry.description = (b.description as string) || null;
+    if (b.entryDate != null) entry.entryDate = String(b.entryDate);
+    if (b.fxRate !== undefined) {
+      entry.fxRate = b.fxRate != null ? Number(b.fxRate) : null;
+    }
+    if (b.fxAmount !== undefined) {
+      entry.fxAmount = b.fxAmount != null ? Number(b.fxAmount) : null;
+    }
+    if (b.fxCurrency !== undefined) {
+      entry.fxCurrency = (b.fxCurrency as "INR" | "THB") || null;
+    }
+    return { ...entry, party: partyMap()[entry.partyId] };
+  }
   if (method === "DELETE" && ledgerMatch) {
     state.entries = state.entries.filter((e) => e.id !== ledgerMatch[1]);
     return { ok: true };
