@@ -68,6 +68,7 @@ model Warehouse {
   originShipments      Shipment[] @relation("OriginWarehouse")
   destinationShipments Shipment[] @relation("DestinationWarehouse")
   bags                 Bag[]
+  lastMilePickups      LastMileDelivery[]
 }
 
 model Party {
@@ -78,6 +79,7 @@ model Party {
   email          String?
   city           String?
   country        String?
+  address        String?
   notes          String?
   // Optional default FX for this party (always stored as INR per 1 THB). Used later in ledger/invoices.
   exchangeRate   Float?
@@ -92,6 +94,7 @@ model Party {
   ownedShipments     Shipment[]         @relation("ShipmentOwner")
   invoices           Invoice[]
   transportLegs      TransportAssignment[]
+  lastMileDeliveries LastMileDelivery[] @relation("LastMileCustomer")
   // Transportation charges quoted to this carrier/transporter (or customer if relevant)
   carryRatePerKg     Float?
   carryRateCurrency  Currency @default(INR)
@@ -225,6 +228,7 @@ model Bag {
 
   items                BagItem[]
   transportAssignments TransportAssignmentBag[]
+  lastMileBags         LastMileDeliveryBag[]
 
   @@unique([shipmentId, bagNumber])
   @@index([status])
@@ -329,4 +333,45 @@ model AppSetting {
   id    String @id @default(cuid())
   key   String @unique
   value String
+}
+
+/** Last-mile delivery (e.g. Lalamove) from destination warehouse → end customer */
+model LastMileDelivery {
+  id               String    @id @default(cuid())
+  provider         String    @default("LALAMOVE")
+  status           String    @default("DRAFT") // DRAFT | QUOTED | BOOKED | COMPLETED | CANCELLED
+  externalOrderId  String?
+  quoteAmount      Float?
+  currency         Currency  @default(THB)
+  vehicleType      String?
+  trackingUrl      String?
+  pickupAddress    String?
+  dropoffAddress   String?
+  notes            String?
+  bookedAt         DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  pickupWarehouseId String?
+  pickupWarehouse   Warehouse? @relation(fields: [pickupWarehouseId], references: [id])
+  customerId        String?
+  customer          Party?     @relation("LastMileCustomer", fields: [customerId], references: [id])
+  shipmentId        String?
+
+  bags LastMileDeliveryBag[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([shipmentId])
+}
+
+model LastMileDeliveryBag {
+  id                 String           @id @default(cuid())
+  lastMileDeliveryId String
+  lastMileDelivery   LastMileDelivery @relation(fields: [lastMileDeliveryId], references: [id], onDelete: Cascade)
+  bagId              String
+  bag                Bag              @relation(fields: [bagId], references: [id], onDelete: Cascade)
+
+  @@unique([lastMileDeliveryId, bagId])
 }

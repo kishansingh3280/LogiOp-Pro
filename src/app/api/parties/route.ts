@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
       email: body.email || null,
       city: body.city || null,
       country: body.country || null,
+      address: body.address || null,
       notes: body.notes || null,
       exchangeRate: body.exchangeRate != null ? Number(body.exchangeRate) : null,
       quoteMode: "INR_PER_THB",

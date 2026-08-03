@@ -6,7 +6,23 @@ export async function GET() {
     orderBy: { assignedDate: "desc" },
     include: {
       carrier: true,
-      bags: { include: { bag: { include: { shipment: true } } } },
+      bags: {
+        include: {
+          bag: {
+            include: {
+              shipment: {
+                include: {
+                  destWarehouse: true,
+                  originWarehouse: true,
+                  ownerParty: true,
+                },
+              },
+              customer: true,
+              warehouse: true,
+            },
+          },
+        },
+      },
       ledgerEntries: true,
     },
   });
@@ -57,8 +73,8 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Update bag statuses to ASSIGNED (or IN_TRANSIT if departure set)
-  const newStatus = body.departureDate || body.markInTransit ? "IN_TRANSIT" : "ASSIGNED";
+  const newStatus =
+    body.departureDate || body.markInTransit ? "IN_TRANSIT" : "ASSIGNED";
   await prisma.bag.updateMany({
     where: { id: { in: bagIds } },
     data: { status: newStatus },
@@ -70,7 +86,7 @@ export async function POST(req: NextRequest) {
     ledgerEntry = await prisma.ledgerEntry.create({
       data: {
         partyId: body.carrierId,
-        direction: "YOU_GOT", // you owe the carrier (they will receive payment from you)
+        direction: "YOU_GOT",
         amount: payableAmount,
         currency: body.currency || "INR",
         description:

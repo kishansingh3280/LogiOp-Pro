@@ -31,6 +31,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       ...(body.email !== undefined && { email: body.email || null }),
       ...(body.city !== undefined && { city: body.city || null }),
       ...(body.country !== undefined && { country: body.country || null }),
+      ...(body.address !== undefined && { address: body.address || null }),
       ...(body.notes !== undefined && { notes: body.notes || null }),
       ...(body.exchangeRate !== undefined && {
         exchangeRate: body.exchangeRate != null ? Number(body.exchangeRate) : null,

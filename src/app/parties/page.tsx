@@ -24,6 +24,7 @@ type Party = {
   email?: string | null;
   city: string | null;
   country: string | null;
+  address?: string | null;
   notes?: string | null;
   exchangeRate: number | null;
   defaultCurrency: string;
@@ -38,6 +39,7 @@ const emptyForm = {
   email: "",
   city: "",
   country: "",
+  address: "",
   notes: "",
   exchangeRate: "",
   defaultCurrency: "INR",
@@ -81,6 +83,7 @@ export default function PartiesPage() {
       email: p.email || "",
       city: p.city || "",
       country: p.country || "",
+      address: p.address || "",
       notes: p.notes || "",
       exchangeRate: p.exchangeRate != null ? String(p.exchangeRate) : "",
       defaultCurrency: p.defaultCurrency || "INR",
@@ -244,6 +247,13 @@ export default function PartiesPage() {
             label="Country"
             value={form.country}
             onChange={(e) => setForm({ ...form, country: e.target.value })}
+          />
+          <Input
+            label="Street address (for Lalamove dropoff)"
+            className="sm:col-span-2"
+            value={form.address}
+            onChange={(e) => setForm({ ...form, address: e.target.value })}
+            placeholder="Building, road, area"
           />
           <Select
             label="Default currency"
