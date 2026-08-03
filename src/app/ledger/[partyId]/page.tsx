@@ -20,13 +20,14 @@ import {
   directionLabel,
 } from "@/lib/utils";
 import { format } from "date-fns";
-import { Paperclip } from "lucide-react";
+import { FileText, Paperclip } from "lucide-react";
 import {
   apiGet,
   apiPost,
   apiDelete,
   uploadAttachment,
 } from "@/lib/client-api";
+import { LedgerStatementModal } from "@/components/LedgerStatementModal";
 
 type Attachment = {
   id: string;
@@ -52,6 +53,10 @@ type Party = {
   id: string;
   name: string;
   type: string;
+  phone?: string | null;
+  email?: string | null;
+  city?: string | null;
+  country?: string | null;
   exchangeRate: number | null;
   quoteMode: string;
   defaultCurrency: "INR" | "THB";
@@ -78,6 +83,7 @@ export default function PartyLedgerPage({
   const [party, setParty] = useState<Party | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [statementOpen, setStatementOpen] = useState(false);
   const [attachFor, setAttachFor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingBill, setPendingBill] = useState<File | null>(null);
@@ -252,6 +258,13 @@ export default function PartyLedgerPage({
             <Link href="/ledger">
               <Button variant="secondary">All balances</Button>
             </Link>
+            <Button
+              variant="secondary"
+              onClick={() => setStatementOpen(true)}
+            >
+              <FileText className="h-4 w-4" />
+              PDF statement
+            </Button>
             <Button
               onClick={() => {
                 setPendingBill(null);
@@ -552,6 +565,13 @@ export default function PartyLedgerPage({
           }}
         />
       </Modal>
+
+      <LedgerStatementModal
+        open={statementOpen}
+        onClose={() => setStatementOpen(false)}
+        party={party}
+        entries={party.ledgerEntries || []}
+      />
     </div>
   );
 }
