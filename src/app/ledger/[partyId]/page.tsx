@@ -8,7 +8,6 @@ import {
   Button,
   Modal,
   Input,
-  Select,
   Textarea,
   Badge,
   EmptyState,
@@ -53,6 +52,17 @@ type Party = {
   ledgerEntries: Entry[];
 };
 
+function convertAmount(
+  amount: number,
+  from: "INR" | "THB",
+  rate: number,
+  quoteMode: string
+): { to: "INR" | "THB"; value: number } {
+  const inrPerThb = quoteMode === "THB_PER_INR" ? (rate === 0 ? 0 : 1 / rate) : rate;
+  if (from === "THB") return { to: "INR", value: amount * inrPerThb };
+  return { to: "THB", value: inrPerThb === 0 ? 0 : amount / inrPerThb };
+}
+
 export default function PartyLedgerPage({
   params,
 }: {
@@ -63,15 +73,15 @@ export default function PartyLedgerPage({
   const [open, setOpen] = useState(false);
   const [attachFor, setAttachFor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pendingBill, setPendingBill] = useState<File | null>(null);
+  const [saveAs, setSaveAs] = useState<"INR" | "THB" | null>(null);
   const [form, setForm] = useState({
-    direction: "YOU_GAVE",
+    direction: "YOU_GAVE" as "YOU_GAVE" | "YOU_GOT",
     amount: "",
-    currency: "INR",
+    currency: "INR" as "INR" | "THB",
     description: "",
     entryDate: new Date().toISOString().slice(0, 10),
     fxRate: "",
-    fxAmount: "",
-    fxCurrency: "",
   });
 
   const load = () =>
@@ -102,33 +112,91 @@ export default function PartyLedgerPage({
     return map;
   }, [party]);
 
+  const conversion = useMemo(() => {
+    const amount = Number(form.amount);
+    const rate = Number(form.fxRate);
+    if (!amount || !rate || amount <= 0 || rate <= 0) return null;
+    const quoteMode = party?.quoteMode || "INR_PER_THB";
+    const converted = convertAmount(amount, form.currency, rate, quoteMode);
+    return {
+      original: { currency: form.currency, amount },
+      converted,
+    };
+  }, [form.amount, form.fxRate, form.currency, party?.quoteMode]);
+
+  useEffect(() => {
+    if (conversion && !saveAs) setSaveAs(form.currency);
+    if (!conversion) setSaveAs(null);
+  }, [conversion, form.currency, saveAs]);
+
   async function saveEntry() {
+    if (!form.amount) return;
+
+    const amountNum = Number(form.amount);
+    const rateNum = form.fxRate ? Number(form.fxRate) : null;
+
+    let postAmount = amountNum;
+    let postCurrency: "INR" | "THB" = form.currency;
+    let fxAmount: number | null = null;
+    let fxCurrency: "INR" | "THB" | null = null;
+
+    if (conversion && rateNum) {
+      if (!saveAs) {
+        alert("FX rate is set — choose whether to save as THB or INR.");
+        return;
+      }
+      if (saveAs === form.currency) {
+        postAmount = conversion.original.amount;
+        postCurrency = conversion.original.currency;
+        fxAmount = conversion.converted.value;
+        fxCurrency = conversion.converted.to;
+      } else {
+        postAmount = conversion.converted.value;
+        postCurrency = conversion.converted.to;
+        fxAmount = conversion.original.amount;
+        fxCurrency = conversion.original.currency;
+      }
+    }
+
     setSaving(true);
-    await fetch("/api/ledger", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        partyId,
-        direction: form.direction,
-        amount: Number(form.amount),
-        currency: form.currency,
-        description: form.description,
-        entryDate: form.entryDate,
-        fxRate: form.fxRate ? Number(form.fxRate) : null,
-        fxAmount: form.fxAmount ? Number(form.fxAmount) : null,
-        fxCurrency: form.fxCurrency || null,
-      }),
-    });
-    setSaving(false);
-    setOpen(false);
-    setForm((f) => ({
-      ...f,
-      amount: "",
-      description: "",
-      fxAmount: "",
-      entryDate: new Date().toISOString().slice(0, 10),
-    }));
-    load();
+    try {
+      const res = await fetch("/api/ledger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          partyId,
+          direction: form.direction,
+          amount: postAmount,
+          currency: postCurrency,
+          description: form.description,
+          entryDate: form.entryDate,
+          fxRate: rateNum,
+          fxAmount,
+          fxCurrency,
+        }),
+      });
+      const entry = await res.json();
+      if (pendingBill && entry?.id) {
+        const fd = new FormData();
+        fd.append("file", pendingBill);
+        await fetch(`/api/ledger/${entry.id}/attachments`, {
+          method: "POST",
+          body: fd,
+        });
+      }
+      setOpen(false);
+      setPendingBill(null);
+      setSaveAs(null);
+      setForm((f) => ({
+        ...f,
+        amount: "",
+        description: "",
+        entryDate: new Date().toISOString().slice(0, 10),
+      }));
+      load();
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function uploadBill(entryId: string, file: File) {
@@ -167,7 +235,15 @@ export default function PartyLedgerPage({
             <Link href="/ledger">
               <Button variant="secondary">All balances</Button>
             </Link>
-            <Button onClick={() => setOpen(true)}>Add entry</Button>
+            <Button
+              onClick={() => {
+                setPendingBill(null);
+                setSaveAs(null);
+                setOpen(true);
+              }}
+            >
+              Add entry
+            </Button>
           </>
         }
       />
@@ -225,7 +301,7 @@ export default function PartyLedgerPage({
                     )}
                   </td>
                   <td>
-                    <Badge tone={e.direction === "YOU_GAVE" ? "ok" : "warn"}>
+                    <Badge tone={e.direction === "YOU_GAVE" ? "danger" : "ok"}>
                       {directionLabel(e.direction)}
                     </Badge>
                   </td>
@@ -265,7 +341,7 @@ export default function PartyLedgerPage({
                         className="inline-flex items-center gap-1 text-xs text-[var(--muted)] hover:text-[var(--accent)]"
                         onClick={() => setAttachFor(e.id)}
                       >
-                        <Paperclip size={12} /> Attach
+                        <Paperclip size={12} /> Add bill
                       </button>
                     </div>
                   </td>
@@ -285,70 +361,155 @@ export default function PartyLedgerPage({
       )}
 
       <Modal open={open} onClose={() => setOpen(false)} title="Add ledger entry" wide>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Select
-            label="Direction"
-            value={form.direction}
-            onChange={(e) => setForm({ ...form, direction: e.target.value })}
-          >
-            <option value="YOU_GAVE">You gave (advance / receivable)</option>
-            <option value="YOU_GOT">You got (payment in / payable)</option>
-          </Select>
-          <Input
-            label="Date"
-            type="date"
-            value={form.entryDate}
-            onChange={(e) => setForm({ ...form, entryDate: e.target.value })}
-          />
-          <Input
-            label="Amount *"
-            type="number"
-            step="0.01"
-            value={form.amount}
-            onChange={(e) => setForm({ ...form, amount: e.target.value })}
-          />
-          <Select
-            label="Currency"
-            value={form.currency}
-            onChange={(e) => setForm({ ...form, currency: e.target.value })}
-          >
-            <option value="INR">INR (₹)</option>
-            <option value="THB">THB (฿)</option>
-          </Select>
-          <Input
-            label="FX rate (optional)"
-            type="number"
-            step="0.01"
-            value={form.fxRate}
-            onChange={(e) => setForm({ ...form, fxRate: e.target.value })}
-            placeholder="Customer quoted rate"
-          />
-          <Input
-            label="Converted amount (optional)"
-            type="number"
-            step="0.01"
-            value={form.fxAmount}
-            onChange={(e) => setForm({ ...form, fxAmount: e.target.value })}
-          />
-          <Select
-            label="Converted currency"
-            value={form.fxCurrency}
-            onChange={(e) => setForm({ ...form, fxCurrency: e.target.value })}
-          >
-            <option value="">—</option>
-            <option value="INR">INR</option>
-            <option value="THB">THB</option>
-          </Select>
-          <div className="sm:col-span-2">
-            <Textarea
-              label="Description"
-              rows={3}
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="e.g. Credit advance against goods / THB received in Bangkok bank"
+        <div className="space-y-4">
+          <div>
+            <div className="mb-1.5 text-sm text-[var(--muted)]">Direction</div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, direction: "YOU_GAVE" })}
+                className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                  form.direction === "YOU_GAVE"
+                    ? "bg-red-600 text-white"
+                    : "border border-[var(--line)] bg-[var(--panel)] text-[var(--muted)]"
+                }`}
+              >
+                You gave
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, direction: "YOU_GOT" })}
+                className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                  form.direction === "YOU_GOT"
+                    ? "bg-emerald-600 text-white"
+                    : "border border-[var(--line)] bg-[var(--panel)] text-[var(--muted)]"
+                }`}
+              >
+                You got
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Input
+              label="Date"
+              type="date"
+              value={form.entryDate}
+              onChange={(e) => setForm({ ...form, entryDate: e.target.value })}
+            />
+            <div>
+              <div className="mb-1.5 text-sm text-[var(--muted)]">Entered currency</div>
+              <div className="flex gap-2">
+                {(["INR", "THB"] as const).map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => {
+                      setForm({ ...form, currency: c });
+                      setSaveAs(null);
+                    }}
+                    className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                      form.currency === c
+                        ? "bg-[var(--accent)] text-white"
+                        : "border border-[var(--line)] text-[var(--muted)]"
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Input
+              label="Amount *"
+              type="number"
+              step="0.01"
+              value={form.amount}
+              onChange={(e) => {
+                setForm({ ...form, amount: e.target.value });
+                setSaveAs(null);
+              }}
+            />
+            <Input
+              label="FX rate (₹ per ฿)"
+              type="number"
+              step="0.01"
+              value={form.fxRate}
+              onChange={(e) => {
+                setForm({ ...form, fxRate: e.target.value });
+                setSaveAs(null);
+              }}
+              placeholder="e.g. 2.85"
             />
           </div>
+
+          {conversion && (
+            <div className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-4">
+              <div className="font-medium text-[var(--accent-ink)]">Auto converted</div>
+              <div className="mt-1 text-sm">
+                {formatMoney(conversion.original.amount, conversion.original.currency)} @{" "}
+                {form.fxRate} ={" "}
+                <strong>
+                  {formatMoney(conversion.converted.value, conversion.converted.to)}
+                </strong>
+              </div>
+              <div className="mt-3 text-sm text-[var(--accent-ink)]">
+                Save this entry as THB or INR?
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSaveAs(conversion.original.currency)}
+                  className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                    saveAs === conversion.original.currency
+                      ? "bg-[var(--accent)] text-white"
+                      : "border border-[var(--line)] bg-white"
+                  }`}
+                >
+                  As {conversion.original.currency} (
+                  {formatMoney(conversion.original.amount, conversion.original.currency)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSaveAs(conversion.converted.to)}
+                  className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                    saveAs === conversion.converted.to
+                      ? "bg-[var(--accent)] text-white"
+                      : "border border-[var(--line)] bg-white"
+                  }`}
+                >
+                  As {conversion.converted.to} (
+                  {formatMoney(conversion.converted.value, conversion.converted.to)})
+                </button>
+              </div>
+            </div>
+          )}
+
+          <Textarea
+            label="Description"
+            rows={3}
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+            placeholder="e.g. Credit advance against goods / THB received in Bangkok bank"
+          />
+
+          <div>
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-[var(--muted)]">Attach bill (before save)</span>
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                className="block w-full text-sm"
+                onChange={(e) => setPendingBill(e.target.files?.[0] || null)}
+              />
+            </label>
+            {pendingBill && (
+              <p className="mt-1 text-sm text-[var(--accent-ink)]">
+                📎 {pendingBill.name}
+              </p>
+            )}
+          </div>
         </div>
+
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setOpen(false)}>
             Cancel
@@ -362,7 +523,7 @@ export default function PartyLedgerPage({
       <Modal
         open={!!attachFor}
         onClose={() => setAttachFor(null)}
-        title="Attach bill / receipt"
+        title="Attach another bill"
       >
         <Input
           label="Choose file"
@@ -373,9 +534,6 @@ export default function PartyLedgerPage({
             if (file && attachFor) uploadBill(attachFor, file);
           }}
         />
-        <p className="mt-2 text-xs text-[var(--muted)]">
-          PDF or image bills can be attached to every ledger entry.
-        </p>
       </Modal>
     </div>
   );

@@ -159,15 +159,22 @@ export function Chip({
   label,
   active,
   onPress,
+  tone = "accent",
 }: {
   label: string;
   active?: boolean;
   onPress: () => void;
+  tone?: "accent" | "danger" | "ok";
 }) {
+  const activeBg =
+    tone === "danger" ? colors.danger : tone === "ok" ? colors.ok : colors.accent;
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.chip, active && styles.chipActive]}
+      style={[
+        styles.chip,
+        active && { backgroundColor: activeBg, borderColor: activeBg },
+      ]}
     >
       <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
     </Pressable>
