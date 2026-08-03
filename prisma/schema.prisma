@@ -56,14 +56,17 @@ enum ShipmentDirection {
 }
 
 model Warehouse {
-  id        String   @id @default(cuid())
-  name      String
-  city      String
-  country   String
-  address   String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(cuid())
+  name       String
+  city       String
+  country    String
+  address    String?
+  latitude   Float?
+  longitude  Float?
+  placeId    String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   originShipments      Shipment[] @relation("OriginWarehouse")
   destinationShipments Shipment[] @relation("DestinationWarehouse")
@@ -80,6 +83,9 @@ model Party {
   city           String?
   country        String?
   address        String?
+  latitude       Float?
+  longitude      Float?
+  placeId        String?
   notes          String?
   // Optional default FX for this party (always stored as INR per 1 THB). Used later in ledger/invoices.
   exchangeRate   Float?
@@ -347,6 +353,10 @@ model LastMileDelivery {
   trackingUrl      String?
   pickupAddress    String?
   dropoffAddress   String?
+  pickupLat        Float?
+  pickupLng        Float?
+  dropoffLat       Float?
+  dropoffLng       Float?
   notes            String?
   bookedAt         DateTime?
   completedAt      DateTime?

@@ -32,6 +32,13 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       ...(body.city !== undefined && { city: body.city || null }),
       ...(body.country !== undefined && { country: body.country || null }),
       ...(body.address !== undefined && { address: body.address || null }),
+      ...(body.latitude !== undefined && {
+        latitude: body.latitude != null ? Number(body.latitude) : null,
+      }),
+      ...(body.longitude !== undefined && {
+        longitude: body.longitude != null ? Number(body.longitude) : null,
+      }),
+      ...(body.placeId !== undefined && { placeId: body.placeId || null }),
       ...(body.notes !== undefined && { notes: body.notes || null }),
       ...(body.exchangeRate !== undefined && {
         exchangeRate: body.exchangeRate != null ? Number(body.exchangeRate) : null,

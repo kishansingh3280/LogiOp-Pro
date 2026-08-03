@@ -168,6 +168,9 @@ export async function POST(req: NextRequest) {
               warehouse.address ||
               `${warehouse.name}, ${warehouse.city}, ${warehouse.country}`,
             city: warehouse.city,
+            latitude: warehouse.latitude,
+            longitude: warehouse.longitude,
+            placeId: warehouse.placeId,
           }
         : null,
       dropoff: customer
@@ -179,6 +182,9 @@ export async function POST(req: NextRequest) {
               [customer.city, customer.country].filter(Boolean).join(", ") ||
               null,
             city: customer.city,
+            latitude: customer.latitude,
+            longitude: customer.longitude,
+            placeId: customer.placeId,
           }
         : null,
       weightKg: weight,
@@ -234,6 +240,10 @@ export async function POST(req: NextRequest) {
           customer?.address ||
           [customer?.city, customer?.country].filter(Boolean).join(", ") ||
           null,
+        pickupLat: warehouse?.latitude ?? null,
+        pickupLng: warehouse?.longitude ?? null,
+        dropoffLat: customer?.latitude ?? null,
+        dropoffLng: customer?.longitude ?? null,
         notes: body.notes || null,
         bookedAt: new Date(),
         pickupWarehouseId: warehouse?.id || null,

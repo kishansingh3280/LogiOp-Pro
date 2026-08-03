@@ -15,6 +15,8 @@ import {
 } from "@/components/ui";
 import { PARTY_TYPE_LABELS, PARTY_TYPE_DESCRIPTIONS } from "@/lib/utils";
 import { apiGet, apiPost, apiPatch } from "@/lib/client-api";
+import { LocationPicker, type LocationValue } from "@/components/LocationPicker";
+import { MapPin } from "lucide-react";
 
 type Party = {
   id: string;
@@ -25,6 +27,9 @@ type Party = {
   city: string | null;
   country: string | null;
   address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  placeId?: string | null;
   notes?: string | null;
   exchangeRate: number | null;
   defaultCurrency: string;
@@ -40,6 +45,9 @@ const emptyForm = {
   city: "",
   country: "",
   address: "",
+  latitude: null as number | null,
+  longitude: null as number | null,
+  placeId: null as string | null,
   notes: "",
   exchangeRate: "",
   defaultCurrency: "INR",
@@ -84,6 +92,9 @@ export default function PartiesPage() {
       city: p.city || "",
       country: p.country || "",
       address: p.address || "",
+      latitude: p.latitude ?? null,
+      longitude: p.longitude ?? null,
+      placeId: p.placeId ?? null,
       notes: p.notes || "",
       exchangeRate: p.exchangeRate != null ? String(p.exchangeRate) : "",
       defaultCurrency: p.defaultCurrency || "INR",
@@ -100,6 +111,9 @@ export default function PartiesPage() {
       exchangeRate: form.exchangeRate ? Number(form.exchangeRate) : null,
       carryRatePerKg: form.carryRatePerKg ? Number(form.carryRatePerKg) : null,
       carryRateCurrency: form.carryRateCurrency,
+      latitude: form.latitude,
+      longitude: form.longitude,
+      placeId: form.placeId,
     };
     try {
       if (editId) {
@@ -173,7 +187,19 @@ export default function PartiesPage() {
                     <Badge tone="accent">{PARTY_TYPE_LABELS[p.type] || p.type}</Badge>
                   </td>
                   <td>
-                    {[p.city, p.country].filter(Boolean).join(", ") || "—"}
+                    <div>
+                      {[p.city, p.country].filter(Boolean).join(", ") || "—"}
+                    </div>
+                    {p.latitude != null && p.longitude != null ? (
+                      <div className="mt-0.5 text-xs text-emerald-700">
+                        <MapPin size={10} className="mr-0.5 inline" />
+                        Mapped
+                      </div>
+                    ) : p.address ? (
+                      <div className="mt-0.5 max-w-[180px] truncate text-xs text-[var(--muted)]">
+                        {p.address}
+                      </div>
+                    ) : null}
                   </td>
                   <td>{p.defaultCurrency}</td>
                   <td>
@@ -249,11 +275,27 @@ export default function PartiesPage() {
             onChange={(e) => setForm({ ...form, country: e.target.value })}
           />
           <div className="sm:col-span-2">
-            <Input
-              label="Street address (for Lalamove dropoff)"
-              value={form.address}
-              onChange={(e) => setForm({ ...form, address: e.target.value })}
-              placeholder="Building, road, area"
+            <LocationPicker
+              label="Map search / pin address (Lalamove dropoff)"
+              value={{
+                address: form.address,
+                city: form.city,
+                country: form.country,
+                latitude: form.latitude,
+                longitude: form.longitude,
+                placeId: form.placeId,
+              }}
+              onChange={(loc: LocationValue) =>
+                setForm((f) => ({
+                  ...f,
+                  address: loc.address || f.address,
+                  city: loc.city || f.city,
+                  country: loc.country || f.country,
+                  latitude: loc.latitude,
+                  longitude: loc.longitude,
+                  placeId: loc.placeId,
+                }))
+              }
             />
           </div>
           <Select

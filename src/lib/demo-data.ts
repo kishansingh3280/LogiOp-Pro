@@ -9,6 +9,9 @@ export type DemoParty = {
   city: string | null;
   country: string | null;
   address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  placeId: string | null;
   notes: string | null;
   exchangeRate: number | null;
   quoteMode: string;
@@ -43,6 +46,9 @@ type DemoState = {
     city: string;
     country: string;
     address: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    placeId: string | null;
     isActive: boolean;
   }>;
   shipments: Array<{
@@ -149,6 +155,11 @@ type DemoState = {
     sandbox: boolean;
     connectedAt: string | null;
   };
+  googleMaps: {
+    connected: boolean;
+    apiKey: string;
+    connectedAt: string | null;
+  };
   lastMileDeliveries: Array<{
     id: string;
     provider: string;
@@ -160,6 +171,10 @@ type DemoState = {
     trackingUrl: string | null;
     pickupAddress: string | null;
     dropoffAddress: string | null;
+    pickupLat: number | null;
+    pickupLng: number | null;
+    dropoffLat: number | null;
+    dropoffLng: number | null;
     notes: string | null;
     bookedAt: string | null;
     completedAt: string | null;
@@ -175,11 +190,11 @@ function id(prefix: string) {
 }
 
 function seed(): DemoState {
-  const delhi = { id: "wh_delhi", name: "Delhi Warehouse", city: "Delhi", country: "India", address: "Okhla Phase II, New Delhi", isActive: true };
-  const bkk = { id: "wh_bkk", name: "Bangkok Warehouse", city: "Bangkok", country: "Thailand", address: "Lat Krabang industrial estate, Bangkok", isActive: true };
-  const kol = { id: "wh_kol", name: "Kolkata Warehouse", city: "Kolkata", country: "India", address: null, isActive: true };
-  const jai = { id: "wh_jai", name: "Jaipur Warehouse", city: "Jaipur", country: "India", address: null, isActive: true };
-  const mum = { id: "wh_mum", name: "Mumbai Warehouse", city: "Mumbai", country: "India", address: null, isActive: true };
+  const delhi = { id: "wh_delhi", name: "Delhi Warehouse", city: "Delhi", country: "India", address: "Okhla Phase II, New Delhi", latitude: 28.5355, longitude: 77.2910, placeId: null, isActive: true };
+  const bkk = { id: "wh_bkk", name: "Bangkok Warehouse", city: "Bangkok", country: "Thailand", address: "Lat Krabang industrial estate, Bangkok", latitude: 13.7234, longitude: 100.7487, placeId: null, isActive: true };
+  const kol = { id: "wh_kol", name: "Kolkata Warehouse", city: "Kolkata", country: "India", address: null, latitude: 22.5726, longitude: 88.3639, placeId: null, isActive: true };
+  const jai = { id: "wh_jai", name: "Jaipur Warehouse", city: "Jaipur", country: "India", address: null, latitude: 26.9124, longitude: 75.7873, placeId: null, isActive: true };
+  const mum = { id: "wh_mum", name: "Mumbai Warehouse", city: "Mumbai", country: "India", address: null, latitude: 19.0760, longitude: 72.8777, placeId: null, isActive: true };
 
   const rajesh: DemoParty = {
     id: "p_rajesh",
@@ -190,6 +205,9 @@ function seed(): DemoState {
     city: "Delhi",
     country: "India",
     address: "Chandni Chowk, Delhi",
+    latitude: 28.6562,
+    longitude: 77.2410,
+    placeId: null,
     notes: "Sends goods India → Thailand",
     exchangeRate: 2.45,
     quoteMode: "INR_PER_THB",
@@ -208,6 +226,9 @@ function seed(): DemoState {
     city: "Bangkok",
     country: "Thailand",
     address: "Sukhumvit Soi 22, Bangkok",
+    latitude: 13.7308,
+    longitude: 100.5695,
+    placeId: null,
     notes: "Thai-side logistic customer",
     exchangeRate: 2.42,
     quoteMode: "INR_PER_THB",
@@ -226,6 +247,9 @@ function seed(): DemoState {
     city: "Bangkok",
     country: "Thailand",
     address: null,
+    latitude: null,
+    longitude: null,
+    placeId: null,
     notes: "Buys our own products",
     exchangeRate: 2.5,
     quoteMode: "INR_PER_THB",
@@ -244,6 +268,9 @@ function seed(): DemoState {
     city: "Delhi",
     country: "India",
     address: null,
+    latitude: null,
+    longitude: null,
+    placeId: null,
     notes: null,
     exchangeRate: null,
     quoteMode: "INR_PER_THB",
@@ -262,6 +289,9 @@ function seed(): DemoState {
     city: "Bangkok",
     country: "Thailand",
     address: null,
+    latitude: null,
+    longitude: null,
+    placeId: null,
     notes: "Air cargo company",
     exchangeRate: null,
     quoteMode: "INR_PER_THB",
@@ -280,6 +310,9 @@ function seed(): DemoState {
     city: "Jaipur",
     country: "India",
     address: null,
+    latitude: null,
+    longitude: null,
+    placeId: null,
     notes: "Personal ledger",
     exchangeRate: null,
     quoteMode: "INR_PER_THB",
@@ -533,6 +566,11 @@ function seed(): DemoState {
       apiKey: "",
       market: "TH_BKK",
       sandbox: true,
+      connectedAt: null,
+    },
+    googleMaps: {
+      connected: false,
+      apiKey: "",
       connectedAt: null,
     },
     lastMileDeliveries: [],
@@ -1144,6 +1182,9 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       city: (b.city as string) || null,
       country: (b.country as string) || null,
       address: (b.address as string) || null,
+      latitude: b.latitude != null ? Number(b.latitude) : null,
+      longitude: b.longitude != null ? Number(b.longitude) : null,
+      placeId: (b.placeId as string) || null,
       notes: (b.notes as string) || null,
       exchangeRate: b.exchangeRate != null ? Number(b.exchangeRate) : null,
       quoteMode: "INR_PER_THB",
@@ -1241,7 +1282,9 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
     return att;
   }
 
-  if (method === "GET" && p === "/api/warehouses") return state.warehouses;
+  if (method === "GET" && p === "/api/warehouses") {
+    return state.warehouses.filter((w) => w.isActive);
+  }
   if (method === "POST" && p === "/api/warehouses") {
     const b = body as Record<string, unknown>;
     const w = {
@@ -1250,10 +1293,36 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       city: String(b.city),
       country: String(b.country || "India"),
       address: (b.address as string) || null,
+      latitude: b.latitude != null ? Number(b.latitude) : null,
+      longitude: b.longitude != null ? Number(b.longitude) : null,
+      placeId: (b.placeId as string) || null,
       isActive: true,
     };
     state.warehouses.push(w);
     return w;
+  }
+  const whMatch = p.match(/^\/api\/warehouses\/([^/]+)$/);
+  if (method === "PATCH" && whMatch) {
+    const w = state.warehouses.find((x) => x.id === whMatch[1]);
+    if (!w) throw Object.assign(new Error("Not found"), { status: 404 });
+    const b = (body || {}) as Record<string, unknown>;
+    if (b.name != null) w.name = String(b.name);
+    if (b.city != null) w.city = String(b.city);
+    if (b.country != null) w.country = String(b.country);
+    if (b.address !== undefined) w.address = (b.address as string) || null;
+    if (b.latitude !== undefined)
+      w.latitude = b.latitude != null ? Number(b.latitude) : null;
+    if (b.longitude !== undefined)
+      w.longitude = b.longitude != null ? Number(b.longitude) : null;
+    if (b.placeId !== undefined) w.placeId = (b.placeId as string) || null;
+    if (b.isActive != null) w.isActive = Boolean(b.isActive);
+    return w;
+  }
+  if (method === "DELETE" && whMatch) {
+    const w = state.warehouses.find((x) => x.id === whMatch[1]);
+    if (!w) throw Object.assign(new Error("Not found"), { status: 404 });
+    w.isActive = false;
+    return { ok: true };
   }
 
   if (method === "GET" && p === "/api/shipments") {
@@ -1691,6 +1760,120 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
   }
 
   // Lalamove / last-mile
+  if (method === "GET" && p === "/api/maps") {
+    if (q.get("settings") === "1") {
+      const g = state.googleMaps;
+      return {
+        connected: g.connected,
+        hasApiKey: Boolean(g.apiKey),
+        apiKeyMasked: g.apiKey
+          ? `${g.apiKey.slice(0, 4)}••••${g.apiKey.slice(-3)}`
+          : null,
+        connectedAt: g.connectedAt,
+        provider: g.connected && g.apiKey ? "google" : "osm",
+      };
+    }
+    const lat = q.get("lat");
+    const lng = q.get("lng");
+    if (lat && lng) {
+      return {
+        place: {
+          placeId: `pin:${lat},${lng}`,
+          label: `Pinned ${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
+          address: `Pinned location ${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
+          city: "",
+          country: "",
+          latitude: Number(lat),
+          longitude: Number(lng),
+          provider: "osm",
+        },
+      };
+    }
+    const query = (q.get("q") || "").trim();
+    if (!query || query.length < 2) return { results: [], provider: "osm" };
+    // Demo offline results — enough to pick a pin without network
+    const demoHits = [
+      {
+        placeId: "demo:bkk-sukhumvit",
+        label: "Sukhumvit Rd, Bangkok, Thailand",
+        address: "Sukhumvit Road, Khlong Toei, Bangkok, Thailand",
+        city: "Bangkok",
+        country: "Thailand",
+        latitude: 13.7367,
+        longitude: 100.5609,
+        provider: "osm" as const,
+      },
+      {
+        placeId: "demo:delhi-okhla",
+        label: "Okhla Phase II, New Delhi, India",
+        address: "Okhla Industrial Area Phase II, New Delhi, India",
+        city: "Delhi",
+        country: "India",
+        latitude: 28.5355,
+        longitude: 77.291,
+        provider: "osm" as const,
+      },
+      {
+        placeId: "demo:jaipur",
+        label: "Jaipur, Rajasthan, India",
+        address: "Jaipur, Rajasthan, India",
+        city: "Jaipur",
+        country: "India",
+        latitude: 26.9124,
+        longitude: 75.7873,
+        provider: "osm" as const,
+      },
+    ].filter(
+      (h) =>
+        h.label.toLowerCase().includes(query.toLowerCase()) ||
+        h.city.toLowerCase().includes(query.toLowerCase()) ||
+        query.length >= 2
+    );
+    return {
+      results: demoHits.slice(0, 6),
+      provider: state.googleMaps.connected ? "google" : "osm",
+    };
+  }
+  if (method === "POST" && p === "/api/maps") {
+    const b = (body || {}) as Record<string, unknown>;
+    const action = String(b.action || "");
+    if (action === "connect") {
+      const apiKey = String(b.apiKey || "").trim();
+      if (!apiKey)
+        throw Object.assign(new Error("API key required"), { status: 400 });
+      state.googleMaps = {
+        connected: true,
+        apiKey,
+        connectedAt: new Date().toISOString(),
+      };
+      return {
+        ok: true,
+        settings: {
+          connected: true,
+          hasApiKey: true,
+          apiKeyMasked: `${apiKey.slice(0, 4)}••••${apiKey.slice(-3)}`,
+          connectedAt: state.googleMaps.connectedAt,
+          provider: "google",
+        },
+      };
+    }
+    if (action === "disconnect") {
+      state.googleMaps = { connected: false, apiKey: "", connectedAt: null };
+      return {
+        ok: true,
+        settings: {
+          connected: false,
+          hasApiKey: false,
+          apiKeyMasked: null,
+          connectedAt: null,
+          provider: "osm",
+        },
+      };
+    }
+    throw Object.assign(new Error("Unknown action"), { status: 400 });
+  }
+
+  // Lalamove / last-mile
   if (method === "GET" && p === "/api/lalamove") {
     const settings = state.lalamove;
     const readyBags = [];
@@ -1828,6 +2011,9 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
                   warehouse.address ||
                   `${warehouse.name}, ${warehouse.city}, ${warehouse.country}`,
                 city: warehouse.city,
+                latitude: warehouse.latitude,
+                longitude: warehouse.longitude,
+                placeId: warehouse.placeId,
               }
             : null,
           dropoff: customer
@@ -1839,6 +2025,9 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
                   [customer.city, customer.country].filter(Boolean).join(", ") ||
                   null,
                 city: customer.city,
+                latitude: customer.latitude,
+                longitude: customer.longitude,
+                placeId: customer.placeId,
               }
             : null,
           weightKg: weight,
@@ -1872,6 +2061,10 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
           customer?.address ||
           [customer?.city, customer?.country].filter(Boolean).join(", ") ||
           null,
+        pickupLat: warehouse?.latitude ?? null,
+        pickupLng: warehouse?.longitude ?? null,
+        dropoffLat: customer?.latitude ?? null,
+        dropoffLng: customer?.longitude ?? null,
         notes: (b.notes as string) || null,
         bookedAt: new Date().toISOString(),
         completedAt: null,
