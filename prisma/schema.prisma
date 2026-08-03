@@ -86,6 +86,8 @@ model Party {
   // Transportation charges quoted to this carrier/transporter (or customer if relevant)
   carryRatePerKg     Float?
   carryRateCurrency  Currency @default(INR)
+  // Last date through which books were shared / discussed with this party
+  booksSharedUntil   DateTime?
 }
 
 model LedgerEntry {

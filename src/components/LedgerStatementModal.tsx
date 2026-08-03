@@ -9,7 +9,9 @@ import {
   type StatementEntry,
   type StatementParty,
 } from "@/lib/ledger-statement-pdf";
+import { apiPatch } from "@/lib/client-api";
 import { FileDown, Mail, MessageCircle, Share2 } from "lucide-react";
+import { format } from "date-fns";
 
 function phoneToWhatsApp(phone: string): string | null {
   const digits = phone.replace(/\D/g, "");
@@ -17,21 +19,30 @@ function phoneToWhatsApp(phone: string): string | null {
   return digits;
 }
 
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function LedgerStatementModal({
   open,
   onClose,
   party,
   entries,
+  onMarkedShared,
 }: {
   open: boolean;
   onClose: () => void;
-  party: StatementParty;
+  party: StatementParty & { id: string };
   entries: StatementEntry[];
+  onMarkedShared?: (until: string) => void;
 }) {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
+  const [askMark, setAskMark] = useState(false);
+  const [markUntil, setMarkUntil] = useState(todayISO());
+  const [marking, setMarking] = useState(false);
 
   const options = useMemo(
     () => ({
@@ -52,12 +63,18 @@ export function LedgerStatementModal({
     }).length;
   }, [entries, fromDate, toDate]);
 
+  function afterPdfSent() {
+    setAskMark(true);
+    setMarkUntil(toDate || todayISO());
+  }
+
   async function download() {
     setBusy(true);
     setHint(null);
     try {
       const name = downloadLedgerStatement(options);
       setHint(`Saved ${name}`);
+      afterPdfSent();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to create PDF");
     } finally {
@@ -79,9 +96,11 @@ export function LedgerStatementModal({
           text: summary,
         });
         setHint("Shared");
+        afterPdfSent();
       } else {
         downloadLedgerStatement(options);
         setHint("Share not supported here — PDF downloaded instead.");
+        afterPdfSent();
       }
     } catch (e) {
       if (e instanceof Error && e.name === "AbortError") return;
@@ -112,6 +131,7 @@ export function LedgerStatementModal({
           "No phone on this party. PDF downloaded — pick the chat and attach the file."
         );
       }
+      afterPdfSent();
     } catch (e) {
       alert(e instanceof Error ? e.message : "WhatsApp share failed");
     } finally {
@@ -132,6 +152,7 @@ export function LedgerStatementModal({
       const to = party.email ? encodeURIComponent(party.email) : "";
       window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
       setHint("PDF downloaded — attach it in your email draft.");
+      afterPdfSent();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Email share failed");
     } finally {
@@ -139,8 +160,33 @@ export function LedgerStatementModal({
     }
   }
 
+  async function confirmMarkShared() {
+    if (!markUntil) return;
+    setMarking(true);
+    try {
+      await apiPatch(`/api/parties/${party.id}`, {
+        booksSharedUntil: markUntil,
+      });
+      onMarkedShared?.(markUntil);
+      setAskMark(false);
+      setHint(
+        `Marked: books discussed till ${format(new Date(markUntil), "dd MMM yyyy")}`
+      );
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to mark");
+    } finally {
+      setMarking(false);
+    }
+  }
+
+  function handleClose() {
+    setAskMark(false);
+    setHint(null);
+    onClose();
+  }
+
   return (
-    <Modal open={open} onClose={onClose} title="Send PDF statement" wide>
+    <Modal open={open} onClose={handleClose} title="Send PDF statement" wide>
       <p className="mb-4 text-sm text-[var(--muted)]">
         Statement for{" "}
         <strong className="text-[var(--ink)]">{party.name}</strong>. Exchange rate
@@ -193,8 +239,36 @@ export function LedgerStatementModal({
         </p>
       )}
 
+      {askMark && (
+        <div className="mt-4 rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-4">
+          <div className="font-medium text-[var(--accent-ink)]">
+            Mark books as shared?
+          </div>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Reminder for yourself: bookkeeping discussed with this party up to
+            this date.
+          </p>
+          <div className="mt-3 max-w-xs">
+            <Input
+              label="Shared till"
+              type="date"
+              value={markUntil}
+              onChange={(e) => setMarkUntil(e.target.value)}
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button onClick={confirmMarkShared} disabled={marking || !markUntil}>
+              {marking ? "Saving…" : "Yes, mark till this date"}
+            </Button>
+            <Button variant="ghost" onClick={() => setAskMark(false)}>
+              Skip
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="mt-5 flex justify-end">
-        <Button variant="ghost" onClick={onClose}>
+        <Button variant="ghost" onClick={handleClose}>
           Close
         </Button>
       </div>

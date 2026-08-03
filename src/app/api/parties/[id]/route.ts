@@ -42,6 +42,12 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       ...(body.carryRateCurrency != null && {
         carryRateCurrency: body.carryRateCurrency,
       }),
+      ...(body.booksSharedUntil !== undefined && {
+        booksSharedUntil:
+          body.booksSharedUntil != null
+            ? new Date(body.booksSharedUntil)
+            : null,
+      }),
       ...(body.isActive != null && { isActive: body.isActive }),
     },
   });

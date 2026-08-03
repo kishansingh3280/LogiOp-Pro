@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, use } from "react";
+import { useEffect, useMemo, useState, use, Fragment } from "react";
 import Link from "next/link";
 import {
   PageHeader,
@@ -25,6 +25,7 @@ import {
   apiGet,
   apiPost,
   apiDelete,
+  apiPatch,
   uploadAttachment,
 } from "@/lib/client-api";
 import { LedgerStatementModal } from "@/components/LedgerStatementModal";
@@ -60,6 +61,7 @@ type Party = {
   exchangeRate: number | null;
   quoteMode: string;
   defaultCurrency: "INR" | "THB";
+  booksSharedUntil?: string | null;
   ledgerEntries: Entry[];
 };
 
@@ -244,6 +246,25 @@ export default function PartyLedgerPage({
     (a, b) => new Date(b.entryDate).getTime() - new Date(a.entryDate).getTime()
   );
 
+  const sharedUntil = party.booksSharedUntil
+    ? String(party.booksSharedUntil).slice(0, 10)
+    : null;
+
+  function isShared(entryDate: string) {
+    if (!sharedUntil) return false;
+    return entryDate.slice(0, 10) <= sharedUntil;
+  }
+
+  async function clearSharedMark() {
+    if (!confirm("Clear the books-shared mark for this party?")) return;
+    try {
+      await apiPatch(`/api/parties/${partyId}`, { booksSharedUntil: null });
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to clear");
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -279,6 +300,22 @@ export default function PartyLedgerPage({
           </>
         }
       />
+
+      {sharedUntil && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          <span>
+            Books shared / discussed till{" "}
+            <strong>{format(new Date(sharedUntil), "dd MMM yyyy")}</strong>
+          </span>
+          <button
+            type="button"
+            className="text-xs text-emerald-800/70 underline hover:text-emerald-950"
+            onClick={clearSharedMark}
+          >
+            Clear mark
+          </button>
+        </div>
+      )}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2">
         {(["INR", "THB"] as const).map((c) => {
@@ -322,40 +359,76 @@ export default function PartyLedgerPage({
               </tr>
             </thead>
             <tbody>
-              {entries.map((e) => (
-                <tr key={e.id}>
-                  <td className="whitespace-nowrap">
-                    {format(new Date(e.entryDate), "dd MMM yyyy")}
-                    {e.isAutoSynced && (
-                      <div>
-                        <Badge tone="info">Auto-synced</Badge>
-                      </div>
+              {entries.map((e, idx) => {
+                const shared = isShared(e.entryDate);
+                const prev = entries[idx - 1];
+                const showDivider =
+                  !!sharedUntil &&
+                  !!prev &&
+                  !isShared(prev.entryDate) &&
+                  shared;
+                return (
+                  <Fragment key={e.id}>
+                    {showDivider && (
+                      <tr className="bg-emerald-50/80">
+                        <td
+                          colSpan={7}
+                          className="py-1.5 text-center text-xs font-medium text-emerald-800"
+                        >
+                          ↑ Newer (not shared yet) · Shared till{" "}
+                          {format(new Date(sharedUntil), "dd MMM yyyy")} ↓
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td>
-                    <Badge tone={e.direction === "YOU_GAVE" ? "danger" : "ok"}>
-                      {directionLabel(e.direction)}
-                    </Badge>
-                  </td>
-                  <td className={e.currency === "INR" ? "money-inr" : "money-thb"}>
-                    {formatMoney(e.amount, e.currency)}
-                  </td>
-                  <td className="max-w-xs">{e.description || "—"}</td>
-                  <td className="text-xs text-[var(--muted)]">
-                    {e.fxRate != null ? (
-                      <>
-                        Rate {e.fxRate}
-                        {e.fxAmount != null && e.fxCurrency && (
-                          <>
-                            <br />
-                            ≈ {formatMoney(e.fxAmount, e.fxCurrency)}
-                          </>
+                    <tr className={shared ? "bg-emerald-50/40" : undefined}>
+                      <td className="whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5">
+                          {format(new Date(e.entryDate), "dd MMM yyyy")}
+                          {shared && (
+                            <span
+                              title="Shared / discussed with customer"
+                              className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
+                            />
+                          )}
+                        </span>
+                        {e.isAutoSynced && (
+                          <div>
+                            <Badge tone="info">Auto-synced</Badge>
+                          </div>
                         )}
-                      </>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
+                      </td>
+                      <td>
+                        <Badge
+                          tone={e.direction === "YOU_GAVE" ? "danger" : "ok"}
+                        >
+                          {directionLabel(e.direction)}
+                        </Badge>
+                      </td>
+                      <td
+                        className={
+                          e.currency === "INR" ? "money-inr" : "money-thb"
+                        }
+                      >
+                        {formatMoney(e.amount, e.currency)}
+                      </td>
+                      <td className="max-w-xs">{e.description || "—"}</td>
+                      <td className="text-xs text-[var(--muted)]">
+                        {e.fxRate != null &&
+                        e.fxAmount != null &&
+                        e.fxCurrency &&
+                        e.fxCurrency !== e.currency ? (
+                          <>
+                            {e.fxCurrency}{" "}
+                            {e.fxAmount.toLocaleString("en-IN", {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}{" "}
+                            @ {e.fxRate}
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                   <td>
                     <div className="flex flex-col gap-1">
                       {e.attachments.map((a) => (
@@ -386,7 +459,9 @@ export default function PartyLedgerPage({
                     </button>
                   </td>
                 </tr>
-              ))}
+                  </Fragment>
+              );
+              })}
             </tbody>
           </table>
         </Card>
@@ -577,6 +652,10 @@ export default function PartyLedgerPage({
         onClose={() => setStatementOpen(false)}
         party={party}
         entries={party.ledgerEntries || []}
+        onMarkedShared={() => {
+          setStatementOpen(false);
+          load();
+        }}
       />
     </div>
   );

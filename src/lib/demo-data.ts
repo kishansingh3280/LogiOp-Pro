@@ -14,6 +14,7 @@ export type DemoParty = {
   defaultCurrency: "INR" | "THB";
   carryRatePerKg: number | null;
   carryRateCurrency: "INR" | "THB";
+  booksSharedUntil: string | null;
   isActive: boolean;
 };
 
@@ -110,6 +111,7 @@ function seed(): DemoState {
     defaultCurrency: "INR",
     carryRatePerKg: null,
     carryRateCurrency: "INR",
+    booksSharedUntil: null,
     isActive: true,
   };
   const siam: DemoParty = {
@@ -126,6 +128,7 @@ function seed(): DemoState {
     defaultCurrency: "THB",
     carryRatePerKg: null,
     carryRateCurrency: "INR",
+    booksSharedUntil: null,
     isActive: true,
   };
   const buyer: DemoParty = {
@@ -142,6 +145,7 @@ function seed(): DemoState {
     defaultCurrency: "THB",
     carryRatePerKg: null,
     carryRateCurrency: "INR",
+    booksSharedUntil: null,
     isActive: true,
   };
   const amit: DemoParty = {
@@ -158,6 +162,7 @@ function seed(): DemoState {
     defaultCurrency: "INR",
     carryRatePerKg: 200,
     carryRateCurrency: "INR",
+    booksSharedUntil: null,
     isActive: true,
   };
   const airAgent: DemoParty = {
@@ -174,6 +179,7 @@ function seed(): DemoState {
     defaultCurrency: "THB",
     carryRatePerKg: 85,
     carryRateCurrency: "THB",
+    booksSharedUntil: null,
     isActive: true,
   };
   const uncle: DemoParty = {
@@ -190,6 +196,7 @@ function seed(): DemoState {
     defaultCurrency: "INR",
     carryRatePerKg: null,
     carryRateCurrency: "INR",
+    booksSharedUntil: null,
     isActive: true,
   };
 
@@ -470,6 +477,7 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       defaultCurrency: (b.defaultCurrency as "INR" | "THB") || "INR",
       carryRatePerKg: b.carryRatePerKg != null ? Number(b.carryRatePerKg) : null,
       carryRateCurrency: (b.carryRateCurrency as "INR" | "THB") || "INR",
+      booksSharedUntil: (b.booksSharedUntil as string) || null,
       isActive: true,
     };
     state.parties.push(party);
