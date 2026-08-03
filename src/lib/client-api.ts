@@ -57,8 +57,10 @@ export async function api<T = unknown>(
   }
 
   const preferDemo = typeof window !== "undefined" && getDemoMode();
+  // Google Maps must hit the real API (key storage + browser key) even in demo mode.
+  const forceLive = path.startsWith("/api/maps");
 
-  if (preferDemo) {
+  if (preferDemo && !forceLive) {
     try {
       return (await demoHandle(method, path, body)) as T;
     } catch (e) {
@@ -81,6 +83,11 @@ export async function api<T = unknown>(
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   } catch (e) {
+    if (forceLive) {
+      throw e instanceof ApiError
+        ? e
+        : new ApiError(0, e instanceof Error ? e.message : "Network error");
+    }
     // Auto-fallback to demo so the UI never stays stuck on "Loading…"
     console.warn("API failed, falling back to demo mode:", e);
     if (typeof window !== "undefined") setDemoMode(true);
@@ -92,6 +99,11 @@ export async function api<T = unknown>(
         : new ApiError(0, e instanceof Error ? e.message : "Network error");
     }
   }
+}
+
+/** Raw fetch that always hits the server (used by LocationPicker for Google Maps). */
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(path, init);
 }
 
 export const apiGet = <T = unknown>(path: string) => api<T>(path);

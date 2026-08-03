@@ -1759,88 +1759,29 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
     };
   }
 
-  // Lalamove / last-mile
+  // Google Maps (client normally bypasses demo and hits /api/maps live)
   if (method === "GET" && p === "/api/maps") {
-    if (q.get("settings") === "1") {
-      const g = state.googleMaps;
+    const g = state.googleMaps;
+    if (q.get("status") === "1") {
       return {
-        connected: g.connected,
-        hasApiKey: Boolean(g.apiKey),
-        apiKeyMasked: g.apiKey
-          ? `${g.apiKey.slice(0, 4)}••••${g.apiKey.slice(-3)}`
-          : null,
-        connectedAt: g.connectedAt,
-        provider: g.connected && g.apiKey ? "google" : "osm",
+        connected: Boolean(g.connected && g.apiKey),
+        provider: "google",
+        browserKey: g.connected && g.apiKey ? g.apiKey : null,
       };
     }
-    const lat = q.get("lat");
-    const lng = q.get("lng");
-    if (lat && lng) {
-      return {
-        place: {
-          placeId: `pin:${lat},${lng}`,
-          label: `Pinned ${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
-          address: `Pinned location ${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`,
-          city: "",
-          country: "",
-          latitude: Number(lat),
-          longitude: Number(lng),
-          provider: "osm",
-        },
-      };
+    if (q.get("browserKey") === "1") {
+      if (!g.connected || !g.apiKey)
+        throw Object.assign(new Error("Google Maps not connected"), { status: 400 });
+      return { key: g.apiKey, provider: "google" };
     }
-    const query = (q.get("q") || "").trim();
-    if (!query || query.length < 2) return { results: [], provider: "osm" };
-    // Demo offline results — enough to pick a pin without network
-    const demoHits = [
-      {
-        placeId: "demo:bkk-sukhumvit",
-        label: "Sukhumvit Rd, Bangkok, Thailand",
-        address: "Sukhumvit Road, Khlong Toei, Bangkok, Thailand",
-        city: "Bangkok",
-        country: "Thailand",
-        latitude: 13.7367,
-        longitude: 100.5609,
-        provider: "osm" as const,
-      },
-      {
-        placeId: "demo:delhi-okhla",
-        label: "Okhla Phase II, New Delhi, India",
-        address: "Okhla Industrial Area Phase II, New Delhi, India",
-        city: "Delhi",
-        country: "India",
-        latitude: 28.5355,
-        longitude: 77.291,
-        provider: "osm" as const,
-      },
-      {
-        placeId: "demo:jaipur",
-        label: "Jaipur, Rajasthan, India",
-        address: "Jaipur, Rajasthan, India",
-        city: "Jaipur",
-        country: "India",
-        latitude: 26.9124,
-        longitude: 75.7873,
-        provider: "osm" as const,
-      },
-    ].filter(
-      (h) =>
-        h.label.toLowerCase().includes(query.toLowerCase()) ||
-        h.city.toLowerCase().includes(query.toLowerCase()) ||
-        query.length >= 2
-    );
-    return {
-      results: demoHits.slice(0, 6),
-      provider: state.googleMaps.connected ? "google" : "osm",
-    };
-  }
-  if (method === "POST" && p === "/api/maps") {
-    const b = (body || {}) as Record<string, unknown>;
-    const action = String(b.action || "");
-    if (action === "connect") {
-      const apiKey = String(b.apiKey || "").trim();
+    if (q.get("disconnect") === "1") {
+      state.googleMaps = { connected: false, apiKey: "", connectedAt: null };
+      return { ok: true, connected: false };
+    }
+    if (q.get("connect") === "1") {
+      const apiKey = (q.get("apiKey") || "").trim();
       if (!apiKey)
-        throw Object.assign(new Error("API key required"), { status: 400 });
+        throw Object.assign(new Error("apiKey is required"), { status: 400 });
       state.googleMaps = {
         connected: true,
         apiKey,
@@ -1848,29 +1789,17 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       };
       return {
         ok: true,
-        settings: {
-          connected: true,
-          hasApiKey: true,
-          apiKeyMasked: `${apiKey.slice(0, 4)}••••${apiKey.slice(-3)}`,
-          connectedAt: state.googleMaps.connectedAt,
-          provider: "google",
-        },
+        connected: true,
+        provider: "google",
+        browserKey: apiKey,
+        probeOk: true,
+        note: null,
       };
     }
-    if (action === "disconnect") {
-      state.googleMaps = { connected: false, apiKey: "", connectedAt: null };
-      return {
-        ok: true,
-        settings: {
-          connected: false,
-          hasApiKey: false,
-          apiKeyMasked: null,
-          connectedAt: null,
-          provider: "osm",
-        },
-      };
-    }
-    throw Object.assign(new Error("Unknown action"), { status: 400 });
+    throw Object.assign(
+      new Error("Use ?status=1, ?connect=1&apiKey=, ?browserKey=1, or ?disconnect=1"),
+      { status: 400 }
+    );
   }
 
   // Lalamove / last-mile

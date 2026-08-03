@@ -1,327 +1,602 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Input, Button } from "@/components/ui";
-import { apiGet, apiPost } from "@/lib/client-api";
-import { MapPin, Search, Link2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch } from "@/lib/client-api";
 
 export type LocationValue = {
   address: string;
-  city: string;
-  country: string;
+  city?: string;
+  country?: string;
   latitude: number | null;
   longitude: number | null;
   placeId: string | null;
 };
 
-type PlaceResult = {
+/** @deprecated use LocationValue */
+export type MapLocation = LocationValue;
+
+type Suggestion = {
   placeId: string;
-  label: string;
-  address: string;
-  city: string;
-  country: string;
-  latitude: number;
-  longitude: number;
-  provider: "google" | "osm";
+  description: string;
+  mainText: string;
+  secondaryText: string;
 };
 
 type Props = {
-  label?: string;
   value: LocationValue;
   onChange: (next: LocationValue) => void;
-  /** Show Google Maps connect hint */
-  showMapsConnect?: boolean;
+  label?: string;
+  hint?: string;
+  required?: boolean;
 };
 
+function parseAddressComponents(
+  components: google.maps.GeocoderAddressComponent[] | undefined
+): { city: string; country: string } {
+  let city = "";
+  let country = "";
+  if (!components) return { city, country };
+  for (const c of components) {
+    if (c.types.includes("locality") || c.types.includes("administrative_area_level_2")) {
+      if (!city) city = c.long_name;
+    }
+    if (c.types.includes("administrative_area_level_1") && !city) {
+      city = c.long_name;
+    }
+    if (c.types.includes("country")) {
+      country = c.long_name;
+    }
+  }
+  return { city, country };
+}
+
+declare global {
+  interface Window {
+    google?: typeof google;
+    __logiopMapsInit?: () => void;
+  }
+}
+
+let mapsScriptPromise: Promise<void> | null = null;
+
+function loadGoogleMaps(apiKey: string): Promise<void> {
+  if (typeof window === "undefined") return Promise.reject(new Error("SSR"));
+  if (window.google?.maps?.places) return Promise.resolve();
+  if (mapsScriptPromise) return mapsScriptPromise;
+
+  mapsScriptPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>("script[data-logiop-maps]");
+    if (existing) {
+      if (window.google?.maps?.places) {
+        resolve();
+        return;
+      }
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("Google Maps failed to load")));
+      return;
+    }
+    window.__logiopMapsInit = () => resolve();
+    const script = document.createElement("script");
+    script.dataset.logiopMaps = "1";
+    script.async = true;
+    script.defer = true;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&callback=__logiopMapsInit`;
+    script.onerror = () => {
+      mapsScriptPromise = null;
+      reject(new Error("Google Maps failed to load — check API key and Maps JavaScript API"));
+    };
+    document.head.appendChild(script);
+  });
+  return mapsScriptPromise;
+}
+
 export function LocationPicker({
-  label = "Location on map",
   value,
   onChange,
-  showMapsConnect = true,
+  label = "Location",
+  hint = "Search Google Maps for an address, then fine-tune the pin.",
+  required,
 }: Props) {
-  const mapEl = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<import("leaflet").Map | null>(null);
-  const markerRef = useRef<import("leaflet").Marker | null>(null);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<PlaceResult[]>([]);
-  const [provider, setProvider] = useState<"google" | "osm">("osm");
-  const [searching, setSearching] = useState(false);
-  const [mapsConnected, setMapsConnected] = useState(false);
-  const [connectOpen, setConnectOpen] = useState(false);
-  const [apiKey, setApiKey] = useState("");
+  const [query, setQuery] = useState(value.address || "");
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [mapsConnected, setMapsConnected] = useState(false);
+  const [browserKey, setBrowserKey] = useState<string | null>(null);
+  const [mapsReady, setMapsReady] = useState(false);
+  const [mapsError, setMapsError] = useState<string | null>(null);
+  const [connectKey, setConnectKey] = useState("");
+  const [connectMsg, setConnectMsg] = useState<string | null>(null);
+  const [showConnect, setShowConnect] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const mapElRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const markerRef = useRef<google.maps.Marker | null>(null);
+  const autocompleteRef = useRef<google.maps.places.AutocompleteService | null>(null);
+  const placesRef = useRef<google.maps.places.PlacesService | null>(null);
+  const geocoderRef = useRef<google.maps.Geocoder | null>(null);
+  const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
+  const skipSearchRef = useRef(false);
 
-  useEffect(() => {
-    apiGet<{ connected: boolean; provider: "google" | "osm" }>(
-      "/api/maps?settings=1"
-    )
-      .then((s) => {
-        setMapsConnected(s.connected);
-        setProvider(s.provider);
-      })
-      .catch(() => {});
+  const refreshStatus = useCallback(async () => {
+    try {
+      const res = await apiFetch("/api/maps?status=1");
+      const data = await res.json();
+      setMapsConnected(Boolean(data.connected));
+      setBrowserKey(typeof data.browserKey === "string" ? data.browserKey : null);
+    } catch {
+      setMapsConnected(false);
+      setBrowserKey(null);
+    }
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    async function initMap() {
-      if (!mapEl.current || mapRef.current) return;
-      const L = (await import("leaflet")).default;
-      // Fix default marker icons in bundlers
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      delete (L.Icon.Default.prototype as any)._getIconUrl;
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl:
-          "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
-        iconUrl:
-          "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
-        shadowUrl:
-          "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-      });
+    void refreshStatus();
+  }, [refreshStatus]);
 
-      if (cancelled || !mapEl.current) return;
-      const lat = value.latitude ?? 20.5937;
-      const lng = value.longitude ?? 78.9629;
-      const map = L.map(mapEl.current).setView([lat, lng], value.latitude ? 15 : 4);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OpenStreetMap",
-        maxZoom: 19,
-      }).addTo(map);
+  useEffect(() => {
+    if (!value.address) return;
+    if (document.activeElement?.closest("[data-location-picker]")) return;
+    setQuery(value.address);
+  }, [value.address]);
 
-      if (value.latitude != null && value.longitude != null) {
-        markerRef.current = L.marker([value.latitude, value.longitude]).addTo(map);
-      }
-
-      map.on("click", async (e) => {
-        const { lat: clickLat, lng: clickLng } = e.latlng;
-        setMarker(L, map, clickLat, clickLng);
-        try {
-          const res = await apiGet<{ place: PlaceResult | null }>(
-            `/api/maps?lat=${clickLat}&lng=${clickLng}`
-          );
-          if (res.place) {
-            onChange({
-              address: res.place.address,
-              city: res.place.city || value.city,
-              country: res.place.country || value.country,
-              latitude: clickLat,
-              longitude: clickLng,
-              placeId: res.place.placeId,
-            });
-            setQuery(res.place.address);
-          } else {
-            onChange({
-              ...value,
-              latitude: clickLat,
-              longitude: clickLng,
-              placeId: `pin:${clickLat},${clickLng}`,
-            });
-          }
-        } catch {
-          onChange({
-            ...value,
-            latitude: clickLat,
-            longitude: clickLng,
-          });
-        }
-      });
-
-      mapRef.current = map;
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
     }
-    initMap();
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  // Load Google Maps JS + Places when connected
+  useEffect(() => {
+    if (!browserKey) {
+      setMapsReady(false);
+      return;
+    }
+    let cancelled = false;
+    setMapsError(null);
+    void loadGoogleMaps(browserKey)
+      .then(() => {
+        if (cancelled) return;
+        autocompleteRef.current = new window.google!.maps.places.AutocompleteService();
+        geocoderRef.current = new window.google!.maps.Geocoder();
+        sessionTokenRef.current = new window.google!.maps.places.AutocompleteSessionToken();
+        setMapsReady(true);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setMapsReady(false);
+        setMapsError(err.message || "Failed to load Google Maps");
+      });
     return () => {
       cancelled = true;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-        markerRef.current = null;
+    };
+  }, [browserKey]);
+
+  // Init / update map
+  useEffect(() => {
+    if (!mapsReady || !mapElRef.current || !window.google?.maps) return;
+
+    const center =
+      value.latitude != null && value.longitude != null
+        ? { lat: value.latitude, lng: value.longitude }
+        : { lat: 13.7563, lng: 100.5018 };
+
+    if (!mapRef.current) {
+      mapRef.current = new window.google.maps.Map(mapElRef.current, {
+        center,
+        zoom: value.latitude != null ? 16 : 11,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+      });
+      placesRef.current = new window.google.maps.places.PlacesService(mapRef.current);
+      markerRef.current = new window.google.maps.Marker({
+        map: mapRef.current,
+        position: center,
+        draggable: true,
+        title: "Drag to adjust",
+      });
+      markerRef.current.addListener("dragend", () => {
+        const pos = markerRef.current?.getPosition();
+        if (!pos) return;
+        const lat = pos.lat();
+        const lng = pos.lng();
+        void reverseGeocode(lat, lng);
+      });
+      mapRef.current.addListener("click", (e: google.maps.MapMouseEvent) => {
+        if (!e.latLng) return;
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        markerRef.current?.setPosition(e.latLng);
+        void reverseGeocode(lat, lng);
+      });
+    } else if (value.latitude != null && value.longitude != null) {
+      const pos = { lat: value.latitude, lng: value.longitude };
+      mapRef.current.setCenter(pos);
+      markerRef.current?.setPosition(pos);
+    }
+  }, [mapsReady, value.latitude, value.longitude]);
+
+  function reverseGeocode(lat: number, lng: number) {
+    if (!geocoderRef.current) {
+      onChange({
+        address: value.address || `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+        city: value.city,
+        country: value.country,
+        latitude: lat,
+        longitude: lng,
+        placeId: value.placeId,
+      });
+      return;
+    }
+    setBusy(true);
+    geocoderRef.current.geocode({ location: { lat, lng } }, (results, status) => {
+      setBusy(false);
+      if (status === "OK" && results?.[0]) {
+        const r = results[0];
+        const parsed = parseAddressComponents(r.address_components);
+        skipSearchRef.current = true;
+        setQuery(r.formatted_address);
+        onChange({
+          address: r.formatted_address,
+          city: parsed.city || value.city,
+          country: parsed.country || value.country,
+          latitude: lat,
+          longitude: lng,
+          placeId: r.place_id || null,
+        });
+      } else {
+        onChange({
+          address: value.address || `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+          city: value.city,
+          country: value.country,
+          latitude: lat,
+          longitude: lng,
+          placeId: value.placeId,
+        });
+      }
+    });
+  }
+
+  // Google Places Autocomplete suggestions as you type
+  useEffect(() => {
+    if (skipSearchRef.current) {
+      skipSearchRef.current = false;
+      return;
+    }
+    const q = query.trim();
+    if (!mapsReady || !autocompleteRef.current || q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      setBusy(true);
+      autocompleteRef.current!.getPlacePredictions(
+        {
+          input: q,
+          sessionToken: sessionTokenRef.current || undefined,
+        },
+        (predictions, status) => {
+          setBusy(false);
+          if (
+            status !== window.google!.maps.places.PlacesServiceStatus.OK ||
+            !predictions?.length
+          ) {
+            setSuggestions([]);
+            return;
+          }
+          setSuggestions(
+            predictions.map((p) => ({
+              placeId: p.place_id,
+              description: p.description,
+              mainText: p.structured_formatting?.main_text || p.description,
+              secondaryText: p.structured_formatting?.secondary_text || "",
+            }))
+          );
+          setOpen(true);
+        }
+      );
+    }, 220);
+    return () => window.clearTimeout(handle);
+  }, [query, mapsReady]);
+
+  function pickSuggestion(s: Suggestion) {
+    setOpen(false);
+    setSuggestions([]);
+    skipSearchRef.current = true;
+    setQuery(s.description);
+    setBusy(true);
+
+    const finish = (
+      lat: number,
+      lng: number,
+      address: string,
+      placeId: string,
+      city?: string,
+      country?: string
+    ) => {
+      setBusy(false);
+      onChange({
+        address,
+        city: city || value.city,
+        country: country || value.country,
+        latitude: lat,
+        longitude: lng,
+        placeId,
+      });
+      sessionTokenRef.current = new window.google!.maps.places.AutocompleteSessionToken();
+      if (mapRef.current && markerRef.current) {
+        const pos = { lat, lng };
+        mapRef.current.setCenter(pos);
+        mapRef.current.setZoom(16);
+        markerRef.current.setPosition(pos);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  useEffect(() => {
-    async function syncMarker() {
-      if (!mapRef.current || value.latitude == null || value.longitude == null)
-        return;
-      const L = (await import("leaflet")).default;
-      setMarker(L, mapRef.current, value.latitude, value.longitude);
-      mapRef.current.setView([value.latitude, value.longitude], 15);
-    }
-    syncMarker();
-  }, [value.latitude, value.longitude]);
-
-  function setMarker(
-    L: typeof import("leaflet"),
-    map: import("leaflet").Map,
-    lat: number,
-    lng: number
-  ) {
-    if (markerRef.current) {
-      markerRef.current.setLatLng([lat, lng]);
+    if (placesRef.current) {
+      placesRef.current.getDetails(
+        {
+          placeId: s.placeId,
+          fields: [
+            "formatted_address",
+            "geometry",
+            "place_id",
+            "name",
+            "address_components",
+          ],
+          sessionToken: sessionTokenRef.current || undefined,
+        },
+        (place, status) => {
+          if (
+            status === window.google!.maps.places.PlacesServiceStatus.OK &&
+            place?.geometry?.location
+          ) {
+            const parsed = parseAddressComponents(place.address_components);
+            finish(
+              place.geometry.location.lat(),
+              place.geometry.location.lng(),
+              place.formatted_address || place.name || s.description,
+              place.place_id || s.placeId,
+              parsed.city,
+              parsed.country
+            );
+          } else {
+            setBusy(false);
+            onChange({
+              address: s.description,
+              city: value.city,
+              country: value.country,
+              latitude: null,
+              longitude: null,
+              placeId: s.placeId,
+            });
+          }
+        }
+      );
     } else {
-      markerRef.current = L.marker([lat, lng]).addTo(map);
-    }
-  }
-
-  async function search() {
-    const q = query.trim();
-    if (q.length < 2) return;
-    setSearching(true);
-    try {
-      const res = await apiGet<{
-        results: PlaceResult[];
-        provider: "google" | "osm";
-      }>(`/api/maps?q=${encodeURIComponent(q)}`);
-      setResults(res.results || []);
-      setProvider(res.provider);
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Search failed");
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  async function pick(place: PlaceResult) {
-    onChange({
-      address: place.address,
-      city: place.city || value.city,
-      country: place.country || value.country,
-      latitude: place.latitude,
-      longitude: place.longitude,
-      placeId: place.placeId,
-    });
-    setQuery(place.label);
-    setResults([]);
-    if (mapRef.current) {
-      const L = (await import("leaflet")).default;
-      setMarker(L, mapRef.current, place.latitude, place.longitude);
-      mapRef.current.setView([place.latitude, place.longitude], 16);
+      setBusy(false);
+      onChange({
+        address: s.description,
+        city: value.city,
+        country: value.country,
+        latitude: null,
+        longitude: null,
+        placeId: s.placeId,
+      });
     }
   }
 
   async function connectMaps() {
-    if (!apiKey.trim()) return;
+    const key = connectKey.trim();
+    if (!key) {
+      setConnectMsg("Paste your Google Maps JavaScript API key.");
+      return;
+    }
     setBusy(true);
+    setConnectMsg(null);
     try {
-      await apiPost("/api/maps", { action: "connect", apiKey: apiKey.trim() });
-      setMapsConnected(true);
-      setProvider("google");
-      setConnectOpen(false);
-      setApiKey("");
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed to connect");
+      const res = await apiFetch(
+        `/api/maps?connect=1&apiKey=${encodeURIComponent(key)}`
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setConnectMsg(data.error || "Could not save key");
+        return;
+      }
+      setConnectMsg(
+        data.note
+          ? `Saved. ${data.note}`
+          : "Google Maps connected. Search below for Places suggestions."
+      );
+      setConnectKey("");
+      setShowConnect(false);
+      await refreshStatus();
+    } catch {
+      setConnectMsg("Network error");
     } finally {
       setBusy(false);
     }
   }
 
+  async function disconnectMaps() {
+    setBusy(true);
+    try {
+      await apiFetch("/api/maps?disconnect=1");
+      setMapsReady(false);
+      mapRef.current = null;
+      markerRef.current = null;
+      autocompleteRef.current = null;
+      placesRef.current = null;
+      await refreshStatus();
+      setConnectMsg("Disconnected.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const hasPin = value.latitude != null && value.longitude != null;
+
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm text-[var(--muted)]">{label}</div>
-        <div className="text-xs text-[var(--muted)]">
-          {provider === "google" ? "Google Maps" : "OpenStreetMap"} search
-          {value.latitude != null && value.longitude != null
-            ? ` · ${value.latitude.toFixed(5)}, ${value.longitude.toFixed(5)}`
-            : ""}
-        </div>
-      </div>
-
-      <div className="flex gap-2">
-        <div className="min-w-0 flex-1">
-          <Input
-            placeholder="Search address, landmark, area…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), search())}
-          />
-        </div>
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={search}
-          disabled={searching || query.trim().length < 2}
-        >
-          <Search size={16} />
-          {searching ? "…" : "Search"}
-        </Button>
-      </div>
-
-      {results.length > 0 && (
-        <ul className="max-h-40 overflow-y-auto rounded-lg border border-[var(--line)] bg-[var(--bg)] text-sm">
-          {results.map((r) => (
-            <li key={r.placeId}>
-              <button
-                type="button"
-                className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-[var(--accent-soft)]"
-                onClick={() => pick(r)}
-              >
-                <MapPin size={14} className="mt-0.5 shrink-0 text-[var(--accent)]" />
-                <span>{r.label}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div
-        ref={mapEl}
-        className="h-56 w-full overflow-hidden rounded-lg border border-[var(--line)]"
-      />
-      <p className="text-xs text-[var(--muted)]">
-        Search or click the map to pin the precise location for Lalamove pickup /
-        dropoff.
-      </p>
-
-      {showMapsConnect && (
-        <div className="rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--muted)]">
+    <div className="space-y-2" data-location-picker ref={wrapRef}>
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <label className="block text-sm font-medium text-ink">
+          {label}
+          {required ? " *" : ""}
+        </label>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
           {mapsConnected ? (
-            <span className="text-emerald-700">
-              Google Maps connected — searches prefer Google Places.
-            </span>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span>
-                Optional: connect a Google Maps API key for Places search (Maps
-                JavaScript + Places / Geocoding).
+            <>
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-800">
+                Google Maps connected
               </span>
               <button
                 type="button"
-                className="inline-flex items-center gap-1 text-[var(--accent)]"
-                onClick={() => setConnectOpen((v) => !v)}
+                className="text-slate-500 underline"
+                onClick={() => void disconnectMaps()}
               >
-                <Link2 size={12} /> Connect Google
+                Disconnect
               </button>
-            </div>
-          )}
-          {connectOpen && !mapsConnected && (
-            <div className="mt-2 flex flex-wrap gap-2">
-              <input
-                type="password"
-                className="min-w-[200px] flex-1 rounded border border-[var(--line)] px-2 py-1"
-                placeholder="Google Maps API key"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-              />
-              <Button
-                type="button"
-                onClick={connectMaps}
-                disabled={busy || !apiKey.trim()}
-              >
-                Save key
-              </Button>
-            </div>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="font-medium text-brand underline"
+              onClick={() => setShowConnect((v) => !v)}
+            >
+              Connect Google Maps
+            </button>
           )}
         </div>
-      )}
+      </div>
 
-      <Input
-        label="Address line"
-        value={value.address}
-        onChange={(e) => onChange({ ...value, address: e.target.value })}
-        placeholder="Confirmed street address"
-      />
+      {showConnect && !mapsConnected ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 space-y-2">
+          <p className="text-xs text-amber-950">
+            Paste your <strong>Google Maps JavaScript API</strong> key. In Google Cloud, enable{" "}
+            <strong>Maps JavaScript API</strong> and <strong>Places API</strong> (and{" "}
+            <strong>Geocoding API</strong> for pin reverse-geocode). Restrict the key by HTTP
+            referrer to your site.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <input
+              className="input min-w-[220px] flex-1 font-mono text-xs"
+              type="password"
+              autoComplete="off"
+              placeholder="AIza…"
+              value={connectKey}
+              onChange={(e) => setConnectKey(e.target.value)}
+            />
+            <button type="button" className="btn-primary" disabled={busy} onClick={() => void connectMaps()}>
+              Save key
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {connectMsg ? <p className="text-xs text-slate-600">{connectMsg}</p> : null}
+      {mapsError ? (
+        <p className="text-xs text-rose-700">
+          {mapsError}. Enable Maps JavaScript API + Places API for this key.
+        </p>
+      ) : null}
+
+      <div className="relative">
+        <input
+          className="input w-full pr-10"
+          placeholder={
+            mapsReady
+              ? "Search Google Maps — type an address or place…"
+              : mapsConnected
+                ? "Loading Google Places…"
+                : "Connect Google Maps to search places…"
+          }
+          value={query}
+          disabled={!mapsReady}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            onChange({
+              ...value,
+              address: e.target.value,
+              latitude: null,
+              longitude: null,
+              placeId: null,
+            });
+            setOpen(true);
+          }}
+          onFocus={() => suggestions.length > 0 && setOpen(true)}
+          autoComplete="off"
+        />
+        {busy ? (
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+            …
+          </span>
+        ) : null}
+
+        {open && suggestions.length > 0 ? (
+          <ul className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+            {suggestions.map((s) => (
+              <li key={s.placeId}>
+                <button
+                  type="button"
+                  className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-slate-50"
+                  onClick={() => pickSuggestion(s)}
+                >
+                  <span className="text-sm font-medium text-ink">{s.mainText}</span>
+                  {s.secondaryText ? (
+                    <span className="text-xs text-slate-500">{s.secondaryText}</span>
+                  ) : (
+                    <span className="text-xs text-slate-500">{s.description}</span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+
+      {mapsReady ? (
+        <div
+          ref={mapElRef}
+          className="h-56 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
+        />
+      ) : mapsConnected && !mapsError ? (
+        <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+          Loading Google Map…
+        </div>
+      ) : !mapsConnected ? (
+        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
+          Connect Google Maps above to search places and drop a pin.
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <span>{hint}</span>
+        {hasPin ? (
+          <span className="font-mono text-slate-600">
+            {value.latitude!.toFixed(6)}, {value.longitude!.toFixed(6)}
+            <button
+              type="button"
+              className="ml-2 text-rose-600 underline"
+              onClick={() =>
+                onChange({
+                  address: query,
+                  city: value.city,
+                  country: value.country,
+                  latitude: null,
+                  longitude: null,
+                  placeId: null,
+                })
+              }
+            >
+              Clear pin
+            </button>
+          </span>
+        ) : (
+          <span className="text-amber-700">No coordinates yet — pick a Google suggestion or click the map</span>
+        )}
+      </div>
     </div>
   );
 }
