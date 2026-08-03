@@ -76,9 +76,15 @@ type DemoState = {
         id: string;
         name: string;
         quantity: number;
+        unit: string;
         catalogItemId: string | null;
       }>;
     }>;
+  }>;
+  catalogUnits: Array<{
+    id: string;
+    name: string;
+    isActive: boolean;
   }>;
   catalogItems: Array<{
     id: string;
@@ -249,6 +255,16 @@ function seed(): DemoState {
     isActive: true,
   };
 
+  const catalogUnits: DemoState["catalogUnits"] = [
+    { id: "u_pcs", name: "pcs", isActive: true },
+    { id: "u_meter", name: "meter", isActive: true },
+    { id: "u_yard", name: "yard", isActive: true },
+    { id: "u_liter", name: "liter", isActive: true },
+    { id: "u_kg", name: "kg", isActive: true },
+    { id: "u_pair", name: "pair", isActive: true },
+    { id: "u_set", name: "set", isActive: true },
+    { id: "u_box", name: "box", isActive: true },
+  ];
   const catalogItems: DemoState["catalogItems"] = [
     {
       id: "ci_gift",
@@ -301,13 +317,13 @@ function seed(): DemoState {
             {
               id: `bi_${i}_1`,
               name: "Gift boxes",
-              quantity: 10 + i,
+              unit: "pcs", quantity: 10 + i,
               catalogItemId: catalogByName["Gift boxes"],
             },
             {
               id: `bi_${i}_2`,
               name: "Scarves",
-              quantity: 5,
+              unit: "pcs", quantity: 5,
               catalogItemId: catalogByName["Scarves"],
             },
           ]
@@ -316,7 +332,7 @@ function seed(): DemoState {
               {
                 id: `bi_${i}_1`,
                 name: "Mixed goods",
-                quantity: 1,
+                unit: "pcs", quantity: 1,
                 catalogItemId: catalogByName["Mixed goods"],
               },
             ]
@@ -449,6 +465,7 @@ function seed(): DemoState {
         ],
       },
     ],
+    catalogUnits,
     catalogItems,
     transports: [
       {
@@ -667,6 +684,30 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
   const q = url.searchParams;
 
   // Catalog items
+  if (method === "GET" && p === "/api/units") {
+    return state.catalogUnits.filter((u) => u.isActive).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  if (method === "POST" && p === "/api/units") {
+    const b = body as Record<string, unknown>;
+    const name = String(b.name || "").trim().toLowerCase();
+    if (!name) throw Object.assign(new Error("Unit name required"), { status: 400 });
+    const existing = state.catalogUnits.find((u) => u.name === name);
+    if (existing) {
+      existing.isActive = true;
+      return existing;
+    }
+    const unit = { id: id("u"), name, isActive: true };
+    state.catalogUnits.push(unit);
+    return unit;
+  }
+  const unitMatch = p.match(/^\/api\/units\/([^/]+)$/);
+  if (method === "DELETE" && unitMatch) {
+    const unit = state.catalogUnits.find((u) => u.id === unitMatch[1]);
+    if (!unit) throw Object.assign(new Error("Not found"), { status: 404 });
+    unit.isActive = false;
+    return { ok: true };
+  }
+
   if (method === "GET" && p === "/api/items") {
     return state.catalogItems
       .filter((c) => c.isActive)
@@ -1079,7 +1120,7 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
         shippingCharge = shippingRatePerKg * weightKg;
       }
       const rawItems = Array.isArray(d.items)
-        ? (d.items as Array<{ name?: string; quantity?: number }>)
+        ? (d.items as Array<{ name?: string; quantity?: number; unit?: string }>)
         : [];
       return {
         id: id("bag"),
@@ -1099,7 +1140,8 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
           .map((it) => ({
             id: id("bi"),
             name: String(it.name).trim(),
-            quantity: Math.max(1, Number(it.quantity) || 1),
+            quantity: Math.max(0.01, Number(it.quantity) || 1),
+            unit: String(it.unit || "pcs").toLowerCase(),
             catalogItemId: null as string | null,
           })),
       };

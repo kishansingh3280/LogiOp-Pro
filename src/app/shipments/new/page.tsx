@@ -10,6 +10,7 @@ import {
   Input,
   Select,
   Textarea,
+  Modal,
 } from "@/components/ui";
 import {
   DELIVER_TO_PARTY_TYPES,
@@ -30,7 +31,7 @@ type Party = {
   city?: string | null;
 };
 
-type ItemDraft = { name: string; quantity: string };
+type ItemDraft = { name: string; quantity: string; unit: string };
 
 type BagDraft = {
   bagNumber: string;
@@ -49,7 +50,7 @@ function emptyBag(n: number): BagDraft {
     bagNumber: String(n).padStart(3, "0"),
     weightKg: "",
     description: "",
-    items: [{ name: "", quantity: "1" }],
+    items: [{ name: "", quantity: "1", unit: "pcs" }],
     customerId: "",
     shippingCharge: "",
     shippingManual: false,
@@ -60,9 +61,16 @@ export default function NewShipmentPage() {
   const router = useRouter();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
-  const [catalog, setCatalog] = useState<Array<{ id: string; name: string }>>(
-    []
-  );
+  const [catalog, setCatalog] = useState<
+    Array<{ id: string; name: string; unit?: string }>
+  >([]);
+  const [units, setUnits] = useState<Array<{ id: string; name: string }>>([]);
+  const [newUnitOpen, setNewUnitOpen] = useState(false);
+  const [newUnitName, setNewUnitName] = useState("");
+  const [unitTarget, setUnitTarget] = useState<{
+    bagIndex: number;
+    itemIndex: number;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bagCount, setBagCount] = useState("");
@@ -85,12 +93,14 @@ export default function NewShipmentPage() {
     Promise.all([
       apiGet<Warehouse[]>("/api/warehouses"),
       apiGet<Party[]>("/api/parties"),
-      apiGet<Array<{ id: string; name: string }>>("/api/items"),
+      apiGet<Array<{ id: string; name: string; unit?: string }>>("/api/items"),
+      apiGet<Array<{ id: string; name: string }>>("/api/units"),
     ])
-      .then(([w, p, items]) => {
+      .then(([w, p, items, unitList]) => {
         setWarehouses(w);
         setParties(p);
         setCatalog(items);
+        setUnits(unitList);
         setLoadError(null);
         const delhi = w.find((x) => x.city === "Delhi");
         const bkk = w.find((x) => x.city === "Bangkok");
@@ -253,7 +263,8 @@ export default function NewShipmentPage() {
                 .filter((it) => it.name.trim())
                 .map((it) => ({
                   name: it.name.trim(),
-                  quantity: Math.max(1, Number(it.quantity) || 1),
+                  quantity: Math.max(0.01, Number(it.quantity) || 1),
+                  unit: (it.unit || "pcs").trim().toLowerCase() || "pcs",
                 })),
             }))
           : [],
@@ -444,7 +455,7 @@ export default function NewShipmentPage() {
                     <div className="lg:col-span-4">
                       <div className="mb-1 flex items-center justify-between">
                         <label className="text-xs text-[var(--muted)]">
-                          Items (name + pcs)
+                          Items (name + qty + unit)
                         </label>
                         <button
                           type="button"
@@ -453,7 +464,7 @@ export default function NewShipmentPage() {
                             updateBag(i, {
                               items: [
                                 ...b.items,
-                                { name: "", quantity: "1" },
+                                { name: "", quantity: "1", unit: "pcs" },
                               ],
                             })
                           }
@@ -463,24 +474,34 @@ export default function NewShipmentPage() {
                       </div>
                       <div className="space-y-1.5">
                         {b.items.map((it, j) => (
-                          <div key={j} className="flex gap-1.5">
+                          <div key={j} className="flex flex-wrap gap-1.5">
                             <input
-                              className="min-w-0 flex-1 rounded border border-[var(--line)] px-2 py-1 text-sm"
+                              className="min-w-[100px] flex-1 rounded border border-[var(--line)] px-2 py-1 text-sm"
                               placeholder="Item name"
                               list="shipment-catalog-items"
                               value={it.name}
                               onChange={(e) => {
+                                const name = e.target.value;
+                                const cat = catalog.find(
+                                  (c) =>
+                                    c.name.toLowerCase() === name.toLowerCase()
+                                );
                                 const items = [...b.items];
-                                items[j] = { ...it, name: e.target.value };
+                                items[j] = {
+                                  ...it,
+                                  name,
+                                  unit: cat?.unit || it.unit || "pcs",
+                                };
                                 updateBag(i, { items });
                               }}
                             />
                             <input
                               type="number"
-                              min={1}
+                              min={0.01}
+                              step="0.01"
                               className="w-16 rounded border border-[var(--line)] px-2 py-1 text-sm"
-                              title="Pcs"
-                              placeholder="Pcs"
+                              title="Quantity"
+                              placeholder="Qty"
                               value={it.quantity}
                               onChange={(e) => {
                                 const items = [...b.items];
@@ -491,6 +512,28 @@ export default function NewShipmentPage() {
                                 updateBag(i, { items });
                               }}
                             />
+                            <select
+                              className="w-24 rounded border border-[var(--line)] px-1 py-1 text-sm"
+                              value={it.unit || "pcs"}
+                              onChange={(e) => {
+                                if (e.target.value === "__new__") {
+                                  setUnitTarget({ bagIndex: i, itemIndex: j });
+                                  setNewUnitName("");
+                                  setNewUnitOpen(true);
+                                  return;
+                                }
+                                const items = [...b.items];
+                                items[j] = { ...it, unit: e.target.value };
+                                updateBag(i, { items });
+                              }}
+                            >
+                              {units.map((u) => (
+                                <option key={u.id} value={u.name}>
+                                  {u.name}
+                                </option>
+                              ))}
+                              <option value="__new__">+ New unit…</option>
+                            </select>
                             <button
                               type="button"
                               className="rounded border border-[var(--line)] px-2 text-[var(--muted)] hover:text-red-600"
@@ -657,6 +700,77 @@ export default function NewShipmentPage() {
             : `Create shipment with ${bagCount || "…"} bags`}
         </Button>
       </div>
+
+      <Modal
+        open={newUnitOpen}
+        onClose={() => {
+          setNewUnitOpen(false);
+          setUnitTarget(null);
+        }}
+        title="Add quantity unit"
+      >
+        <p className="mb-3 text-sm text-[var(--muted)]">
+          e.g. meter, yard, liter, pair — saved for next time.
+        </p>
+        <Input
+          label="Unit name"
+          value={newUnitName}
+          onChange={(e) => setNewUnitName(e.target.value)}
+          placeholder="meter"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setNewUnitOpen(false);
+              setUnitTarget(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={async () => {
+              const name = newUnitName.trim().toLowerCase();
+              if (!name) return;
+              try {
+                const created = await apiPost<{ id: string; name: string }>(
+                  "/api/units",
+                  { name }
+                );
+                setUnits((prev) => {
+                  if (prev.some((u) => u.name === created.name)) return prev;
+                  return [...prev, created].sort((a, b) =>
+                    a.name.localeCompare(b.name)
+                  );
+                });
+                if (unitTarget) {
+                  const { bagIndex, itemIndex } = unitTarget;
+                  setBags((prev) => {
+                    const next = [...prev];
+                    const bag = { ...next[bagIndex] };
+                    const items = [...bag.items];
+                    items[itemIndex] = {
+                      ...items[itemIndex],
+                      unit: created.name,
+                    };
+                    bag.items = items;
+                    next[bagIndex] = bag;
+                    return next;
+                  });
+                }
+                setNewUnitOpen(false);
+                setUnitTarget(null);
+                setNewUnitName("");
+              } catch (e) {
+                alert(e instanceof Error ? e.message : "Failed to add unit");
+              }
+            }}
+            disabled={!newUnitName.trim()}
+          >
+            Save unit
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

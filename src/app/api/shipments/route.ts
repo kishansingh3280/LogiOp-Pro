@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     description?: string | null;
     customerId?: string | null;
     shippingCharge?: number | null;
-    items?: Array<{ name: string; quantity: number }>;
+    items?: Array<{ name: string; quantity: number; unit?: string }>;
     warehouseId?: string;
   }> = body.bags || [];
 
@@ -114,7 +114,8 @@ export async function POST(req: NextRequest) {
               items: {
                 create: items.map((it) => ({
                   name: it.name.trim(),
-                  quantity: Math.max(1, Number(it.quantity) || 1),
+                  quantity: Math.max(0.01, Number(it.quantity) || 1),
+                  unit: (it.unit || "pcs").trim().toLowerCase() || "pcs",
                 })),
               },
             };
@@ -136,25 +137,35 @@ export async function POST(req: NextRequest) {
     ) {
       const invNumber = `INV-${created.lotNumber}`;
 
-      // Remember bag item names in catalog
-      const itemNames = new Map<string, number>();
+      const itemQtyByKey = new Map<string, { name: string; qty: number; unit: string }>();
       for (const bag of created.bags) {
         for (const it of bag.items || []) {
-          const key = it.name.trim();
-          if (!key) continue;
-          itemNames.set(key, (itemNames.get(key) || 0) + it.quantity);
+          const name = it.name.trim();
+          if (!name) continue;
+          const unit = (it.unit || "pcs").toLowerCase();
+          const key = `${name}||${unit}`;
+          const prev = itemQtyByKey.get(key);
+          itemQtyByKey.set(key, {
+            name,
+            unit,
+            qty: (prev?.qty || 0) + it.quantity,
+          });
         }
       }
       const catalogIds = new Map<string, string>();
-      for (const [name] of itemNames) {
+      for (const { name, unit } of itemQtyByKey.values()) {
         const cat = await tx.catalogItem.upsert({
           where: { name },
-          create: { name, unit: "pcs", currency: shippingCurrency },
-          update: { isActive: true },
+          create: { name, unit, currency: shippingCurrency },
+          update: { isActive: true, unit },
         });
         catalogIds.set(name, cat.id);
+        await tx.catalogUnit.upsert({
+          where: { name: unit },
+          create: { name: unit },
+          update: { isActive: true },
+        });
       }
-      // Link bag items to catalog
       for (const bag of created.bags) {
         for (const it of bag.items || []) {
           const cid = catalogIds.get(it.name.trim());
@@ -191,12 +202,12 @@ export async function POST(req: NextRequest) {
         },
       ];
       let sort = 1;
-      for (const [name, qty] of itemNames) {
+      for (const { name, qty, unit } of itemQtyByKey.values()) {
         lines.push({
           catalogItemId: catalogIds.get(name) || null,
           description: `Goods shipped · ${name}`,
           quantity: qty,
-          unit: "pcs",
+          unit,
           unitPrice: 0,
           amount: 0,
           sortOrder: sort++,

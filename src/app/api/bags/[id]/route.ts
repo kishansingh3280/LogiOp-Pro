@@ -53,9 +53,10 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     data.items = {
       create: body.items
         .filter((it: { name?: string }) => it.name?.trim())
-        .map((it: { name: string; quantity?: number }) => ({
+        .map((it: { name: string; quantity?: number; unit?: string }) => ({
           name: it.name.trim(),
-          quantity: Math.max(1, Number(it.quantity) || 1),
+          quantity: Math.max(0.01, Number(it.quantity) || 1),
+          unit: (it.unit || "pcs").trim().toLowerCase() || "pcs",
         })),
     };
   }

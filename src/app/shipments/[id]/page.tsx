@@ -32,7 +32,7 @@ type Bag = {
   deliveredAt: string | null;
   customer: { id: string; name: string } | null;
   warehouse: { name: string } | null;
-  items?: Array<{ id: string; name: string; quantity: number }>;
+  items?: Array<{ id: string; name: string; quantity: number; unit?: string }>;
   transportAssignments: Array<{
     transportAssignment: {
       id: string;
@@ -276,7 +276,10 @@ export default function ShipmentDetailPage({
                   <td className="text-xs">
                     {(b.items || []).length > 0
                       ? (b.items || [])
-                          .map((it) => `${it.name} × ${it.quantity}`)
+                          .map(
+                            (it) =>
+                              `${it.name} × ${it.quantity} ${it.unit || "pcs"}`
+                          )
                           .join(", ")
                       : b.contents || b.description || "—"}
                   </td>
@@ -367,8 +370,9 @@ export default function ShipmentDetailPage({
                 Items (name + pcs)
               </div>
               <div className="space-y-1.5">
-                {(editBag.items || [{ id: "new", name: "", quantity: 1 }]).map(
-                  (it, j) => (
+                {(editBag.items || [
+                  { id: "new", name: "", quantity: 1, unit: "pcs" },
+                ]).map((it, j) => (
                     <div key={it.id || j} className="flex gap-2">
                       <input
                         className="min-w-0 flex-1 rounded border border-[var(--line)] px-2 py-1 text-sm"
@@ -377,20 +381,31 @@ export default function ShipmentDetailPage({
                         onChange={(e) => {
                           const items = [...(editBag.items || [])];
                           if (!items[j])
-                            items[j] = { id: `tmp_${j}`, name: "", quantity: 1 };
+                            items[j] = {
+                              id: `tmp_${j}`,
+                              name: "",
+                              quantity: 1,
+                              unit: "pcs",
+                            };
                           items[j] = { ...items[j], name: e.target.value };
                           setEditBag({ ...editBag, items });
                         }}
                       />
                       <input
                         type="number"
-                        min={1}
-                        className="w-20 rounded border border-[var(--line)] px-2 py-1 text-sm"
+                        min={0.01}
+                        step="0.01"
+                        className="w-16 rounded border border-[var(--line)] px-2 py-1 text-sm"
                         value={it.quantity}
                         onChange={(e) => {
                           const items = [...(editBag.items || [])];
                           if (!items[j])
-                            items[j] = { id: `tmp_${j}`, name: "", quantity: 1 };
+                            items[j] = {
+                              id: `tmp_${j}`,
+                              name: "",
+                              quantity: 1,
+                              unit: "pcs",
+                            };
                           items[j] = {
                             ...items[j],
                             quantity: Number(e.target.value) || 1,
@@ -398,9 +413,28 @@ export default function ShipmentDetailPage({
                           setEditBag({ ...editBag, items });
                         }}
                       />
+                      <input
+                        className="w-20 rounded border border-[var(--line)] px-2 py-1 text-sm"
+                        placeholder="unit"
+                        value={it.unit || "pcs"}
+                        onChange={(e) => {
+                          const items = [...(editBag.items || [])];
+                          if (!items[j])
+                            items[j] = {
+                              id: `tmp_${j}`,
+                              name: "",
+                              quantity: 1,
+                              unit: "pcs",
+                            };
+                          items[j] = {
+                            ...items[j],
+                            unit: e.target.value || "pcs",
+                          };
+                          setEditBag({ ...editBag, items });
+                        }}
+                      />
                     </div>
-                  )
-                )}
+                  ))}
                 <button
                   type="button"
                   className="text-xs text-[var(--accent)]"
@@ -409,7 +443,12 @@ export default function ShipmentDetailPage({
                       ...editBag,
                       items: [
                         ...(editBag.items || []),
-                        { id: `tmp_${Date.now()}`, name: "", quantity: 1 },
+                        {
+                          id: `tmp_${Date.now()}`,
+                          name: "",
+                          quantity: 1,
+                          unit: "pcs",
+                        },
                       ],
                     })
                   }
