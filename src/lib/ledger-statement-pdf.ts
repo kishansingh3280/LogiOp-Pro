@@ -69,11 +69,15 @@ function conversionNote(e: StatementEntry): string | null {
   if (!wasCurrencyConverted(e) || e.fxAmount == null || e.fxCurrency == null) {
     return null;
   }
-  const from = moneyPlain(e.fxAmount, e.fxCurrency);
+  const amount = e.fxAmount.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const cur = e.fxCurrency;
   if (e.fxRate != null) {
-    return `Exchanged from ${from} @ ${e.fxRate} (₹ per ฿)`;
+    return `${cur} ${amount} @ ${e.fxRate}`;
   }
-  return `Exchanged from ${from}`;
+  return `${cur} ${amount}`;
 }
 
 function filterEntries(
@@ -238,9 +242,9 @@ export function buildLedgerStatementPdf(options: StatementOptions): jsPDF {
     else run[e.currency].got += e.amount;
     const bal = computeBalance(run[e.currency].gave, run[e.currency].got);
     const note = conversionNote(e);
-    const particulars = [e.description?.trim() || "—", note]
-      .filter(Boolean)
-      .join(" — ");
+    const desc = e.description?.trim();
+    const particulars =
+      desc && note ? `${desc} — ${note}` : desc || note || "—";
     return [
       format(new Date(e.entryDate), "dd MMM yy"),
       particulars,
