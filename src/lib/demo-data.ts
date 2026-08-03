@@ -92,6 +92,8 @@ type DemoState = {
     description: string | null;
     unit: string;
     defaultRate: number | null;
+    purchaseRate: number | null;
+    saleRate: number | null;
     currency: "INR" | "THB";
     isActive: boolean;
   }>;
@@ -271,7 +273,9 @@ function seed(): DemoState {
       name: "Gift boxes",
       description: null,
       unit: "pcs",
-      defaultRate: null,
+      defaultRate: 120,
+      purchaseRate: 80,
+      saleRate: 120,
       currency: "INR",
       isActive: true,
     },
@@ -280,7 +284,9 @@ function seed(): DemoState {
       name: "Scarves",
       description: null,
       unit: "pcs",
-      defaultRate: null,
+      defaultRate: 250,
+      purchaseRate: 150,
+      saleRate: 250,
       currency: "INR",
       isActive: true,
     },
@@ -289,7 +295,9 @@ function seed(): DemoState {
       name: "Mixed goods",
       description: null,
       unit: "pcs",
-      defaultRate: null,
+      defaultRate: 90,
+      purchaseRate: 55,
+      saleRate: 90,
       currency: "INR",
       isActive: true,
     },
@@ -411,9 +419,9 @@ function seed(): DemoState {
         number: "INV-LOT-DEMO-001",
         partyId: "p_rajesh",
         shipmentId: "ship_demo",
-        status: "SENT",
-        amount: 30000,
-        subtotal: 30000,
+        status: "DRAFT",
+        amount: 38070,
+        subtotal: 38070,
         currency: "INR",
         description: "Shipping charges for lot LOT-DEMO-001",
         notes: null,
@@ -437,8 +445,8 @@ function seed(): DemoState {
             description: "Goods shipped · Gift boxes",
             quantity: 33,
             unit: "pcs",
-            unitPrice: 0,
-            amount: 0,
+            unitPrice: 120,
+            amount: 3960,
             sortOrder: 1,
             catalogItemId: "ci_gift",
           },
@@ -447,8 +455,8 @@ function seed(): DemoState {
             description: "Goods shipped · Scarves",
             quantity: 15,
             unit: "pcs",
-            unitPrice: 0,
-            amount: 0,
+            unitPrice: 250,
+            amount: 3750,
             sortOrder: 2,
             catalogItemId: "ci_scarf",
           },
@@ -457,8 +465,8 @@ function seed(): DemoState {
             description: "Goods shipped · Mixed goods",
             quantity: 2,
             unit: "pcs",
-            unitPrice: 0,
-            amount: 0,
+            unitPrice: 90,
+            amount: 180,
             sortOrder: 3,
             catalogItemId: "ci_mixed",
           },
@@ -615,6 +623,8 @@ function upsertCatalogItem(opts: {
   name: string;
   unit?: string;
   defaultRate?: number | null;
+  purchaseRate?: number | null;
+  saleRate?: number | null;
   currency?: "INR" | "THB";
   description?: string | null;
 }): DemoState["catalogItems"][0] {
@@ -625,6 +635,9 @@ function upsertCatalogItem(opts: {
     if (opts.description !== undefined) existing.description = opts.description;
     if (opts.unit != null) existing.unit = opts.unit;
     if (opts.defaultRate !== undefined) existing.defaultRate = opts.defaultRate;
+    if (opts.purchaseRate !== undefined)
+      existing.purchaseRate = opts.purchaseRate;
+    if (opts.saleRate !== undefined) existing.saleRate = opts.saleRate;
     if (opts.currency != null) existing.currency = opts.currency;
     return existing;
   }
@@ -633,7 +646,9 @@ function upsertCatalogItem(opts: {
     name,
     description: opts.description ?? null,
     unit: opts.unit || "pcs",
-    defaultRate: opts.defaultRate ?? null,
+    defaultRate: opts.defaultRate ?? opts.saleRate ?? null,
+    purchaseRate: opts.purchaseRate ?? null,
+    saleRate: opts.saleRate ?? null,
     currency: opts.currency || "INR",
     isActive: true,
   };
@@ -727,6 +742,13 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
         existing.defaultRate =
           b.defaultRate != null ? Number(b.defaultRate) : null;
       }
+      if (b.purchaseRate !== undefined) {
+        existing.purchaseRate =
+          b.purchaseRate != null ? Number(b.purchaseRate) : null;
+      }
+      if (b.saleRate !== undefined) {
+        existing.saleRate = b.saleRate != null ? Number(b.saleRate) : null;
+      }
       if (b.currency != null)
         existing.currency = b.currency as "INR" | "THB";
       return existing;
@@ -737,6 +759,8 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       description: (b.description as string) || null,
       unit: (b.unit as string) || "pcs",
       defaultRate: b.defaultRate != null ? Number(b.defaultRate) : null,
+      purchaseRate: b.purchaseRate != null ? Number(b.purchaseRate) : null,
+      saleRate: b.saleRate != null ? Number(b.saleRate) : null,
       currency: (b.currency as "INR" | "THB") || "INR",
       isActive: true,
     };
@@ -754,6 +778,13 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
     if (b.unit != null) item.unit = String(b.unit);
     if (b.defaultRate !== undefined) {
       item.defaultRate = b.defaultRate != null ? Number(b.defaultRate) : null;
+    }
+    if (b.purchaseRate !== undefined) {
+      item.purchaseRate =
+        b.purchaseRate != null ? Number(b.purchaseRate) : null;
+    }
+    if (b.saleRate !== undefined) {
+      item.saleRate = b.saleRate != null ? Number(b.saleRate) : null;
     }
     if (b.currency != null) item.currency = b.currency as "INR" | "THB";
     if (b.isActive != null) item.isActive = Boolean(b.isActive);
@@ -803,7 +834,7 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
     const subtotal = prepared.reduce((s, l) => s + l.amount, 0);
     const amount = subtotal;
     const status =
-      (b.status as DemoState["invoices"][0]["status"]) || "SENT";
+      (b.status as DemoState["invoices"][0]["status"]) || "DRAFT";
     const number =
       (b.number as string) ||
       `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(
@@ -880,6 +911,52 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
     const nextStatus =
       (b.status as DemoState["invoices"][0]["status"]) || inv.status;
 
+    if (
+      Array.isArray(b.lines) &&
+      inv.status !== "PAID" &&
+      inv.status !== "CANCELLED"
+    ) {
+      for (const row of b.lines as Array<{
+        id: string;
+        unitPrice?: number;
+        quantity?: number;
+      }>) {
+        const line = inv.lines.find((l) => l.id === row.id);
+        if (!line) continue;
+        if (row.unitPrice != null) line.unitPrice = Number(row.unitPrice) || 0;
+        if (row.quantity != null) line.quantity = Number(row.quantity) || 0;
+        line.amount = lineAmount(line.quantity, line.unitPrice);
+      }
+      inv.subtotal = inv.lines.reduce((s, l) => s + l.amount, 0);
+      inv.amount = Math.round(inv.subtotal * 100) / 100;
+      inv.subtotal = inv.amount;
+    }
+
+    if (nextStatus === "SENT" && inv.status === "DRAFT" && !inv.ledgerEntryId) {
+      const ledger: DemoEntry = {
+        id: id("le"),
+        partyId: inv.partyId,
+        direction: "YOU_GAVE",
+        amount: inv.amount,
+        currency: inv.currency,
+        description: `Invoice ${inv.number}${
+          inv.description ? ` · ${inv.description}` : ""
+        }`,
+        entryDate: inv.issueDate || new Date().toISOString(),
+        fxRate: null,
+        fxAmount: null,
+        fxCurrency: null,
+        isAutoSynced: true,
+        attachments: [],
+      };
+      state.entries.unshift(ledger);
+      inv.ledgerEntryId = ledger.id;
+      if (inv.shipmentId) {
+        const ship = state.shipments.find((s) => s.id === inv.shipmentId);
+        if (ship) ship.shippingLedgerEntryId = ledger.id;
+      }
+    }
+
     if (nextStatus === "PAID" && inv.status !== "PAID") {
       const ledger: DemoEntry = {
         id: id("le"),
@@ -932,6 +1009,62 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
     }
     recentBags.sort((a, b) => b.bagNumber.localeCompare(a.bagNumber));
     const { totals } = computeBalances();
+
+    const monthKeys: string[] = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      monthKeys.push(key);
+    }
+    const buckets = new Map(
+      monthKeys.map((key) => {
+        const [y, m] = key.split("-").map(Number);
+        const label = new Date(y, m - 1, 1).toLocaleString("en", {
+          month: "short",
+        });
+        return [
+          key,
+          { key, label, revenue: 0, cost: 0, profit: 0, cumulative: 0 },
+        ];
+      })
+    );
+    const catalogById = Object.fromEntries(
+      state.catalogItems.map((c) => [c.id, c])
+    );
+    for (const inv of state.invoices) {
+      if (inv.status === "CANCELLED" || inv.currency !== "INR") continue;
+      const d = new Date(inv.issueDate);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const bucket = buckets.get(key);
+      if (!bucket) continue;
+      for (const line of inv.lines) {
+        bucket.revenue += line.amount;
+        const cat = line.catalogItemId
+          ? catalogById[line.catalogItemId]
+          : null;
+        if (cat?.purchaseRate != null && cat.purchaseRate > 0) {
+          bucket.cost += cat.purchaseRate * line.quantity;
+        }
+      }
+    }
+    let running = 0;
+    const pnlSeries = monthKeys.map((key) => {
+      const m = buckets.get(key)!;
+      m.profit = Math.round((m.revenue - m.cost) * 100) / 100;
+      running += m.profit;
+      m.cumulative = Math.round(running * 100) / 100;
+      m.revenue = Math.round(m.revenue * 100) / 100;
+      m.cost = Math.round(m.cost * 100) / 100;
+      return m;
+    });
+    const pnlSummary = {
+      revenue: pnlSeries.reduce((s, m) => s + m.revenue, 0),
+      cost: pnlSeries.reduce((s, m) => s + m.cost, 0),
+      profit: pnlSeries.reduce((s, m) => s + m.profit, 0),
+      currency: "INR" as const,
+    };
+
     return {
       statusCounts,
       recentBags: recentBags.slice(0, 15),
@@ -953,6 +1086,8 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
           }).filter(Boolean),
         })),
       entryCount: state.entries.length,
+      pnlSeries,
+      pnlSummary,
     };
   }
 
@@ -1170,25 +1305,42 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       bags,
     };
 
-    if (ownerPartyId && shippingChargeTotal != null && shippingChargeTotal > 0) {
+    if (
+      b.createInvoice === true &&
+      ownerPartyId &&
+      shippingChargeTotal != null &&
+      shippingChargeTotal > 0
+    ) {
       const invNumber = `INV-${ship.lotNumber}`;
 
-      const itemNames = new Map<string, number>();
+      const itemNames = new Map<
+        string,
+        { name: string; qty: number; unit: string }
+      >();
       for (const bag of bags) {
         for (const it of bag.items) {
-          const key = it.name.trim();
-          if (!key) continue;
-          itemNames.set(key, (itemNames.get(key) || 0) + it.quantity);
+          const name = it.name.trim();
+          if (!name) continue;
+          const unit = (it.unit || "pcs").toLowerCase();
+          const key = `${name}||${unit}`;
+          const prev = itemNames.get(key);
+          itemNames.set(key, {
+            name,
+            unit,
+            qty: (prev?.qty || 0) + it.quantity,
+          });
         }
       }
       const catalogIds = new Map<string, string>();
-      for (const [name] of itemNames) {
+      const catalogRates = new Map<string, number>();
+      for (const { name, unit } of itemNames.values()) {
         const cat = upsertCatalogItem({
           name,
-          unit: "pcs",
+          unit,
           currency: shippingCurrency,
         });
         catalogIds.set(name, cat.id);
+        catalogRates.set(name, cat.saleRate ?? cat.defaultRate ?? 0);
       }
       for (const bag of bags) {
         for (const it of bag.items) {
@@ -1214,54 +1366,45 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
         },
       ];
       let sort = 1;
-      for (const [name, qty] of itemNames) {
+      let goodsTotal = 0;
+      for (const { name, qty, unit } of itemNames.values()) {
+        const unitPrice = catalogRates.get(name) || 0;
+        const amount = Math.round(qty * unitPrice * 100) / 100;
+        goodsTotal += amount;
         lines.push({
           id: id("il"),
           catalogItemId: catalogIds.get(name) || null,
           description: `Goods shipped · ${name}`,
           quantity: qty,
-          unit: "pcs",
-          unitPrice: 0,
-          amount: 0,
+          unit,
+          unitPrice,
+          amount,
           sortOrder: sort++,
         });
       }
 
-      const ledger: DemoEntry = {
-        id: id("le"),
-        partyId: ownerPartyId,
-        direction: "YOU_GAVE",
-        amount: shippingChargeTotal,
-        currency: shippingCurrency,
-        description: `Invoice ${invNumber} · Shipping · Lot ${ship.lotNumber}`,
-        entryDate: ship.shipDate,
-        fxRate: null,
-        fxAmount: null,
-        fxCurrency: null,
-        isAutoSynced: true,
-        attachments: [],
-      };
-      state.entries.unshift(ledger);
+      const invoiceTotal =
+        Math.round((shippingChargeTotal + goodsTotal) * 100) / 100;
+
       const inv: DemoState["invoices"][0] = {
         id: id("inv"),
         number: invNumber,
         partyId: ownerPartyId,
         shipmentId: ship.id,
-        status: "SENT",
-        amount: shippingChargeTotal,
-        subtotal: shippingChargeTotal,
+        status: "DRAFT",
+        amount: invoiceTotal,
+        subtotal: invoiceTotal,
         currency: shippingCurrency,
         description: `Shipping charges for lot ${ship.lotNumber}`,
         notes: null,
         issueDate: ship.shipDate,
         dueDate: null,
         paidAt: null,
-        ledgerEntryId: ledger.id,
+        ledgerEntryId: null,
         lines,
       };
       state.invoices.unshift(inv);
       ship.shippingInvoicedAt = new Date().toISOString();
-      ship.shippingLedgerEntryId = ledger.id;
     }
 
     state.shipments.unshift(ship);

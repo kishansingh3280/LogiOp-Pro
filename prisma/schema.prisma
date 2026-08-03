@@ -100,15 +100,19 @@ model Party {
 }
 
 model CatalogItem {
-  id           String   @id @default(cuid())
-  name         String
-  description  String?
-  unit         String   @default("pcs")
-  defaultRate  Float?
-  currency     Currency @default(INR)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  unit          String   @default("pcs")
+  defaultRate   Float?
+  /** What you pay / cost to acquire (optional — used for P&L) */
+  purchaseRate  Float?
+  /** What you sell / bill at (optional — prefills invoices + P&L) */
+  saleRate      Float?
+  currency      Currency @default(INR)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   invoiceLines InvoiceLine[]
   bagItems     BagItem[]
@@ -250,7 +254,7 @@ model Invoice {
   party         Party         @relation(fields: [partyId], references: [id], onDelete: Cascade)
   shipmentId    String?
   shipment      Shipment?     @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
-  status        InvoiceStatus @default(SENT)
+  status        InvoiceStatus @default(DRAFT)
   currency      Currency
   subtotal      Float         @default(0)
   amount        Float

@@ -21,6 +21,7 @@ type CatalogItem = {
   name: string;
   unit: string;
   defaultRate: number | null;
+  saleRate?: number | null;
   currency: "INR" | "THB";
 };
 
@@ -44,7 +45,7 @@ export default function NewInvoicePage() {
     dueDate: "",
     description: "",
     notes: "",
-    status: "SENT",
+    status: "DRAFT",
   });
   const [lines, setLines] = useState<Line[]>([
     {
@@ -90,9 +91,11 @@ export default function NewInvoicePage() {
         description: item?.name || next[i].description,
         unit: item?.unit || next[i].unit,
         unitPrice:
-          item?.defaultRate != null
-            ? String(item.defaultRate)
-            : next[i].unitPrice,
+          item?.saleRate != null
+            ? String(item.saleRate)
+            : item?.defaultRate != null
+              ? String(item.defaultRate)
+              : next[i].unitPrice,
       };
       return next;
     });

@@ -25,6 +25,13 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       ...(body.defaultRate !== undefined && {
         defaultRate: body.defaultRate != null ? Number(body.defaultRate) : null,
       }),
+      ...(body.purchaseRate !== undefined && {
+        purchaseRate:
+          body.purchaseRate != null ? Number(body.purchaseRate) : null,
+      }),
+      ...(body.saleRate !== undefined && {
+        saleRate: body.saleRate != null ? Number(body.saleRate) : null,
+      }),
       ...(body.currency != null && { currency: body.currency as Currency }),
       ...(body.isActive != null && { isActive: Boolean(body.isActive) }),
     },

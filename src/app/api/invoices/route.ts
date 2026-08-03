@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   });
   const subtotal = prepared.reduce((s, l) => s + l.amount, 0);
   const amount = subtotal;
-  const status = (body.status as InvoiceStatus) || "SENT";
+  const status = (body.status as InvoiceStatus) || "DRAFT";
   const number =
     body.number ||
     `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(

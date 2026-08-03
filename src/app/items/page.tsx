@@ -21,6 +21,8 @@ type CatalogItem = {
   description: string | null;
   unit: string;
   defaultRate: number | null;
+  purchaseRate: number | null;
+  saleRate: number | null;
   currency: "INR" | "THB";
 };
 
@@ -28,7 +30,8 @@ const emptyForm = {
   name: "",
   description: "",
   unit: "pcs",
-  defaultRate: "",
+  purchaseRate: "",
+  saleRate: "",
   currency: "INR" as "INR" | "THB",
 };
 
@@ -65,7 +68,9 @@ export default function ItemsPage() {
       name: item.name,
       description: item.description || "",
       unit: item.unit || "pcs",
-      defaultRate: item.defaultRate != null ? String(item.defaultRate) : "",
+      purchaseRate:
+        item.purchaseRate != null ? String(item.purchaseRate) : "",
+      saleRate: item.saleRate != null ? String(item.saleRate) : "",
       currency: item.currency || "INR",
     });
     setOpen(true);
@@ -74,11 +79,18 @@ export default function ItemsPage() {
   async function save() {
     if (!form.name.trim()) return;
     setSaving(true);
+    const purchaseRate = form.purchaseRate
+      ? Number(form.purchaseRate)
+      : null;
+    const saleRate = form.saleRate ? Number(form.saleRate) : null;
     const payload = {
       name: form.name.trim(),
       description: form.description || null,
       unit: form.unit || "pcs",
-      defaultRate: form.defaultRate ? Number(form.defaultRate) : null,
+      purchaseRate,
+      saleRate,
+      // Keep defaultRate in sync with sale for invoice prefills
+      defaultRate: saleRate,
       currency: form.currency,
     };
     try {
@@ -107,7 +119,7 @@ export default function ItemsPage() {
     <div>
       <PageHeader
         title="Items"
-        subtitle="Catalog of goods you deal in — remembered for shipments & invoices (no stock control)"
+        subtitle="Catalog of goods you deal in — optional purchase & sale rates for P&L"
         actions={<Button onClick={openCreate}>Add item</Button>}
       />
 
@@ -131,7 +143,8 @@ export default function ItemsPage() {
               <tr>
                 <th>Item</th>
                 <th>Unit</th>
-                <th>Default rate</th>
+                <th>Purchase rate</th>
+                <th>Sale rate</th>
                 <th></th>
               </tr>
             </thead>
@@ -150,9 +163,16 @@ export default function ItemsPage() {
                     <Badge tone="info">{item.unit}</Badge>
                   </td>
                   <td>
-                    {item.defaultRate != null
-                      ? formatMoney(item.defaultRate, item.currency)
+                    {item.purchaseRate != null
+                      ? formatMoney(item.purchaseRate, item.currency)
                       : "—"}
+                  </td>
+                  <td>
+                    {item.saleRate != null
+                      ? formatMoney(item.saleRate, item.currency)
+                      : item.defaultRate != null
+                        ? formatMoney(item.defaultRate, item.currency)
+                        : "—"}
                   </td>
                   <td className="space-x-3 whitespace-nowrap">
                     <button
@@ -193,19 +213,30 @@ export default function ItemsPage() {
             value={form.description}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
           />
+          <Input
+            label="Unit"
+            value={form.unit}
+            onChange={(e) => setForm({ ...form, unit: e.target.value })}
+            placeholder="pcs / kg / pair"
+          />
           <div className="grid grid-cols-2 gap-3">
             <Input
-              label="Unit"
-              value={form.unit}
-              onChange={(e) => setForm({ ...form, unit: e.target.value })}
-              placeholder="pcs / kg / pair"
-            />
-            <Input
-              label="Default rate (optional)"
+              label="Purchase rate (optional)"
               type="number"
               step="0.01"
-              value={form.defaultRate}
-              onChange={(e) => setForm({ ...form, defaultRate: e.target.value })}
+              value={form.purchaseRate}
+              onChange={(e) =>
+                setForm({ ...form, purchaseRate: e.target.value })
+              }
+              placeholder="Your cost"
+            />
+            <Input
+              label="Sale rate (optional)"
+              type="number"
+              step="0.01"
+              value={form.saleRate}
+              onChange={(e) => setForm({ ...form, saleRate: e.target.value })}
+              placeholder="Bill / sell at"
             />
           </div>
           <Select
@@ -218,6 +249,10 @@ export default function ItemsPage() {
             <option value="INR">INR</option>
             <option value="THB">THB</option>
           </Select>
+          <p className="text-xs text-[var(--muted)]">
+            Rates are optional. Sale rate prefills invoice lines; both feed the
+            dashboard P&amp;L chart.
+          </p>
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setOpen(false)}>

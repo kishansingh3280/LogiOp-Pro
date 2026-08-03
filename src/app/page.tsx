@@ -6,6 +6,7 @@ import { PageHeader, Card, Badge, statusTone, Button } from "@/components/ui";
 import { BAG_STATUS_LABELS, TRANSPORT_MODE_LABELS, formatMoney } from "@/lib/utils";
 import { apiGet, getDemoMode } from "@/lib/client-api";
 import { ArrowDownLeft, ArrowUpRight, Boxes, Package, Users } from "lucide-react";
+import { PnLWormChart } from "@/components/PnLWormChart";
 
 type DashboardData = {
   statusCounts: Record<string, number>;
@@ -33,6 +34,20 @@ type DashboardData = {
     carrierName: string | null;
     bags: Array<{ bag: { bagNumber: string; shipment: { lotNumber: string } } }>;
   }>;
+  pnlSeries?: Array<{
+    key: string;
+    label: string;
+    revenue: number;
+    cost: number;
+    profit: number;
+    cumulative: number;
+  }>;
+  pnlSummary?: {
+    revenue: number;
+    cost: number;
+    profit: number;
+    currency: "INR" | "THB";
+  };
 };
 
 export default function DashboardPage() {
@@ -121,6 +136,31 @@ export default function DashboardPage() {
           </div>
         </Card>
       </div>
+
+      <Card className="mb-6">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-lg">P&amp;L worm</h2>
+          {data.pnlSummary && (
+            <div className="text-sm text-[var(--muted)]">
+              6 mo · Rev {formatMoney(data.pnlSummary.revenue, "INR")} · Cost{" "}
+              {formatMoney(data.pnlSummary.cost, "INR")} · Profit{" "}
+              <span
+                className={
+                  data.pnlSummary.profit >= 0
+                    ? "text-emerald-700"
+                    : "text-red-700"
+                }
+              >
+                {formatMoney(data.pnlSummary.profit, "INR")}
+              </span>
+            </div>
+          )}
+        </div>
+        <p className="mb-3 text-sm text-[var(--muted)]">
+          Cumulative profit from invoiced revenue minus item purchase cost.
+        </p>
+        <PnLWormChart points={data.pnlSeries || []} currency="INR" />
+      </Card>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Card className="flex items-center gap-4">

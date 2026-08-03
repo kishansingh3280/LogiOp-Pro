@@ -131,6 +131,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (
+      body.createInvoice === true &&
       ownerPartyId &&
       shippingChargeTotal != null &&
       shippingChargeTotal > 0
@@ -153,6 +154,7 @@ export async function POST(req: NextRequest) {
         }
       }
       const catalogIds = new Map<string, string>();
+      const catalogRates = new Map<string, number>();
       for (const { name, unit } of itemQtyByKey.values()) {
         const cat = await tx.catalogItem.upsert({
           where: { name },
@@ -160,6 +162,8 @@ export async function POST(req: NextRequest) {
           update: { isActive: true, unit },
         });
         catalogIds.set(name, cat.id);
+        const rate = cat.saleRate ?? cat.defaultRate ?? 0;
+        catalogRates.set(name, rate);
         await tx.catalogUnit.upsert({
           where: { name: unit },
           create: { name: unit },
@@ -202,41 +206,38 @@ export async function POST(req: NextRequest) {
         },
       ];
       let sort = 1;
+      let goodsTotal = 0;
       for (const { name, qty, unit } of itemQtyByKey.values()) {
+        const unitPrice = catalogRates.get(name) || 0;
+        const amount = Math.round(qty * unitPrice * 100) / 100;
+        goodsTotal += amount;
         lines.push({
           catalogItemId: catalogIds.get(name) || null,
           description: `Goods shipped · ${name}`,
           quantity: qty,
           unit,
-          unitPrice: 0,
-          amount: 0,
+          unitPrice,
+          amount,
           sortOrder: sort++,
         });
       }
 
-      const ledger = await tx.ledgerEntry.create({
-        data: {
-          partyId: ownerPartyId,
-          direction: "YOU_GAVE",
-          amount: shippingChargeTotal,
-          currency: shippingCurrency,
-          description: `Invoice ${invNumber} · Shipping · Lot ${created.lotNumber}`,
-          entryDate: created.shipDate || new Date(),
-          isAutoSynced: true,
-        },
-      });
+      const invoiceTotal =
+        Math.round((shippingChargeTotal + goodsTotal) * 100) / 100;
+
+      // Draft only — no ledger until you mark Sent
       await tx.invoice.create({
         data: {
           number: invNumber,
           partyId: ownerPartyId,
           shipmentId: created.id,
-          status: "SENT",
-          amount: shippingChargeTotal,
-          subtotal: shippingChargeTotal,
+          status: "DRAFT",
+          amount: invoiceTotal,
+          subtotal: invoiceTotal,
           currency: shippingCurrency,
           description: `Shipping charges for lot ${created.lotNumber}`,
           issueDate: created.shipDate || new Date(),
-          ledgerEntryId: ledger.id,
+          ledgerEntryId: null,
           lines: { create: lines },
         },
       });
@@ -244,7 +245,6 @@ export async function POST(req: NextRequest) {
         where: { id: created.id },
         data: {
           shippingInvoicedAt: new Date(),
-          shippingLedgerEntryId: ledger.id,
         },
         include: {
           bags: { include: { customer: true, items: true } },

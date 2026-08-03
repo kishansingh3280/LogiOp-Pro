@@ -31,6 +31,13 @@ export async function POST(req: NextRequest) {
           defaultRate:
             body.defaultRate != null ? Number(body.defaultRate) : null,
         }),
+        ...(body.purchaseRate !== undefined && {
+          purchaseRate:
+            body.purchaseRate != null ? Number(body.purchaseRate) : null,
+        }),
+        ...(body.saleRate !== undefined && {
+          saleRate: body.saleRate != null ? Number(body.saleRate) : null,
+        }),
         ...(body.currency != null && {
           currency: body.currency as Currency,
         }),
@@ -46,6 +53,9 @@ export async function POST(req: NextRequest) {
       unit: body.unit || "pcs",
       defaultRate:
         body.defaultRate != null ? Number(body.defaultRate) : null,
+      purchaseRate:
+        body.purchaseRate != null ? Number(body.purchaseRate) : null,
+      saleRate: body.saleRate != null ? Number(body.saleRate) : null,
       currency: (body.currency as Currency) || "INR",
     },
   });

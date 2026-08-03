@@ -93,6 +93,7 @@ export default function NewShipmentPage() {
     ownerPartyId: "",
     shippingRatePerKg: "",
     shippingCurrency: "INR" as "INR" | "THB",
+    createInvoice: false,
   });
 
   useEffect(() => {
@@ -256,6 +257,7 @@ export default function NewShipmentPage() {
           : null,
         shippingCurrency: form.shippingCurrency,
         shippingChargeTotal: shippingTotal > 0 ? shippingTotal : null,
+        createInvoice: form.createInvoice,
         bags: showDetails
           ? bags.map((b) => ({
               bagNumber: b.bagNumber,
@@ -647,8 +649,7 @@ export default function NewShipmentPage() {
             <p className="mt-1 text-sm text-[var(--muted)]">
               Rate from the owner&apos;s party transportation charges — editable
               for this shipment. Each bag shows its own charge (rate × weight);
-              override any bag for expensive items. Totals invoice + ledger on
-              create.
+              override any bag for expensive items.
             </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <Input
@@ -683,6 +684,30 @@ export default function NewShipmentPage() {
                 </div>
               </div>
             </div>
+            <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--line)] bg-[var(--bg)] px-3 py-3">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={form.createInvoice}
+                onChange={(e) =>
+                  setForm({ ...form, createInvoice: e.target.checked })
+                }
+                disabled={
+                  !form.ownerPartyId ||
+                  form.ownerPartyId === "__NONE__" ||
+                  shippingTotal <= 0
+                }
+              />
+              <span>
+                <span className="block text-sm font-medium">
+                  Create draft invoice in Billing
+                </span>
+                <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                  Only if checked — invoice stays Draft until you mark Sent.
+                  Leave unchecked to skip billing sync.
+                </span>
+              </span>
+            </label>
           </Card>
         </>
       )}

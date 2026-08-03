@@ -58,11 +58,19 @@ export default function InvoiceDetailPage({
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [rates, setRates] = useState<Record<string, string>>({});
+  const [dirty, setDirty] = useState(false);
 
   const load = () =>
     apiGet<Invoice>(`/api/invoices/${id}`)
       .then((inv) => {
         setInvoice(inv);
+        setRates(
+          Object.fromEntries(
+            inv.lines.map((l) => [l.id, String(l.unitPrice ?? 0)])
+          )
+        );
+        setDirty(false);
         setError(null);
       })
       .catch((e) =>
@@ -73,10 +81,46 @@ export default function InvoiceDetailPage({
     load();
   }, [id]);
 
+  const canEditRates =
+    invoice &&
+    invoice.status !== "PAID" &&
+    invoice.status !== "CANCELLED";
+
+  async function saveRates() {
+    if (!invoice || !canEditRates) return;
+    setBusy(true);
+    try {
+      await apiPatch(`/api/invoices/${id}`, {
+        lines: invoice.lines.map((l) => ({
+          id: l.id,
+          unitPrice: Number(rates[l.id]) || 0,
+          quantity: l.quantity,
+        })),
+      });
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to save rates");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function setStatus(status: string) {
     setBusy(true);
     try {
-      await apiPatch(`/api/invoices/${id}`, { status });
+      // Persist rate edits before marking sent so ledger uses correct total
+      if (dirty && canEditRates && invoice) {
+        await apiPatch(`/api/invoices/${id}`, {
+          lines: invoice.lines.map((l) => ({
+            id: l.id,
+            unitPrice: Number(rates[l.id]) || 0,
+            quantity: l.quantity,
+          })),
+          status,
+        });
+      } else {
+        await apiPatch(`/api/invoices/${id}`, { status });
+      }
       await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed");
@@ -96,6 +140,12 @@ export default function InvoiceDetailPage({
     return <div className="text-[var(--muted)]">Loading invoice…</div>;
   }
 
+  const previewTotal = invoice.lines.reduce((s, l) => {
+    const price = Number(rates[l.id]);
+    const p = Number.isFinite(price) ? price : l.unitPrice;
+    return s + l.quantity * p;
+  }, 0);
+
   return (
     <div>
       <PageHeader
@@ -110,6 +160,11 @@ export default function InvoiceDetailPage({
               <Link href={`/ledger/${invoice.party.id}`}>
                 <Button variant="secondary">Open khata</Button>
               </Link>
+            )}
+            {invoice.status === "DRAFT" && (
+              <Button onClick={() => setStatus("SENT")} disabled={busy}>
+                Mark sent
+              </Button>
             )}
             {invoice.status === "SENT" && (
               <Button onClick={() => setStatus("PAID")} disabled={busy}>
@@ -189,25 +244,70 @@ export default function InvoiceDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {invoice.lines.map((l) => (
-                  <tr key={l.id}>
-                    <td>{l.description}</td>
-                    <td className="whitespace-nowrap">
-                      {l.quantity} {l.unit}
-                    </td>
-                    <td>{formatMoney(l.unitPrice, invoice.currency)}</td>
-                    <td>{formatMoney(l.amount, invoice.currency)}</td>
-                  </tr>
-                ))}
+                {invoice.lines.map((l) => {
+                  const rateVal = Number(rates[l.id]);
+                  const amount =
+                    l.quantity *
+                    (Number.isFinite(rateVal) ? rateVal : l.unitPrice);
+                  return (
+                    <tr key={l.id}>
+                      <td>{l.description}</td>
+                      <td className="whitespace-nowrap">
+                        {l.quantity} {l.unit}
+                      </td>
+                      <td>
+                        {canEditRates ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            min={0}
+                            className="w-28 rounded border border-[var(--line)] px-2 py-1 text-sm"
+                            value={rates[l.id] ?? ""}
+                            onChange={(e) => {
+                              setRates((r) => ({
+                                ...r,
+                                [l.id]: e.target.value,
+                              }));
+                              setDirty(true);
+                            }}
+                          />
+                        ) : (
+                          formatMoney(l.unitPrice, invoice.currency)
+                        )}
+                      </td>
+                      <td>
+                        {formatMoney(
+                          dirty ? amount : l.amount,
+                          invoice.currency
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+
+          {canEditRates && (
+            <div className="mt-3 flex justify-end">
+              <Button
+                variant="secondary"
+                onClick={saveRates}
+                disabled={busy || !dirty}
+              >
+                Save rates
+              </Button>
+            </div>
+          )}
 
           <div className="mt-4 flex justify-end border-t border-[var(--line)] pt-4">
             <div className="text-right">
               <div className="text-sm text-[var(--muted)]">Total due</div>
               <div className="font-display text-3xl">
-                {formatMoney(invoice.amount, invoice.currency)}
+                {formatMoney(
+                  dirty ? previewTotal : invoice.amount,
+                  invoice.currency
+                )}
               </div>
               {invoice.paidAt && (
                 <div className="mt-1 text-xs text-emerald-700">
@@ -225,10 +325,15 @@ export default function InvoiceDetailPage({
         <Card>
           <div className="font-display text-lg">Actions</div>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Sent invoices post to the customer khata as You gave. Marking paid
-            records You got for the same amount.
+            Drafts stay off the ledger. Mark Sent to post You gave; Mark paid
+            records You got. Fill item rates before sending.
           </p>
           <div className="mt-4 grid gap-2">
+            {invoice.status === "DRAFT" && (
+              <Button onClick={() => setStatus("SENT")} disabled={busy}>
+                Mark sent
+              </Button>
+            )}
             {invoice.status === "SENT" && (
               <Button onClick={() => setStatus("PAID")} disabled={busy}>
                 Record payment (mark paid)
