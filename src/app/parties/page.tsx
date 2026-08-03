@@ -26,9 +26,9 @@ type Party = {
   country: string | null;
   notes?: string | null;
   exchangeRate: number | null;
-  quoteMode: string;
   defaultCurrency: string;
   carryRatePerKg: number | null;
+  carryRateCurrency: "INR" | "THB";
 };
 
 const emptyForm = {
@@ -40,10 +40,14 @@ const emptyForm = {
   country: "",
   notes: "",
   exchangeRate: "",
-  quoteMode: "INR_PER_THB",
   defaultCurrency: "INR",
   carryRatePerKg: "",
+  carryRateCurrency: "INR" as "INR" | "THB",
 };
+
+function chargeSymbol(currency: string) {
+  return currency === "THB" ? "฿" : "₹";
+}
 
 export default function PartiesPage() {
   const [parties, setParties] = useState<Party[]>([]);
@@ -53,8 +57,7 @@ export default function PartiesPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
-  const load = () =>
-    apiGet<Party[]>("/api/parties").then(setParties);
+  const load = () => apiGet<Party[]>("/api/parties").then(setParties);
 
   useEffect(() => {
     load();
@@ -80,9 +83,9 @@ export default function PartiesPage() {
       country: p.country || "",
       notes: p.notes || "",
       exchangeRate: p.exchangeRate != null ? String(p.exchangeRate) : "",
-      quoteMode: p.quoteMode || "INR_PER_THB",
       defaultCurrency: p.defaultCurrency || "INR",
       carryRatePerKg: p.carryRatePerKg != null ? String(p.carryRatePerKg) : "",
+      carryRateCurrency: p.carryRateCurrency || "INR",
     });
     setOpen(true);
   }
@@ -93,6 +96,7 @@ export default function PartiesPage() {
       ...form,
       exchangeRate: form.exchangeRate ? Number(form.exchangeRate) : null,
       carryRatePerKg: form.carryRatePerKg ? Number(form.carryRatePerKg) : null,
+      carryRateCurrency: form.carryRateCurrency,
     };
     try {
       if (editId) {
@@ -148,7 +152,6 @@ export default function PartiesPage() {
                 <th>Name</th>
                 <th>Type</th>
                 <th>Location</th>
-                <th>Quoted FX</th>
                 <th>Default</th>
                 <th>Transportation charges</th>
                 <th></th>
@@ -169,21 +172,11 @@ export default function PartiesPage() {
                   <td>
                     {[p.city, p.country].filter(Boolean).join(", ") || "—"}
                   </td>
-                  <td>
-                    {p.exchangeRate != null ? (
-                      <span>
-                        {p.exchangeRate}{" "}
-                        <span className="text-xs text-[var(--muted)]">
-                          {p.quoteMode === "INR_PER_THB" ? "₹ / ฿" : "฿ / ₹"}
-                        </span>
-                      </span>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
                   <td>{p.defaultCurrency}</td>
                   <td>
-                    {p.carryRatePerKg != null ? `₹${p.carryRatePerKg}/kg` : "—"}
+                    {p.carryRatePerKg != null
+                      ? `${chargeSymbol(p.carryRateCurrency || "INR")}${p.carryRatePerKg}/kg`
+                      : "—"}
                   </td>
                   <td className="space-x-3 whitespace-nowrap">
                     <button
@@ -252,22 +245,6 @@ export default function PartiesPage() {
             value={form.country}
             onChange={(e) => setForm({ ...form, country: e.target.value })}
           />
-          <Input
-            label="Quoted exchange rate"
-            type="number"
-            step="0.01"
-            value={form.exchangeRate}
-            onChange={(e) => setForm({ ...form, exchangeRate: e.target.value })}
-            placeholder="e.g. 2.45"
-          />
-          <Select
-            label="Quote mode"
-            value={form.quoteMode}
-            onChange={(e) => setForm({ ...form, quoteMode: e.target.value })}
-          >
-            <option value="INR_PER_THB">INR per 1 THB (₹/฿)</option>
-            <option value="THB_PER_INR">THB per 1 INR (฿/₹)</option>
-          </Select>
           <Select
             label="Default currency"
             value={form.defaultCurrency}
@@ -277,16 +254,33 @@ export default function PartiesPage() {
             <option value="THB">THB (฿)</option>
           </Select>
           <Input
-            label={
-              form.type === "TRANSPORTER" || form.type === "CARRIER"
-                ? "Rate (₹/kg) — optional"
-                : "Carry rate (₹/kg) — optional"
-            }
+            label="Default FX (₹ per 1 ฿) — optional, used in khata later"
+            type="number"
+            step="0.01"
+            value={form.exchangeRate}
+            onChange={(e) => setForm({ ...form, exchangeRate: e.target.value })}
+            placeholder="e.g. 2.45"
+          />
+          <Input
+            label="Transportation charges (per kg) — optional"
             type="number"
             step="0.01"
             value={form.carryRatePerKg}
             onChange={(e) => setForm({ ...form, carryRatePerKg: e.target.value })}
           />
+          <Select
+            label="Charge currency"
+            value={form.carryRateCurrency}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                carryRateCurrency: e.target.value as "INR" | "THB",
+              })
+            }
+          >
+            <option value="INR">₹ / kg (INR)</option>
+            <option value="THB">฿ / kg (THB)</option>
+          </Select>
           <div className="sm:col-span-2">
             <Textarea
               label="Notes"

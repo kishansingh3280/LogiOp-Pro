@@ -13,6 +13,7 @@ export type DemoParty = {
   quoteMode: string;
   defaultCurrency: "INR" | "THB";
   carryRatePerKg: number | null;
+  carryRateCurrency: "INR" | "THB";
   isActive: boolean;
 };
 
@@ -108,6 +109,7 @@ function seed(): DemoState {
     quoteMode: "INR_PER_THB",
     defaultCurrency: "INR",
     carryRatePerKg: null,
+    carryRateCurrency: "INR",
     isActive: true,
   };
   const siam: DemoParty = {
@@ -123,6 +125,7 @@ function seed(): DemoState {
     quoteMode: "INR_PER_THB",
     defaultCurrency: "THB",
     carryRatePerKg: null,
+    carryRateCurrency: "INR",
     isActive: true,
   };
   const buyer: DemoParty = {
@@ -138,6 +141,7 @@ function seed(): DemoState {
     quoteMode: "INR_PER_THB",
     defaultCurrency: "THB",
     carryRatePerKg: null,
+    carryRateCurrency: "INR",
     isActive: true,
   };
   const amit: DemoParty = {
@@ -153,6 +157,7 @@ function seed(): DemoState {
     quoteMode: "INR_PER_THB",
     defaultCurrency: "INR",
     carryRatePerKg: 200,
+    carryRateCurrency: "INR",
     isActive: true,
   };
   const airAgent: DemoParty = {
@@ -167,7 +172,8 @@ function seed(): DemoState {
     exchangeRate: null,
     quoteMode: "INR_PER_THB",
     defaultCurrency: "THB",
-    carryRatePerKg: null,
+    carryRatePerKg: 85,
+    carryRateCurrency: "THB",
     isActive: true,
   };
   const uncle: DemoParty = {
@@ -183,6 +189,7 @@ function seed(): DemoState {
     quoteMode: "INR_PER_THB",
     defaultCurrency: "INR",
     carryRatePerKg: null,
+    carryRateCurrency: "INR",
     isActive: true,
   };
 
@@ -459,9 +466,10 @@ export async function demoHandle(method: string, path: string, body?: unknown): 
       country: (b.country as string) || null,
       notes: (b.notes as string) || null,
       exchangeRate: b.exchangeRate != null ? Number(b.exchangeRate) : null,
-      quoteMode: String(b.quoteMode || "INR_PER_THB"),
+      quoteMode: "INR_PER_THB",
       defaultCurrency: (b.defaultCurrency as "INR" | "THB") || "INR",
       carryRatePerKg: b.carryRatePerKg != null ? Number(b.carryRatePerKg) : null,
+      carryRateCurrency: (b.carryRateCurrency as "INR" | "THB") || "INR",
       isActive: true,
     };
     state.parties.push(party);

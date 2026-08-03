@@ -21,9 +21,10 @@ export async function POST(req: NextRequest) {
       country: body.country || null,
       notes: body.notes || null,
       exchangeRate: body.exchangeRate != null ? Number(body.exchangeRate) : null,
-      quoteMode: body.quoteMode || "INR_PER_THB",
+      quoteMode: "INR_PER_THB",
       defaultCurrency: body.defaultCurrency || "INR",
       carryRatePerKg: body.carryRatePerKg != null ? Number(body.carryRatePerKg) : null,
+      carryRateCurrency: body.carryRateCurrency || "INR",
     },
   });
   return NextResponse.json(party, { status: 201 });

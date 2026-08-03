@@ -72,9 +72,8 @@ model Party {
   city           String?
   country        String?
   notes          String?
-  // Quoted exchange rates for this party (THB per 1 INR or INR per 1 THB depending on quoteMode)
+  // Optional default FX for this party (always stored as INR per 1 THB). Used later in ledger/invoices.
   exchangeRate   Float?
-  // "INR_PER_THB" means how many INR for 1 THB; "THB_PER_INR" means how many THB for 1 INR
   quoteMode      String    @default("INR_PER_THB")
   defaultCurrency Currency @default(INR)
   isActive       Boolean   @default(true)
@@ -84,7 +83,9 @@ model Party {
   ledgerEntries      LedgerEntry[]
   bagsAsCustomer     Bag[]              @relation("BagCustomer")
   transportLegs      TransportAssignment[]
+  // Transportation charges quoted to this carrier/transporter (or customer if relevant)
   carryRatePerKg     Float?
+  carryRateCurrency  Currency @default(INR)
 }
 
 model LedgerEntry {

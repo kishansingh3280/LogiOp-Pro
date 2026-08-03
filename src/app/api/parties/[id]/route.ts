@@ -35,10 +35,12 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       ...(body.exchangeRate !== undefined && {
         exchangeRate: body.exchangeRate != null ? Number(body.exchangeRate) : null,
       }),
-      ...(body.quoteMode != null && { quoteMode: body.quoteMode }),
       ...(body.defaultCurrency != null && { defaultCurrency: body.defaultCurrency }),
       ...(body.carryRatePerKg !== undefined && {
         carryRatePerKg: body.carryRatePerKg != null ? Number(body.carryRatePerKg) : null,
+      }),
+      ...(body.carryRateCurrency != null && {
+        carryRateCurrency: body.carryRateCurrency,
       }),
       ...(body.isActive != null && { isActive: body.isActive }),
     },

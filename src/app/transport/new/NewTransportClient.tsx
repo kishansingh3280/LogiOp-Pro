@@ -26,6 +26,7 @@ type Party = {
   name: string;
   type: string;
   carryRatePerKg: number | null;
+  carryRateCurrency?: "INR" | "THB";
   defaultCurrency: string;
 };
 
@@ -92,7 +93,10 @@ export default function NewTransportClient() {
       carrierId: id,
       ratePerKg:
         c?.carryRatePerKg != null ? String(c.carryRatePerKg) : f.ratePerKg,
-      currency: c?.defaultCurrency || f.currency,
+      currency:
+        c?.carryRateCurrency ||
+        c?.defaultCurrency ||
+        f.currency,
     }));
   }
 
@@ -211,12 +215,17 @@ export default function NewTransportClient() {
               onChange={(e) => onCarrierChange(e.target.value)}
             >
               <option value="">—</option>
-              {carriers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.carryRatePerKg != null ? ` (₹${c.carryRatePerKg}/kg)` : ""}
-                </option>
-              ))}
+              {carriers.map((c) => {
+                const sym = (c.carryRateCurrency || "INR") === "THB" ? "฿" : "₹";
+                return (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.carryRatePerKg != null
+                      ? ` (${sym}${c.carryRatePerKg}/kg)`
+                      : ""}
+                  </option>
+                );
+              })}
             </Select>
             <Input
               label="Or carrier name (free text)"
