@@ -14,6 +14,7 @@ import {
   EmptyState,
 } from "@/components/ui";
 import { PARTY_TYPE_LABELS } from "@/lib/utils";
+import { apiGet, apiPost, apiPatch } from "@/lib/client-api";
 
 type Party = {
   id: string;
@@ -53,9 +54,7 @@ export default function PartiesPage() {
   const [saving, setSaving] = useState(false);
 
   const load = () =>
-    fetch("/api/parties")
-      .then((r) => r.json())
-      .then(setParties);
+    apiGet<Party[]>("/api/parties").then(setParties);
 
   useEffect(() => {
     load();
@@ -95,24 +94,21 @@ export default function PartiesPage() {
       exchangeRate: form.exchangeRate ? Number(form.exchangeRate) : null,
       carryRatePerKg: form.carryRatePerKg ? Number(form.carryRatePerKg) : null,
     };
-    if (editId) {
-      await fetch(`/api/parties/${editId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    } else {
-      await fetch("/api/parties", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+    try {
+      if (editId) {
+        await apiPatch(`/api/parties/${editId}`, payload);
+      } else {
+        await apiPost("/api/parties", payload);
+      }
+      setOpen(false);
+      setEditId(null);
+      setForm(emptyForm);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to save");
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    setOpen(false);
-    setEditId(null);
-    setForm(emptyForm);
-    load();
   }
 
   return (

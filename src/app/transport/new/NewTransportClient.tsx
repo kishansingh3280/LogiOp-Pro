@@ -12,6 +12,7 @@ import {
   Textarea,
 } from "@/components/ui";
 import { TRANSPORT_MODE_LABELS, formatMoney } from "@/lib/utils";
+import { apiGet, apiPost } from "@/lib/client-api";
 
 type Bag = {
   id: string;
@@ -37,6 +38,7 @@ export default function NewTransportClient() {
   const [parties, setParties] = useState<Party[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set(preselected));
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [form, setForm] = useState({
     mode: "CARRY_PERSON",
     carrierId: "",
@@ -54,13 +56,15 @@ export default function NewTransportClient() {
   });
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/bags").then((r) => r.json()),
-      fetch("/api/parties").then((r) => r.json()),
-    ]).then(([bags, parties]) => {
-      setAllBags(bags);
-      setParties(parties);
-    });
+    Promise.all([apiGet<Bag[]>("/api/bags"), apiGet<Party[]>("/api/parties")])
+      .then(([bags, parties]) => {
+        setAllBags(bags);
+        setParties(parties);
+        setLoadError(null);
+      })
+      .catch((e) =>
+        setLoadError(e instanceof Error ? e.message : "Failed to load")
+      );
   }, []);
 
   const carriers = parties.filter(
@@ -98,10 +102,11 @@ export default function NewTransportClient() {
       return;
     }
     setSaving(true);
-    const res = await fetch("/api/transport", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const data = await apiPost<{
+        synced?: boolean;
+        ledgerEntry?: { amount: number; currency: "INR" | "THB" };
+      }>("/api/transport", {
         ...form,
         bagIds: Array.from(selected),
         ratePerKg: form.ratePerKg ? Number(form.ratePerKg) : null,
@@ -109,23 +114,29 @@ export default function NewTransportClient() {
         departureDate: form.departureDate || null,
         arrivalDate: form.arrivalDate || null,
         carrierId: form.carrierId || null,
-      }),
-    });
-    const data = await res.json();
-    setSaving(false);
-    if (!res.ok) {
-      alert(data.error || "Failed");
-      return;
+      });
+      if (data.synced && data.ledgerEntry) {
+        alert(
+          `Transport assigned. Ledger entry synced: ${formatMoney(
+            data.ledgerEntry.amount,
+            data.ledgerEntry.currency
+          )}`
+        );
+      }
+      router.push("/transport");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setSaving(false);
     }
-    if (data.synced) {
-      alert(
-        `Transport assigned. Ledger entry synced: ${formatMoney(
-          data.ledgerEntry.amount,
-          data.ledgerEntry.currency
-        )}`
-      );
-    }
-    router.push("/transport");
+  }
+
+  if (loadError) {
+    return (
+      <Card>
+        <div className="text-red-700">{loadError}</div>
+      </Card>
+    );
   }
 
   return (

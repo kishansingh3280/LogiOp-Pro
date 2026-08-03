@@ -5,6 +5,7 @@ import Link from "next/link";
 import { PageHeader, Card, Button, Badge, EmptyState, statusTone } from "@/components/ui";
 import { BAG_STATUS_LABELS } from "@/lib/utils";
 import { format } from "date-fns";
+import { apiGet } from "@/lib/client-api";
 
 type Shipment = {
   id: string;
@@ -20,13 +21,29 @@ type Shipment = {
 };
 
 export default function ShipmentsPage() {
-  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [shipments, setShipments] = useState<Shipment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/shipments")
-      .then((r) => r.json())
-      .then(setShipments);
+    apiGet<Shipment[]>("/api/shipments")
+      .then((s) => {
+        setShipments(s);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
   }, []);
+
+  if (error && !shipments) {
+    return (
+      <Card>
+        <div className="text-red-700">{error}</div>
+      </Card>
+    );
+  }
+
+  if (!shipments) {
+    return <div className="text-[var(--muted)]">Loading shipments…</div>;
+  }
 
   return (
     <div>

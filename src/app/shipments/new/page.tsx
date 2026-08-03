@@ -11,6 +11,7 @@ import {
   Select,
   Textarea,
 } from "@/components/ui";
+import { apiGet, apiPost } from "@/lib/client-api";
 
 type Warehouse = { id: string; name: string; city: string };
 type Party = { id: string; name: string; type: string };
@@ -28,6 +29,7 @@ export default function NewShipmentPage() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [bagCount, setBagCount] = useState("25");
   const [showDetails, setShowDetails] = useState(false);
   const [bags, setBags] = useState<BagDraft[]>([]);
@@ -44,22 +46,27 @@ export default function NewShipmentPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/warehouses").then((r) => r.json()),
-      fetch("/api/parties").then((r) => r.json()),
-    ]).then(([w, p]) => {
-      setWarehouses(w);
-      setParties(p);
-      const delhi = w.find((x: Warehouse) => x.city === "Delhi");
-      const bkk = w.find((x: Warehouse) => x.city === "Bangkok");
-      setForm((f) => ({
-        ...f,
-        originWarehouseId: delhi?.id || "",
-        destWarehouseId: bkk?.id || "",
-        lotNumber: `LOT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(
-          Math.random() * 900 + 100
-        )}`,
-      }));
-    });
+      apiGet<Warehouse[]>("/api/warehouses"),
+      apiGet<Party[]>("/api/parties"),
+    ])
+      .then(([w, p]) => {
+        setWarehouses(w);
+        setParties(p);
+        setLoadError(null);
+        const delhi = w.find((x) => x.city === "Delhi");
+        const bkk = w.find((x) => x.city === "Bangkok");
+        setForm((f) => ({
+          ...f,
+          originWarehouseId: delhi?.id || "",
+          destWarehouseId: bkk?.id || "",
+          lotNumber: `LOT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(
+            Math.random() * 900 + 100
+          )}`,
+        }));
+      })
+      .catch((e) =>
+        setLoadError(e instanceof Error ? e.message : "Failed to load")
+      );
   }, []);
 
   function generateBagRows(count: number) {
@@ -77,10 +84,8 @@ export default function NewShipmentPage() {
   async function submit() {
     setSaving(true);
     const count = Number(bagCount) || 0;
-    const res = await fetch("/api/shipments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const data = await apiPost<{ id: string }>("/api/shipments", {
         ...form,
         bagCount: count,
         defaultCustomerId: form.defaultCustomerId || null,
@@ -93,17 +98,26 @@ export default function NewShipmentPage() {
               customerId: b.customerId || form.defaultCustomerId || null,
             }))
           : [],
-      }),
-    });
-    const data = await res.json();
-    setSaving(false);
-    if (res.ok) router.push(`/shipments/${data.id}`);
-    else alert(data.error || "Failed to create shipment");
+      });
+      router.push(`/shipments/${data.id}`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to create shipment");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const customers = parties.filter(
     (p) => p.type === "CUSTOMER_IN" || p.type === "CUSTOMER_TH"
   );
+
+  if (loadError) {
+    return (
+      <Card>
+        <div className="text-red-700">{loadError}</div>
+      </Card>
+    );
+  }
 
   return (
     <div>

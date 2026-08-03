@@ -13,6 +13,7 @@ import {
 } from "@/components/ui";
 import { TRANSPORT_MODE_LABELS, formatMoney } from "@/lib/utils";
 import { format } from "date-fns";
+import { apiGet, apiPatch } from "@/lib/client-api";
 
 type Assignment = {
   id: string;
@@ -39,13 +40,17 @@ type Assignment = {
 };
 
 export default function TransportPage() {
-  const [items, setItems] = useState<Assignment[]>([]);
+  const [items, setItems] = useState<Assignment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState<Assignment | null>(null);
 
   const load = () =>
-    fetch("/api/transport")
-      .then((r) => r.json())
-      .then(setItems);
+    apiGet<Assignment[]>("/api/transport")
+      .then((data) => {
+        setItems(data);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
 
   useEffect(() => {
     load();
@@ -55,13 +60,13 @@ export default function TransportPage() {
     id: string,
     patch: Record<string, unknown>
   ) {
-    await fetch(`/api/transport/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    setActive(null);
-    load();
+    try {
+      await apiPatch(`/api/transport/${id}`, patch);
+      setActive(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to update status");
+    }
   }
 
   return (
@@ -76,7 +81,13 @@ export default function TransportPage() {
         }
       />
 
-      {items.length === 0 ? (
+      {error && !items ? (
+        <Card>
+          <div className="text-red-700">{error}</div>
+        </Card>
+      ) : !items ? (
+        <div className="text-[var(--muted)]">Loading transport…</div>
+      ) : items.length === 0 ? (
         <EmptyState
           title="No transport assignments"
           hint="Select bags from a shipment and assign air, sea, land or carry person."

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { PageHeader, Card, Badge, EmptyState, Button } from "@/components/ui";
 import { formatMoney, formatBalanceLabel, PARTY_TYPE_LABELS } from "@/lib/utils";
+import { apiGet } from "@/lib/client-api";
 
 type BalanceRow = {
   partyId: string;
@@ -28,13 +29,28 @@ type Summary = {
 
 export default function LedgerIndexPage() {
   const [data, setData] = useState<Summary | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [currencyFilter, setCurrencyFilter] = useState<"ALL" | "INR" | "THB">("ALL");
 
   useEffect(() => {
-    fetch("/api/ledger/summary")
-      .then((r) => r.json())
-      .then(setData);
+    apiGet<Summary>("/api/ledger/summary")
+      .then((s) => {
+        setData(s);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed"));
   }, []);
+
+  if (error && !data) {
+    return (
+      <Card>
+        <div className="text-red-700">{error}</div>
+        <Button className="mt-3" onClick={() => window.location.reload()}>
+          Retry
+        </Button>
+      </Card>
+    );
+  }
 
   if (!data) return <div className="text-[var(--muted)]">Loading ledger…</div>;
 

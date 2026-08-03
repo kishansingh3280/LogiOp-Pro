@@ -12,6 +12,7 @@ import {
   EmptyState,
 } from "@/components/ui";
 import { BAG_STATUS_LABELS, TRANSPORT_MODE_LABELS } from "@/lib/utils";
+import { apiGet } from "@/lib/client-api";
 
 type Bag = {
   id: string;
@@ -40,7 +41,8 @@ type Bag = {
 };
 
 export default function BagsPage() {
-  const [bags, setBags] = useState<Bag[]>([]);
+  const [bags, setBags] = useState<Bag[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
 
@@ -48,9 +50,12 @@ export default function BagsPage() {
     const params = new URLSearchParams();
     if (query) params.set("q", query);
     if (st) params.set("status", st);
-    fetch(`/api/bags?${params}`)
-      .then((r) => r.json())
-      .then(setBags);
+    apiGet<Bag[]>(`/api/bags?${params}`)
+      .then((b) => {
+        setBags(b);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
   }
 
   useEffect(() => {
@@ -99,7 +104,13 @@ export default function BagsPage() {
         </div>
       </Card>
 
-      {bags.length === 0 ? (
+      {error && !bags ? (
+        <Card>
+          <div className="text-red-700">{error}</div>
+        </Card>
+      ) : !bags ? (
+        <div className="text-[var(--muted)]">Loading bags…</div>
+      ) : bags.length === 0 ? (
         <EmptyState title="No bags found" hint="Create a shipment or clear filters." />
       ) : (
         <Card className="overflow-x-auto p-0">

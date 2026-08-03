@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { PageHeader, Card, Badge, statusTone, Button } from "@/components/ui";
 import { BAG_STATUS_LABELS, TRANSPORT_MODE_LABELS, formatMoney } from "@/lib/utils";
+import { apiGet, getDemoMode } from "@/lib/client-api";
 import { ArrowDownLeft, ArrowUpRight, Boxes, Package, Users } from "lucide-react";
 
 type DashboardData = {
@@ -36,13 +37,30 @@ type DashboardData = {
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [demo, setDemo] = useState(true);
 
   useEffect(() => {
-    fetch("/api/dashboard")
-      .then((r) => r.json())
-      .then(setData)
-      .catch(console.error);
+    setDemo(getDemoMode());
+    apiGet<DashboardData>("/api/dashboard")
+      .then((d) => {
+        setData(d);
+        setDemo(getDemoMode());
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
   }, []);
+
+  if (error && !data) {
+    return (
+      <Card>
+        <div className="text-red-700">{error}</div>
+        <Button className="mt-3" onClick={() => window.location.reload()}>
+          Retry
+        </Button>
+      </Card>
+    );
+  }
 
   if (!data) {
     return <div className="text-[var(--muted)]">Loading dashboard…</div>;
@@ -52,7 +70,11 @@ export default function DashboardPage() {
     <div>
       <PageHeader
         title="Operations overview"
-        subtitle="Live bag status, payables & receivables across INR and THB"
+        subtitle={
+          demo
+            ? "Demo mode ON — sample data, works offline"
+            : "Live bag status, payables & receivables across INR and THB"
+        }
         actions={
           <>
             <Link href="/shipments/new">
@@ -167,9 +189,8 @@ export default function DashboardPage() {
                       {a.carrier?.name || a.carrierName || "Unassigned carrier"}
                     </div>
                     <div className="text-xs text-[var(--muted)]">
-                      {TRANSPORT_MODE_LABELS[a.mode] || a.mode} ·{" "}
-                      {a.bags.length} bag(s) · Lot{" "}
-                      {a.bags[0]?.bag.shipment.lotNumber || "—"}
+                      {TRANSPORT_MODE_LABELS[a.mode] || a.mode} · {a.bags.length} bag(s) · Lot{" "}
+                      {a.bags[0]?.bag?.shipment?.lotNumber || "—"}
                     </div>
                   </div>
                   <Badge tone="accent">{a.bags.length} bags</Badge>
@@ -202,7 +223,10 @@ export default function DashboardPage() {
               {data.recentBags.map((b) => (
                 <tr key={b.id}>
                   <td>
-                    <Link href={`/shipments/${b.shipment.id}`} className="text-[var(--accent)]">
+                    <Link
+                      href={`/shipments/${b.shipment.id}`}
+                      className="text-[var(--accent)]"
+                    >
                       {b.shipment.lotNumber}
                     </Link>
                     {b.shipment.batchNumber && (

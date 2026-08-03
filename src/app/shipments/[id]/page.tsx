@@ -17,6 +17,7 @@ import {
   TRANSPORT_MODE_LABELS,
 } from "@/lib/utils";
 import { format } from "date-fns";
+import { apiGet, apiPost, apiPatch } from "@/lib/client-api";
 
 type Bag = {
   id: string;
@@ -60,14 +61,18 @@ export default function ShipmentDetailPage({
 }) {
   const { id } = use(params);
   const [shipment, setShipment] = useState<Shipment | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editBag, setEditBag] = useState<Bag | null>(null);
   const [addCount, setAddCount] = useState("1");
 
   const load = () =>
-    fetch(`/api/shipments/${id}`)
-      .then((r) => r.json())
-      .then(setShipment);
+    apiGet<Shipment>(`/api/shipments/${id}`)
+      .then((s) => {
+        setShipment(s);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
 
   useEffect(() => {
     load();
@@ -90,29 +95,42 @@ export default function ShipmentDetailPage({
 
   async function updateBag() {
     if (!editBag) return;
-    await fetch(`/api/bags/${editBag.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      await apiPatch(`/api/bags/${editBag.id}`, {
         bagNumber: editBag.bagNumber,
         weightKg: editBag.weightKg,
         description: editBag.description,
         contents: editBag.contents,
         status: editBag.status,
         customerId: editBag.customer?.id || null,
-      }),
-    });
-    setEditBag(null);
-    load();
+      });
+      setEditBag(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to update bag");
+    }
   }
 
   async function addBags() {
-    await fetch(`/api/shipments/${id}/bags`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ count: Number(addCount) || 1 }),
-    });
-    load();
+    try {
+      await apiPost(`/api/shipments/${id}/bags`, {
+        count: Number(addCount) || 1,
+      });
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to add bags");
+    }
+  }
+
+  if (error && !shipment) {
+    return (
+      <Card>
+        <div className="text-red-700">{error}</div>
+        <Button className="mt-3" onClick={() => load()}>
+          Retry
+        </Button>
+      </Card>
+    );
   }
 
   if (!shipment) return <div className="text-[var(--muted)]">Loading shipment…</div>;

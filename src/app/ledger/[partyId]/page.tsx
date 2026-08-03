@@ -21,6 +21,12 @@ import {
 } from "@/lib/utils";
 import { format } from "date-fns";
 import { Paperclip } from "lucide-react";
+import {
+  apiGet,
+  apiPost,
+  apiDelete,
+  uploadAttachment,
+} from "@/lib/client-api";
 
 type Attachment = {
   id: string;
@@ -70,6 +76,7 @@ export default function PartyLedgerPage({
 }) {
   const { partyId } = use(params);
   const [party, setParty] = useState<Party | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [attachFor, setAttachFor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -85,16 +92,17 @@ export default function PartyLedgerPage({
   });
 
   const load = () =>
-    fetch(`/api/parties/${partyId}`)
-      .then((r) => r.json())
+    apiGet<Party>(`/api/parties/${partyId}`)
       .then((p) => {
         setParty(p);
+        setError(null);
         setForm((f) => ({
           ...f,
           currency: p.defaultCurrency || "INR",
           fxRate: p.exchangeRate != null ? String(p.exchangeRate) : "",
         }));
-      });
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
 
   useEffect(() => {
     load();
@@ -160,29 +168,19 @@ export default function PartyLedgerPage({
 
     setSaving(true);
     try {
-      const res = await fetch("/api/ledger", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          partyId,
-          direction: form.direction,
-          amount: postAmount,
-          currency: postCurrency,
-          description: form.description,
-          entryDate: form.entryDate,
-          fxRate: rateNum,
-          fxAmount,
-          fxCurrency,
-        }),
+      const entry = await apiPost<{ id: string }>("/api/ledger", {
+        partyId,
+        direction: form.direction,
+        amount: postAmount,
+        currency: postCurrency,
+        description: form.description,
+        entryDate: form.entryDate,
+        fxRate: rateNum,
+        fxAmount,
+        fxCurrency,
       });
-      const entry = await res.json();
       if (pendingBill && entry?.id) {
-        const fd = new FormData();
-        fd.append("file", pendingBill);
-        await fetch(`/api/ledger/${entry.id}/attachments`, {
-          method: "POST",
-          body: fd,
-        });
+        await uploadAttachment(entry.id, pendingBill);
       }
       setOpen(false);
       setPendingBill(null);
@@ -194,23 +192,42 @@ export default function PartyLedgerPage({
         entryDate: new Date().toISOString().slice(0, 10),
       }));
       load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to save entry");
     } finally {
       setSaving(false);
     }
   }
 
   async function uploadBill(entryId: string, file: File) {
-    const fd = new FormData();
-    fd.append("file", file);
-    await fetch(`/api/ledger/${entryId}/attachments`, { method: "POST", body: fd });
-    setAttachFor(null);
-    load();
+    try {
+      await uploadAttachment(entryId, file);
+      setAttachFor(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to upload bill");
+    }
   }
 
   async function deleteEntry(id: string) {
     if (!confirm("Delete this ledger entry?")) return;
-    await fetch(`/api/ledger/${id}`, { method: "DELETE" });
-    load();
+    try {
+      await apiDelete(`/api/ledger/${id}`);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to delete entry");
+    }
+  }
+
+  if (error && !party) {
+    return (
+      <Card>
+        <div className="text-red-700">{error}</div>
+        <Button className="mt-3" onClick={() => load()}>
+          Retry
+        </Button>
+      </Card>
+    );
   }
 
   if (!party) return <div className="text-[var(--muted)]">Loading khata…</div>;

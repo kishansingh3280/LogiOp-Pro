@@ -1,6 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Allow Cursor cloud preview hosts to load the app in development
+  allowedDevOrigins: [
+    "*.agent.cvm.dev",
+    "*.cvm.dev",
+    "localhost",
+    "127.0.0.1",
+  ],
   async headers() {
     return [
       {

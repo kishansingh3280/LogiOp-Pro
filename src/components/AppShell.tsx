@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import clsx from "clsx";
+import { DemoBanner } from "@/components/DemoBanner";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -103,6 +104,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
+        <DemoBanner />
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-[var(--line)] bg-[var(--panel)]/95 px-4 backdrop-blur lg:px-8">
           <button
             className="lg:hidden"
