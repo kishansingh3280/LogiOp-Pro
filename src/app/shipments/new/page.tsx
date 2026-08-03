@@ -31,7 +31,7 @@ export default function NewShipmentPage() {
   const [parties, setParties] = useState<Party[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [bagCount, setBagCount] = useState("25");
+  const [bagCount, setBagCount] = useState("");
   const [showDetails, setShowDetails] = useState(false);
   const [bags, setBags] = useState<BagDraft[]>([]);
   const [form, setForm] = useState({
@@ -42,6 +42,7 @@ export default function NewShipmentPage() {
     destWarehouseId: "",
     shipDate: new Date().toISOString().slice(0, 10),
     notes: "",
+    /** "" = not chosen yet; "__NONE__" = explicitly no customer; else party id */
     defaultCustomerId: "",
   });
 
@@ -70,33 +71,48 @@ export default function NewShipmentPage() {
       );
   }, []);
 
+  function resolveCustomerId(raw: string): string | null {
+    if (!raw || raw === "__NONE__") return null;
+    return raw;
+  }
+
   function generateBagRows(count: number) {
+    const customerId = resolveCustomerId(form.defaultCustomerId) || "";
     const rows: BagDraft[] = Array.from({ length: count }, (_, i) => ({
       bagNumber: String(i + 1).padStart(3, "0"),
       weightKg: "",
       description: "",
       contents: "",
-      customerId: form.defaultCustomerId,
+      customerId,
     }));
     setBags(rows);
     setShowDetails(true);
   }
 
   async function submit() {
-    setSaving(true);
+    if (!form.defaultCustomerId) {
+      alert("Select a customer (or choose No customer).");
+      return;
+    }
     const count = Number(bagCount) || 0;
+    if (count < 1) {
+      alert("Enter how many bags you want.");
+      return;
+    }
+    setSaving(true);
+    const defaultCustomerId = resolveCustomerId(form.defaultCustomerId);
     try {
       const data = await apiPost<{ id: string }>("/api/shipments", {
         ...form,
         bagCount: count,
-        defaultCustomerId: form.defaultCustomerId || null,
+        defaultCustomerId,
         bags: showDetails
           ? bags.map((b) => ({
               bagNumber: b.bagNumber,
               weightKg: b.weightKg ? Number(b.weightKg) : null,
               description: b.description || null,
               contents: b.contents || null,
-              customerId: b.customerId || form.defaultCustomerId || null,
+              customerId: b.customerId || defaultCustomerId,
             }))
           : [],
       });
@@ -124,7 +140,7 @@ export default function NewShipmentPage() {
     <div>
       <PageHeader
         title="New shipment"
-        subtitle="Create a lot, generate bags, optionally fill bag details"
+        subtitle="Create a lot for a customer, add bags, optionally fill bag details"
         actions={
           <Link href="/shipments">
             <Button variant="secondary">Cancel</Button>
@@ -183,11 +199,16 @@ export default function NewShipmentPage() {
             ))}
           </Select>
           <Select
-            label="Default customer (optional)"
+            label="Customer *"
             value={form.defaultCustomerId}
-            onChange={(e) => setForm({ ...form, defaultCustomerId: e.target.value })}
+            onChange={(e) =>
+              setForm({ ...form, defaultCustomerId: e.target.value })
+            }
           >
-            <option value="">—</option>
+            <option value="" disabled>
+              Select customer…
+            </option>
+            <option value="__NONE__">No customer</option>
             {customers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -200,6 +221,7 @@ export default function NewShipmentPage() {
             min={1}
             value={bagCount}
             onChange={(e) => setBagCount(e.target.value)}
+            placeholder="e.g. 10"
           />
           <div className="sm:col-span-2">
             <Textarea
@@ -298,7 +320,7 @@ export default function NewShipmentPage() {
                         setBags(next);
                       }}
                     >
-                      <option value="">—</option>
+                      <option value="">No customer</option>
                       {customers.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
@@ -314,8 +336,19 @@ export default function NewShipmentPage() {
       )}
 
       <div className="flex justify-end gap-2">
-        <Button onClick={submit} disabled={!form.lotNumber || !bagCount || saving}>
-          {saving ? "Creating…" : `Create shipment with ${bagCount || 0} bags`}
+        <Button
+          onClick={submit}
+          disabled={
+            !form.lotNumber ||
+            !bagCount ||
+            Number(bagCount) < 1 ||
+            !form.defaultCustomerId ||
+            saving
+          }
+        >
+          {saving
+            ? "Creating…"
+            : `Create shipment with ${bagCount || "…"} bags`}
         </Button>
       </div>
     </div>
