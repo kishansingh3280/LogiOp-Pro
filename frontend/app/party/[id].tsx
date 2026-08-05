@@ -92,7 +92,7 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
         </View>
       )}
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Card>
           <View style={styles.headerRow}>
             <View style={styles.avatar}>
@@ -207,6 +207,27 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {!embedded && (
+        <View style={styles.actionBar}>
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.actionGave]}
+            onPress={() => router.push(`/entry/new?party_id=${p.id}&kind=gave` as never)}
+            testID="party-you-gave-btn"
+          >
+            <Ionicons name="arrow-up-outline" size={16} color={colors.text} />
+            <Text style={styles.actionText}>You gave</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.actionGot]}
+            onPress={() => router.push(`/entry/new?party_id=${p.id}&kind=got` as never)}
+            testID="party-you-got-btn"
+          >
+            <Ionicons name="arrow-down-outline" size={16} color={colors.bg} />
+            <Text style={[styles.actionText, { color: colors.bg }]}>You got</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </Wrapper>
   );
 }
@@ -283,4 +304,24 @@ const styles = StyleSheet.create({
   },
   linkTitle: { color: colors.text, fontSize: 14, fontWeight: "700" },
   linkSub: { color: colors.textDim, fontSize: 12, marginTop: 2 },
+  actionBar: {
+    flexDirection: "row",
+    padding: spacing.md,
+    gap: spacing.md,
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.surface,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    height: 50,
+    borderRadius: radii.md,
+  },
+  actionGave: { backgroundColor: colors.danger },
+  actionGot: { backgroundColor: colors.ok },
+  actionText: { color: colors.text, fontSize: 15, fontWeight: "800", letterSpacing: 0.3 },
 });

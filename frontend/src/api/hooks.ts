@@ -1,3 +1,4 @@
+import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 
 import { apiGet } from "./client";
@@ -25,6 +26,13 @@ export function useApi<T>(path: string | null) {
     if (!path) return;
     refresh();
   }, [path, refresh]);
+
+  // Auto-refresh when screen regains focus (returning from create screens).
+  useFocusEffect(
+    useCallback(() => {
+      if (path) refresh();
+    }, [path, refresh]),
+  );
 
   return { data, loading, error, refresh, setData };
 }
