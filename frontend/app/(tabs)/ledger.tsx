@@ -39,7 +39,12 @@ export default function LedgerScreen() {
         </View>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipRow}
+        style={{ flexGrow: 0 }}
+      >
         {(["summary", "get", "give", "entries"] as Tab[]).map((t) => {
           const active = tab === t;
           const label = t === "summary" ? "Summary" : t === "get" ? "You will get" : t === "give" ? "You will give" : "Entries";

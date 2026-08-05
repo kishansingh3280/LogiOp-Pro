@@ -74,10 +74,16 @@ export default function PartiesScreen() {
           placeholderTextColor={colors.textDim}
           value={q}
           onChangeText={setQ}
+          testID="parties-search"
         />
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipRow}
+        style={{ flexGrow: 0 }}
+      >
         {ROLES.map((r) => {
           const active = role === r;
           return (
