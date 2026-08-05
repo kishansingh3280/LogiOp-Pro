@@ -52,7 +52,7 @@ export default function ShipmentsScreen() {
       const needle = q.trim().toLowerCase();
       items = items.filter(
         (s) =>
-          s.consignment_no.toLowerCase().includes(needle) ||
+          (s.consignment_no || "").toLowerCase().includes(needle) ||
           (s.origin || "").toLowerCase().includes(needle) ||
           (s.destination || "").toLowerCase().includes(needle) ||
           (partyMap[s.party_id]?.name || "").toLowerCase().includes(needle),

@@ -96,7 +96,7 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
         <Card>
           <View style={styles.headerRow}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{p.name.slice(0, 1).toUpperCase()}</Text>
+              <Text style={styles.avatarText}>{(p.name || "?").slice(0, 1).toUpperCase()}</Text>
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{p.name}</Text>

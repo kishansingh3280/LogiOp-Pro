@@ -310,7 +310,7 @@ function ModeBar({ mode, count, total }: { mode: string; count: number; total: n
   return (
     <View style={{ marginBottom: 10 }}>
       <View style={styles.modeRow}>
-        <Text style={styles.modeLabel}>{mode.replace("_", " ")}</Text>
+        <Text style={styles.modeLabel}>{(mode || "").replace("_", " ")}</Text>
         <Text style={styles.modeCount}>{count}</Text>
       </View>
       <View style={styles.barTrack}>

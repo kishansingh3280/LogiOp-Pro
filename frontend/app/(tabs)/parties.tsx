@@ -45,7 +45,7 @@ export default function PartiesScreen() {
     if (q.trim()) {
       const n = q.trim().toLowerCase();
       items = items.filter(
-        (p) => p.name.toLowerCase().includes(n) || (p.phone || "").toLowerCase().includes(n),
+        (p) => (p.name || "").toLowerCase().includes(n) || (p.phone || "").toLowerCase().includes(n),
       );
     }
     return items;
@@ -253,3 +253,4 @@ const styles = StyleSheet.create({
   emptyBox: { padding: spacing.xxl, alignItems: "center", gap: 8 },
   emptyTitle: { color: colors.text, fontSize: 15, fontWeight: "700", marginTop: 8 },
 });
+
