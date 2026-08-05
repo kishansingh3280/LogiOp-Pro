@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -42,7 +42,7 @@ export default function NewLedgerEntry() {
   const [currency, setCurrency] = useState<Currency>((party.data?.default_currency as Currency) || "INR");
   const [busy, setBusy] = useState(false);
 
-  useMemo(() => {
+  useEffect(() => {
     if (party.data?.default_currency && currency !== party.data.default_currency) {
       setCurrency(party.data.default_currency);
     }
