@@ -80,9 +80,9 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/
-.env
-.env.*
-*.env
+# Only ignore local-only env overrides; keep committed .env files available to the deploy pipeline
+.env.local
+.env.*.local
 credentials.json
 *.key
 .credentials
