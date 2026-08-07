@@ -157,6 +157,24 @@ export interface LedgerSummary {
   top_give: { id: string; name: string; inr: number; thb: number }[];
 }
 
+export interface ShipmentBag {
+  id: string;
+  bag_no: string;
+  shipment_id: string;
+  end_customer_id?: string | null;
+  items: {
+    description: string;
+    item_id?: string | null;
+    quantity: number;
+    unit?: string;
+  }[];
+  weight_kg: number;
+  charge: number;
+  notes?: string | null;
+  status?: string;
+  created_at?: string;
+}
+
 export interface LalamoveOrder {
   id: string;
   order_id?: string;

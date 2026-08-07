@@ -1,0 +1,33 @@
+{
+  "summary": "PASS. Primary bug (PATCH 405) is FIXED — advance-status flow now uses PUT /api/shipments/{id} and works end-to-end. Verified all 7 scenarios on CN-1004 via tablet viewport (768x1024): (1) Rich detail page renders with hero, money card, parties, 3 bags. (2) Mark as In Transit → 200, status pill flips to 'In transit', no 405. Advanced further to warehouse_arrived without error. (3) CN-1005 (delivered) — no advance CTA rendered. (4) Lalamove CTA appears in warehouse_arrived, tapping shows bottom sheet with per-bag results (BAG-001 skipped: Somchai missing lat/lng/phone; BAG-002/003 skipped: no end customer). Done button closes sheet. No crash. (5) Money math exact: Customer will pay ฿145 (green), You pay carrier ₹6,000 (red, 200 × 30 kg), Your margin ฿-1,960.26 (red). (6) All testIDs present: advance-status-btn, back-btn, delete-btn, money-card, party-customer, party-carrier, bag-BAG-001/002/003, lalamove-book-btn. (7) Zero uncaught JS errors during entire flow. Backend PATCH still returns 405 and PUT returns 200 — fix is on client side (apiPut with full body). Cleanup: CN-1004 reverted to pending with all timestamps null. CN-1002 was accidentally advanced in first probe and also reverted to pending / all timestamps null.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "web-only console warnings", "issue": "Non-blocking: 'shadow*' style props deprecated (use boxShadow) and 'props.pointerEvents is deprecated' — these come from RN-web layer used by libraries, not our own code. Safe to ignore for now."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/tmp/detail_1004.png",
+    "/app/test_reports/tmp/after_intransit.png",
+    "/app/test_reports/tmp/warehouse.png",
+    "/app/test_reports/tmp/lala_sheet.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "shipment/[id].tsx is 876 lines — consider splitting into components (Hero, MoneyCard, BagsList, LalamoveSheet) for maintainability; not blocking.",
+    "apiPut is called with the full shipment object spread; this is fine but forwards fields like created_at that the backend just echoes. Not a bug, works as intended."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only test)", "frontend": "100%"},
+  "seed_data_creation": "None. Used live CN-1004 for status advancement; reverted to pending with null timestamps after test. CN-1002 was probed once in an earlier click misfire and also reverted to pending with null timestamps.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Live backend at logistics-hub-1349.emergent.host does NOT accept PATCH on /api/shipments/{id} (returns 405); only PUT works. Frontend correctly uses apiPut in advance() handler. CN-1004 (d373f59d-a426-432c-992a-a28f7ce7d042) is currently pending with 3 bags — BAG-001 (Somchai + Cotton Bedsheets 100 units + Cotton Fabrics 51 units), BAG-002 empty, BAG-003 empty. On tablet 768x1024, tapping shipment cards from the list can require using an explicit locator + bbox click; get_by_text().first sometimes finds the parent card element that's not the exact CN. To advance status via UI, tap [data-testid=advance-status-btn]. To trigger Lalamove sheet, shipment must be in warehouse_arrived and CN-1004 has 3 bags — all currently skip due to missing end-customer contact info.",
+  "rca_of_issue": "Original bug: frontend was PATCHing /api/shipments/{id} but backend only exposes PUT. Fix: advance() in shipment/[id].tsx now calls apiPut with the full shipment body { ...shipment.data, status: next }. Verified via curl: PATCH → 405, PUT → 200. Verified via UI: pending → in_transit → warehouse_arrived transitions succeed with no error alert."
+}
