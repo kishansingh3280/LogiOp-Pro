@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -359,11 +360,34 @@ export default function NewInvoiceScreen() {
           items={items.data || []}
           keyExtractor={(it) => it.id}
           renderItem={(it) => (
-            <View>
-              <Text style={styles.pickName}>{it.name}</Text>
-              <Text style={styles.pickMeta}>
-                {it.unit} · {fmtCurrency(it.selling_price, currency)}
-              </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+              {it.photo_url ? (
+                <Image
+                  source={{ uri: it.photo_url }}
+                  style={{ width: 40, height: 40, borderRadius: 6, backgroundColor: colors.chipBg }}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 6,
+                    backgroundColor: colors.chipBg,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="image-outline" size={18} color={colors.textDim} />
+                </View>
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pickName}>{it.name}</Text>
+                <Text style={styles.pickMeta}>
+                  {it.unit} · {fmtCurrency(it.selling_price, currency)}
+                  {(it.tags || []).length ? ` · ${(it.tags || []).slice(0, 2).join(", ")}` : ""}
+                </Text>
+              </View>
             </View>
           )}
           onPick={(it) => {

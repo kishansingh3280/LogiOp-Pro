@@ -112,6 +112,14 @@ export interface Item {
   hs_code?: string | null;
   default_weight_kg?: number | null;
   notes?: string | null;
+  // Catalog extensions — used by the AI Product Catalog module and
+  // Wingman assistant. `photo_url` accepts data-uri (base64) or remote
+  // URL; `tags` is a free-text list for fuzzy AI search; `supplier_party_id`
+  // ties the item back to a Party in the "supplier" role.
+  photo_url?: string | null;
+  description?: string | null;
+  supplier_party_id?: string | null;
+  tags?: string[] | null;
   created_at: string;
 }
 
