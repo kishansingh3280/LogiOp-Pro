@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -17,6 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiPost } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, LedgerEntry, Party } from "@/src/api/types";
+import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
 
@@ -52,8 +52,8 @@ export default function NewLedgerEntry() {
   const amountNum = Number(amount) || 0;
 
   const save = async () => {
-    if (!partyId) return Alert.alert("Missing", "Party is required");
-    if (amountNum <= 0) return Alert.alert("Invalid", "Amount must be greater than 0");
+    if (!partyId) { toast.warn("Party is required"); return; }
+    if (amountNum <= 0) { toast.warn("Amount must be greater than 0"); return; }
     setBusy(true);
     try {
       const payload = {
@@ -67,11 +67,13 @@ export default function NewLedgerEntry() {
       };
       const res = await apiPost<LedgerEntry>("/api/ledger/entries", payload);
       if ((res as { queued?: boolean }).queued) {
-        Alert.alert("Queued", "Entry saved locally — will sync when back online.");
+        toast.info(`Queued • ${currency} entry will sync when online`);
+      } else {
+        toast.success(`${currency} entry saved`);
       }
       router.back();
     } catch (e) {
-      Alert.alert("Failed", (e as Error).message);
+      toast.error(`Save failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }

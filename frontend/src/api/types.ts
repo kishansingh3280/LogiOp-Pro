@@ -95,6 +95,8 @@ export interface LedgerEntry {
   description: string;
   debit: number;
   credit: number;
+  /** ISO currency — defaults to INR when omitted on legacy rows. */
+  currency?: Currency;
   ref_type?: string | null;
   ref_id?: string | null;
   created_at: string;

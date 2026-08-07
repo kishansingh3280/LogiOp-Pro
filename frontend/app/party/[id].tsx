@@ -5,7 +5,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApi } from "@/src/api/hooks";
-import type { Invoice, LedgerEntry, Party, Shipment } from "@/src/api/types";
+import type { Currency, Invoice, LedgerEntry, Party, Shipment } from "@/src/api/types";
 import { Card, KV, StatusPill } from "@/src/components/ui";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
@@ -39,14 +39,33 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
   );
 
   const totals = useMemo(() => {
-    let debit = 0;
-    let credit = 0;
+    // Aggregate debit/credit per currency. Legacy rows missing `currency` are
+    // treated as INR since that's the historical default of the backend.
+    const buckets: Record<string, { debit: number; credit: number }> = {};
     for (const e of entries) {
-      debit += e.debit || 0;
-      credit += e.credit || 0;
+      const c = (e.currency || "INR").toUpperCase();
+      if (!buckets[c]) buckets[c] = { debit: 0, credit: 0 };
+      buckets[c].debit += e.debit || 0;
+      buckets[c].credit += e.credit || 0;
     }
-    return { debit, credit, balance: debit - credit };
-  }, [entries]);
+    const rows = Object.entries(buckets).map(([currency, v]) => ({
+      currency: currency as Currency,
+      debit: v.debit,
+      credit: v.credit,
+      balance: v.debit - v.credit,
+    }));
+    // Preferred order: party's default currency first, then INR, then THB.
+    const partyDefault = party.data?.default_currency;
+    const order = [partyDefault, "INR", "THB"].filter(Boolean) as string[];
+    rows.sort((a, b) => {
+      const ai = order.indexOf(a.currency); const bi = order.indexOf(b.currency);
+      if (ai === bi) return a.currency.localeCompare(b.currency);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+    return rows;
+  }, [entries, party.data]);
 
   const Wrapper: React.ComponentType<{ children: React.ReactNode }> = embedded
     ? ({ children }) => <View style={{ flex: 1, backgroundColor: colors.bg }}>{children}</View>
@@ -76,7 +95,6 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
   }
 
   const p = party.data;
-  const cur = p.default_currency;
 
   return (
     <Wrapper>
@@ -105,26 +123,40 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
             </View>
           </View>
 
-          <View style={styles.balBox}>
-            <View style={styles.balCol}>
-              <Text style={styles.balLbl}>Debit</Text>
-              <Text style={styles.balVal}>{fmtCurrency(totals.debit, cur)}</Text>
-            </View>
-            <View style={styles.balCol}>
-              <Text style={styles.balLbl}>Credit</Text>
-              <Text style={styles.balVal}>{fmtCurrency(totals.credit, cur)}</Text>
-            </View>
-            <View style={styles.balCol}>
-              <Text style={styles.balLbl}>{totals.balance >= 0 ? "You will get" : "You will give"}</Text>
-              <Text
-                style={[
-                  styles.balVal,
-                  { color: totals.balance >= 0 ? colors.ok : colors.danger },
-                ]}
-              >
-                {fmtCurrency(Math.abs(totals.balance), cur)}
-              </Text>
-            </View>
+          <View style={styles.balCurrencies}>
+            {totals.length === 0 ? (
+              <View style={styles.balCol}>
+                <Text style={styles.balLbl}>No entries yet</Text>
+                <Text style={styles.balVal}>—</Text>
+              </View>
+            ) : (
+              totals.map((t) => (
+                <View key={t.currency} style={styles.balCurRow}>
+                  <View style={styles.curTag}>
+                    <Text style={styles.curTagText}>{t.currency}</Text>
+                  </View>
+                  <View style={styles.balCol}>
+                    <Text style={styles.balLbl}>Debit</Text>
+                    <Text style={styles.balVal}>{fmtCurrency(t.debit, t.currency)}</Text>
+                  </View>
+                  <View style={styles.balCol}>
+                    <Text style={styles.balLbl}>Credit</Text>
+                    <Text style={styles.balVal}>{fmtCurrency(t.credit, t.currency)}</Text>
+                  </View>
+                  <View style={styles.balCol}>
+                    <Text style={styles.balLbl}>{t.balance >= 0 ? "You will get" : "You will give"}</Text>
+                    <Text
+                      style={[
+                        styles.balVal,
+                        { color: t.balance >= 0 ? colors.ok : colors.danger },
+                      ]}
+                    >
+                      {fmtCurrency(Math.abs(t.balance), t.currency)}
+                    </Text>
+                  </View>
+                </View>
+              ))
+            )}
           </View>
         </Card>
 
@@ -142,24 +174,32 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
           {entries.length === 0 ? (
             <Text style={styles.dim}>No ledger entries yet</Text>
           ) : (
-            entries.map((e) => (
-              <View key={e.id} style={styles.entryRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.entryDesc} numberOfLines={1}>
-                    {e.description}
+            entries.map((e) => {
+              const entryCcy = (e.currency || "INR") as Currency;
+              return (
+                <View key={e.id} style={styles.entryRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.entryDesc} numberOfLines={1}>
+                      {e.description}
+                    </Text>
+                    <View style={styles.entryMetaRow}>
+                      <Text style={styles.entryDate}>{shortDate(e.date)}</Text>
+                      <View style={styles.entryCurTag}>
+                        <Text style={styles.entryCurText}>{entryCcy}</Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Text
+                    style={[
+                      styles.entryAmt,
+                      { color: e.debit > 0 ? colors.ok : colors.danger },
+                    ]}
+                  >
+                    {e.debit > 0 ? `+${fmtCurrency(e.debit, entryCcy)}` : `-${fmtCurrency(e.credit, entryCcy)}`}
                   </Text>
-                  <Text style={styles.entryDate}>{shortDate(e.date)}</Text>
                 </View>
-                <Text
-                  style={[
-                    styles.entryAmt,
-                    { color: e.debit > 0 ? colors.ok : colors.danger },
-                  ]}
-                >
-                  {e.debit > 0 ? `+${fmtCurrency(e.debit, cur)}` : `-${fmtCurrency(e.credit, cur)}`}
-                </Text>
-              </View>
-            ))
+              );
+            })
           )}
         </Card>
 
@@ -265,6 +305,27 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
     gap: spacing.sm,
   },
+  balCurrencies: { marginTop: spacing.md, gap: spacing.sm },
+  balCurRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 6,
+  },
+  curTag: {
+    justifyContent: "center", alignItems: "center",
+    paddingHorizontal: 8,
+    borderRadius: radii.md,
+    borderColor: colors.lime, borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.limeGlow,
+    minWidth: 40,
+  },
+  curTagText: { color: colors.lime, fontWeight: "900", fontSize: 11, letterSpacing: 0.8 },
+  entryMetaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 },
+  entryCurTag: {
+    paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4,
+    backgroundColor: colors.chipBg, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
+  },
+  entryCurText: { color: colors.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 0.6 },
   balCol: {
     flex: 1,
     backgroundColor: colors.chipBg,

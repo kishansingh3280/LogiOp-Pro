@@ -21,6 +21,7 @@ import { FlightStatusCard } from "@/src/bullion/FlightStatusCard";
 import { usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import { tripCapacityKg } from "@/src/bullion/types";
 import { useFlight } from "@/src/bullion/use-flight";
+import { useDispatchPlan } from "@/src/utils/use-dispatch-plan";
 import { colors, radii, spacing } from "@/src/theme";
 import { shortDate } from "@/src/utils/format";
 
@@ -48,6 +49,7 @@ export default function TripDetailScreen() {
   const capacity = trip ? tripCapacityKg(trip) : 0;
   const used = trip ? usedWeightKgFor(trip.id, txns.data) : 0;
   const free = Math.max(0, capacity - used);
+  const dispatch = useDispatchPlan(free, trip?.route);
 
   // Live flight snapshot (uses AviationStack when a flight number is set;
   // otherwise falls back to a deterministic mock).
@@ -161,6 +163,71 @@ export default function TripDetailScreen() {
           </Text>
         </View>
 
+        {/* Smart Dispatch — FIFO lot priority, best-fit within each lot. */}
+        {free > 0 && (
+          <View style={styles.dispatchCard}>
+            <View style={styles.dispatchHead}>
+              <View>
+                <Text style={styles.dispatchTitle}>Smart dispatch</Text>
+                <Text style={styles.dispatchSub}>
+                  FIFO lot priority · best-fit bags for {fmt(free)} kg free
+                </Text>
+              </View>
+              {dispatch.loading ? (
+                <Text style={styles.dispatchStatus}>Loading bags…</Text>
+              ) : (
+                <Text style={styles.dispatchStatus}>
+                  {dispatch.plan.suggested.length} bag{dispatch.plan.suggested.length === 1 ? "" : "s"} · {fmt(dispatch.plan.total_kg)} kg
+                </Text>
+              )}
+            </View>
+            {dispatch.plan.suggested.length === 0 ? (
+              <Text style={styles.dispatchEmpty}>
+                {dispatch.loading
+                  ? "Scanning pending shipments…"
+                  : "No pending bags match this trip. Add packed bags to a shipment first."}
+              </Text>
+            ) : (
+              <>
+                {dispatch.plan.suggested.map((b, idx) => (
+                  <View key={b.id} style={styles.bagRow}>
+                    <View style={styles.bagOrder}>
+                      <Text style={styles.bagOrderText}>{idx + 1}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.bagTitle}>{b.bag_no} · {b.lot_consignment}</Text>
+                      <Text style={styles.bagMeta}>
+                        Lot {shortDate(b.lot_date)}
+                      </Text>
+                    </View>
+                    <Text style={styles.bagWeight}>{fmt(b.weight_kg)} kg</Text>
+                  </View>
+                ))}
+                {dispatch.plan.skipped_no_fit.length > 0 && (
+                  <View style={styles.skippedBox}>
+                    <Ionicons name="warning-outline" size={12} color={colors.warn} />
+                    <Text style={styles.skippedText}>
+                      {dispatch.plan.skipped_no_fit.length} bag{dispatch.plan.skipped_no_fit.length === 1 ? "" : "s"} won't fit
+                      ({fmt(dispatch.plan.skipped_no_fit.reduce((s, b) => s + b.weight_kg, 0))} kg overflow)
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.dispatchFooter}>
+                  <Text style={styles.footerLine}>
+                    Fully cleared: {dispatch.plan.fully_cleared_lots.length > 0
+                      ? dispatch.plan.fully_cleared_lots.join(", ") : "none"}
+                  </Text>
+                  {dispatch.plan.partial_lots.length > 0 && (
+                    <Text style={styles.footerLine}>
+                      Partial: {dispatch.plan.partial_lots.join(", ")}
+                    </Text>
+                  )}
+                </View>
+              </>
+            )}
+          </View>
+        )}
+
         {trip.notes ? (
           <View style={styles.notesCard}>
             <Text style={styles.notesLabel}>Notes</Text>
@@ -271,6 +338,46 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6, marginBottom: 6, fontWeight: "700",
   },
   notesText: { color: colors.text, fontSize: 13, lineHeight: 19 },
+
+  dispatchCard: {
+    backgroundColor: colors.surface, borderRadius: radii.lg,
+    borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.md,
+  },
+  dispatchHead: {
+    flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between",
+    marginBottom: spacing.md,
+  },
+  dispatchTitle: { color: colors.text, fontSize: 14, fontWeight: "800" },
+  dispatchSub: { color: colors.textDim, fontSize: 11, marginTop: 2 },
+  dispatchStatus: { color: colors.lime, fontSize: 11, fontWeight: "800" },
+  dispatchEmpty: { color: colors.textDim, fontSize: 12, lineHeight: 18 },
+  bagRow: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingVertical: 8,
+    borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  bagOrder: {
+    width: 22, height: 22, borderRadius: 11, backgroundColor: colors.limeGlow,
+    alignItems: "center", justifyContent: "center",
+    borderColor: colors.lime, borderWidth: StyleSheet.hairlineWidth,
+  },
+  bagOrderText: { color: colors.lime, fontSize: 11, fontWeight: "900" },
+  bagTitle: { color: colors.text, fontSize: 13, fontWeight: "700" },
+  bagMeta: { color: colors.textDim, fontSize: 10, marginTop: 2 },
+  bagWeight: { color: colors.text, fontSize: 13, fontWeight: "800" },
+  skippedBox: {
+    marginTop: 10, flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 8, paddingHorizontal: 10, borderRadius: radii.md,
+    backgroundColor: colors.chipBg,
+    borderColor: colors.warn, borderWidth: StyleSheet.hairlineWidth,
+  },
+  skippedText: { color: colors.warn, fontSize: 11, fontWeight: "700", flex: 1 },
+  dispatchFooter: {
+    marginTop: 10, paddingTop: 10,
+    borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  footerLine: { color: colors.textDim, fontSize: 10, marginTop: 2 },
 
   emptyBox: { padding: spacing.xxl, alignItems: "center", gap: 8 },
   emptyTitle: { color: colors.text, fontSize: 15, fontWeight: "700", marginTop: 8 },
