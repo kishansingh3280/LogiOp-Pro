@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiGet, apiPost, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Direction, Party, Shipment, ShipmentMode } from "@/src/api/types";
+import { ItemPicker } from "@/src/components/item-picker";
 import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
 
@@ -46,18 +47,27 @@ export default function NewShipmentScreen() {
   const [busy, setBusy] = useState(false);
   const [pickCarrier, setPickCarrier] = useState(false);
 
-  // Per-bag rows: each bag can be assigned to a different customer. This
+  // Per-bag rows: each bag can be assigned to a different customer AND
+  // can hold multiple line-items (each with its own qty + unit). This
   // replaces the old top-level "Party / Client" field so multi-customer
   // consignments can be booked in one shot.
+  interface BagItemRow {
+    item_id: string;
+    name: string;
+    quantity: string;
+    unit: string;
+  }
   interface BagRow {
     bag_no: string;         // display only (auto-numbered)
     weight_kg: string;
     end_customer_id: string | null;
+    items: BagItemRow[];
   }
   const [bags, setBags] = useState<BagRow[]>([
-    { bag_no: "BAG-001", weight_kg: "", end_customer_id: null },
+    { bag_no: "BAG-001", weight_kg: "", end_customer_id: null, items: [] },
   ]);
   const [pickBagIdx, setPickBagIdx] = useState<number | null>(null);
+  const [pickItemBagIdx, setPickItemBagIdx] = useState<number | null>(null);
 
   const customers = useMemo(
     () => (parties.data || []).filter((p) => p.role === "customer"),
@@ -82,6 +92,7 @@ export default function NewShipmentScreen() {
         bag_no: `BAG-${String(prev.length + 1).padStart(3, "0")}`,
         weight_kg: "",
         end_customer_id: null,
+        items: [],
       },
     ]);
   };
@@ -89,12 +100,30 @@ export default function NewShipmentScreen() {
     setBags((prev) => {
       if (prev.length <= 1) return prev;
       const next = prev.slice(0, idx).concat(prev.slice(idx + 1));
-      // Renumber remaining bags so numbering stays contiguous.
       return next.map((b, i) => ({ ...b, bag_no: `BAG-${String(i + 1).padStart(3, "0")}` }));
     });
   };
   const patchBag = (idx: number, patch: Partial<BagRow>) => {
     setBags((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
+  };
+  const addItemToBag = (idx: number, item: { id: string; name: string; unit: string }) => {
+    setBags((prev) => prev.map((b, i) =>
+      i === idx
+        ? { ...b, items: [...b.items, { item_id: item.id, name: item.name, quantity: "1", unit: item.unit || "pcs" }] }
+        : b,
+    ));
+  };
+  const removeItemFromBag = (bagIdx: number, itemIdx: number) => {
+    setBags((prev) => prev.map((b, i) =>
+      i === bagIdx ? { ...b, items: b.items.filter((_, j) => j !== itemIdx) } : b,
+    ));
+  };
+  const patchItemInBag = (bagIdx: number, itemIdx: number, patch: Partial<BagItemRow>) => {
+    setBags((prev) => prev.map((b, i) =>
+      i === bagIdx
+        ? { ...b, items: b.items.map((it, j) => (j === itemIdx ? { ...it, ...patch } : it)) }
+        : b,
+    ));
   };
 
   // Prefill fields when in edit mode. Loads once when the screen mounts.
@@ -117,7 +146,7 @@ export default function NewShipmentScreen() {
         setNotes(s.notes || "");
         // Load existing bags into the per-bag editor.
         try {
-          const rawBags = await apiGet<{ id: string; bag_no: string; weight_kg: number; end_customer_id: string | null }[]>(
+          const rawBags = await apiGet<{ id: string; bag_no: string; weight_kg: number; end_customer_id: string | null; items?: { item_id: string; name: string; quantity: number; unit: string }[] }[]>(
             `/api/shipments/${editId}/bags`,
           );
           if (!cancelled && Array.isArray(rawBags) && rawBags.length > 0) {
@@ -126,6 +155,12 @@ export default function NewShipmentScreen() {
                 bag_no: b.bag_no || `BAG-${String(i + 1).padStart(3, "0")}`,
                 weight_kg: String(b.weight_kg ?? ""),
                 end_customer_id: b.end_customer_id || null,
+                items: (b.items || []).map((it) => ({
+                  item_id: it.item_id,
+                  name: it.name,
+                  quantity: String(it.quantity ?? ""),
+                  unit: it.unit || "pcs",
+                })),
               })),
             );
           }
@@ -203,6 +238,12 @@ export default function NewShipmentScreen() {
         return apiPut(`/api/bags/${lb.id}`, {
           end_customer_id: row.end_customer_id,
           weight_kg: parseFloat(row.weight_kg) || 0,
+          items: row.items.map((it) => ({
+            item_id: it.item_id,
+            name: it.name,
+            quantity: parseFloat(it.quantity) || 0,
+            unit: it.unit,
+          })),
         }).catch((e) => {
           console.warn(`Bag ${i + 1} update failed:`, (e as Error).message);
         });
@@ -319,6 +360,43 @@ export default function NewShipmentScreen() {
                         </TouchableOpacity>
                       </View>
                     </View>
+
+                    {/* Item lines inside this bag */}
+                    <Text style={styles.bagFieldLbl}>Items in this bag</Text>
+                    {b.items.length === 0 ? (
+                      <Text style={styles.noItems}>No items yet — add contents below.</Text>
+                    ) : (
+                      b.items.map((it, iIdx) => (
+                        <View key={iIdx} style={styles.itemLine}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.itemName} numberOfLines={1}>{it.name}</Text>
+                            <View style={styles.itemMetaRow}>
+                              <TextInput
+                                style={styles.qtyInput}
+                                keyboardType="decimal-pad"
+                                value={it.quantity}
+                                onChangeText={(t) => patchItemInBag(idx, iIdx, { quantity: t })}
+                                placeholder="0"
+                                placeholderTextColor={colors.textDim}
+                                testID={`item-qty-${idx}-${iIdx}`}
+                              />
+                              <Text style={styles.itemUnit}>{it.unit}</Text>
+                            </View>
+                          </View>
+                          <TouchableOpacity onPress={() => removeItemFromBag(idx, iIdx)}>
+                            <Ionicons name="close-circle" size={18} color={colors.textDim} />
+                          </TouchableOpacity>
+                        </View>
+                      ))
+                    )}
+                    <TouchableOpacity
+                      style={styles.addItemBtn}
+                      onPress={() => setPickItemBagIdx(idx)}
+                      testID={`add-item-${idx}`}
+                    >
+                      <Ionicons name="add-circle-outline" size={14} color={colors.lime} />
+                      <Text style={styles.addItemTxt}>Add item</Text>
+                    </TouchableOpacity>
                   </View>
                 );
               })}
@@ -389,6 +467,17 @@ export default function NewShipmentScreen() {
           title={`Bag ${(bags[pickBagIdx]?.bag_no) || ""} — choose customer`}
         />
       )}
+
+      <ItemPicker
+        visible={pickItemBagIdx !== null}
+        onClose={() => setPickItemBagIdx(null)}
+        onPick={(item) => {
+          if (pickItemBagIdx !== null) {
+            addItemToBag(pickItemBagIdx, item);
+          }
+        }}
+        title={pickItemBagIdx !== null ? `Add item to ${bags[pickItemBagIdx]?.bag_no}` : "Choose item"}
+      />
       {pickCarrier && (
         <PartyPicker
           list={carriers.length ? carriers : (parties.data || [])}
@@ -554,6 +643,39 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "800",
   },
+  noItems: { color: colors.textDim, fontSize: 12, fontStyle: "italic", marginBottom: 6 },
+  itemLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 6,
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  itemName: { color: colors.text, fontSize: 13, fontWeight: "700" },
+  itemMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 3,
+  },
+  qtyInput: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4,
+    color: colors.text, fontSize: 12, minWidth: 60,
+  },
+  itemUnit: { color: colors.textDim, fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
+  addItemBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
+    marginTop: 6,
+  },
+  addItemTxt: { color: colors.lime, fontSize: 11, fontWeight: "700" },
   row2: { flexDirection: "row" },
   segRow: { gap: 8, paddingVertical: 2 },
   seg: {

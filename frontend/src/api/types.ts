@@ -108,6 +108,9 @@ export interface Item {
   unit: string;
   buying_price: number;
   selling_price: number;
+  category?: string | null;
+  hs_code?: string | null;
+  default_weight_kg?: number | null;
   notes?: string | null;
   created_at: string;
 }
