@@ -22,6 +22,10 @@ import { ItemPicker } from "@/src/components/item-picker";
 import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
 import { syncShipmentLedger } from "@/src/utils/shipment-ledger-sync";
+import {
+  fetchWarehouseQueue,
+  type WarehouseQueueBag,
+} from "@/src/utils/warehouse-queue";
 
 const DIRECTIONS: { key: Direction; label: string }[] = [
   { key: "IN_TO_TH", label: "IN → TH" },
@@ -227,6 +231,65 @@ export default function NewShipmentScreen() {
   const patchBag = (idx: number, patch: Partial<BagRow>) => {
     setBags((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
   };
+
+  // ---- Warehouse FIFO queue --------------------------------------------
+  // Bags currently sitting under other pending shipments are surfaced
+  // here so the operator can pull the oldest lots first (FIFO). Picking
+  // a bag copies its weight / items / customer into a new row on this
+  // shipment; on save, the bag is re-assigned to the current shipment
+  // via PUT so the source lot is emptied. Only shown in edit mode where
+  // we already have a real shipment_id to reassign into.
+  const [warehouseQueue, setWarehouseQueue] = useState<WarehouseQueueBag[]>([]);
+  const [showWarehouseQueue, setShowWarehouseQueue] = useState(false);
+  const [warehouseLoading, setWarehouseLoading] = useState(false);
+  // Bags we've claimed during this session — persisted to backend on
+  // save so we can move them from their source shipment.
+  const [claimedBagIds, setClaimedBagIds] = useState<{ bagId: string; sourceShipmentId: string }[]>([]);
+
+  const loadWarehouseQueue = async () => {
+    setWarehouseLoading(true);
+    try {
+      const q = await fetchWarehouseQueue(editId);
+      // Filter out bags we've already claimed this session
+      const claimedSet = new Set(claimedBagIds.map((c) => c.bagId));
+      setWarehouseQueue(q.filter((b) => !claimedSet.has(b.id)));
+      setShowWarehouseQueue(true);
+    } catch (e) {
+      toast.error(`Failed to load warehouse queue: ${(e as Error).message}`);
+    } finally {
+      setWarehouseLoading(false);
+    }
+  };
+
+  const claimFromWarehouse = (wb: WarehouseQueueBag) => {
+    // Materialize the bag as a new row on the current shipment.
+    setBags((prev) => {
+      const nextNo = `BAG-${String(prev.length + 1).padStart(3, "0")}`;
+      const items = (wb.items || []).map((it) => ({
+        item_id: (it as unknown as { item_id?: string }).item_id || "",
+        name: (it.name || it.description || "item"),
+        quantity: String(it.quantity ?? "1"),
+        unit: it.unit || "pcs",
+      }));
+      return [
+        ...prev,
+        {
+          bag_no: nextNo,
+          weight_kg: String(wb.weight_kg || ""),
+          end_customer_id: wb.end_customer_id || null,
+          bill_to_party_id: wb.bill_to_party_id || null,
+          items,
+        },
+      ];
+    });
+    setClaimedBagIds((prev) => [
+      ...prev,
+      { bagId: wb.id, sourceShipmentId: wb.from_shipment_id },
+    ]);
+    setWarehouseQueue((prev) => prev.filter((b) => b.id !== wb.id));
+    toast.success(`${wb.bag_no} pulled from ${wb.from_consignment_no}`);
+  };
+
   const addItemToBag = (idx: number, item: { id: string; name: string; unit: string }) => {
     setBags((prev) => prev.map((b, i) =>
       i === idx
@@ -366,6 +429,29 @@ export default function NewShipmentScreen() {
       // auto-creates N empty bags on shipment create/update; we PUT each
       // one with its customer + weight so the ledger + FIFO planner have
       // per-bag data.
+      //
+      // ADDITIONALLY: if the operator has claimed bags from the
+      // Warehouse queue (bags belonging to other pending shipments), we
+      // first move each one to this shipment by PUTting `shipment_id`.
+      // Then when we fetch live bags they'll include the newly moved
+      // rows and the customer/weight sync below will hit them.
+      const targetShipmentId = (saved as { id?: string }).id || editId || "";
+      const sourceShipmentIds = new Set<string>();
+      if (targetShipmentId && claimedBagIds.length > 0) {
+        for (const c of claimedBagIds) {
+          if (c.sourceShipmentId === targetShipmentId) continue;
+          try {
+            await apiPut(`/api/bags/${c.bagId}`, { shipment_id: targetShipmentId });
+            sourceShipmentIds.add(c.sourceShipmentId);
+          } catch (e) {
+            console.warn(
+              `Warehouse claim failed for bag ${c.bagId}:`,
+              (e as Error).message,
+            );
+          }
+        }
+      }
+
       let liveBags: { id: string }[] = [];
       try {
         liveBags = await apiGet<{ id: string; bag_no: string }[]>(
@@ -429,6 +515,49 @@ export default function NewShipmentScreen() {
         } catch (e) {
           console.warn("Ledger fan-out failed:", (e as Error).message);
         }
+      }
+
+      // If we pulled bags out of other pending lots, re-sync their
+      // ledgers too so the freight fan-out reflects the new (smaller)
+      // total weight on the source. Fire-and-forget — a failure here
+      // doesn't invalidate our own save.
+      if (sourceShipmentIds.size > 0) {
+        void (async () => {
+          for (const srcId of sourceShipmentIds) {
+            try {
+              const src = await apiGet<Shipment>(`/api/shipments/${srcId}`);
+              const srcBags = await apiGet<{ id: string; bag_no: string; weight_kg: number; bill_to_party_id?: string | null }[]>(
+                `/api/shipments/${srcId}/bags`,
+              );
+              await syncShipmentLedger(
+                {
+                  id: srcId,
+                  consignment_no: src.consignment_no,
+                  origin: src.origin,
+                  destination: src.destination,
+                  freight: Number(src.freight) || 0,
+                  freight_currency: (src.freight_currency || "THB") as string,
+                  carrier_party_id: src.carrier_party_id,
+                  carrier_charge: Number(src.carrier_charge) || 0,
+                  carrier_charge_type: (src.carrier_charge_type || "flat") as string,
+                  carrier_currency: (src.carrier_currency || "INR") as string,
+                  dispatch_date: src.dispatch_date,
+                  weight_kg: Number(src.weight_kg) || 0,
+                },
+                (srcBags || []).map((b) => ({
+                  bag_no: b.bag_no,
+                  bill_to_party_id: b.bill_to_party_id || null,
+                  weight_kg: b.weight_kg,
+                })),
+              );
+            } catch (e) {
+              console.warn(
+                `Source ledger re-sync failed for ${srcId}:`,
+                (e as Error).message,
+              );
+            }
+          }
+        })();
       }
 
       toast.success(
@@ -501,7 +630,27 @@ export default function NewShipmentScreen() {
 
           {/* Bag details — each bag independently assigned to a customer */}
           <Field label={`Bag details · ${bags.length} bag${bags.length === 1 ? "" : "s"} · ${totalBagWeight ? totalBagWeight.toFixed(1) : "0"} kg total`}>
-            <View style={{ gap: 10 }}>
+            {/* Warehouse FIFO queue affordance — surfaces older pending
+                bags across other shipments so they can be pulled into
+                this lot first. Only worth surfacing on edit (need a real
+                shipment_id to move bags into) and only if there's
+                something waiting. */}
+            {isEdit ? (
+              <TouchableOpacity
+                style={styles.warehouseBtn}
+                onPress={loadWarehouseQueue}
+                disabled={warehouseLoading}
+                testID="open-warehouse-queue"
+              >
+                <Ionicons name="cube-outline" size={14} color={colors.lime} />
+                <Text style={styles.warehouseBtnText}>
+                  {warehouseLoading
+                    ? "Loading warehouse…"
+                    : "🏬 Pull from warehouse (FIFO)"}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            <View style={{ gap: 10, marginTop: isEdit ? 10 : 0 }}>
               {bags.map((b, idx) => {
                 const cust = (parties.data || []).find((p) => p.id === b.end_customer_id);
                 const billTo = (parties.data || []).find((p) => p.id === b.bill_to_party_id);
@@ -863,6 +1012,85 @@ export default function NewShipmentScreen() {
           title="Choose carrier"
         />
       )}
+
+      {showWarehouseQueue && (
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setShowWarehouseQueue(false)}
+        >
+          <Pressable
+            style={styles.sheet}
+            onPress={(e) => e.stopPropagation()}
+            testID="warehouse-queue-sheet"
+          >
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Warehouse queue · FIFO</Text>
+            <Text style={styles.warehouseHint}>
+              Bags waiting under other pending shipments — oldest first.
+              Tap to pull one into this shipment; it moves off the source
+              lot on save and both ledgers re-sync automatically.
+            </Text>
+            {warehouseQueue.length === 0 ? (
+              <Text style={styles.emptyPicker}>Nothing waiting — the warehouse is clear.</Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 480 }} keyboardShouldPersistTaps="handled">
+                {warehouseQueue.map((wb, i) => {
+                  // Highlight lot changes with a soft header so the FIFO
+                  // sequence is visually clear.
+                  const prev = i > 0 ? warehouseQueue[i - 1] : null;
+                  const isNewLot = !prev || prev.from_shipment_id !== wb.from_shipment_id;
+                  const itemSummary = (wb.items || [])
+                    .slice(0, 2)
+                    .map((it) => {
+                      const label = (it as unknown as { name?: string }).name
+                        || it.description
+                        || "item";
+                      return `${label}${it.quantity ? ` ×${it.quantity}` : ""}`;
+                    })
+                    .join(", ");
+                  const cust = (parties.data || []).find(
+                    (p) => p.id === wb.end_customer_id,
+                  );
+                  return (
+                    <View key={wb.id}>
+                      {isNewLot ? (
+                        <View style={styles.warehouseLotHead}>
+                          <Ionicons name="calendar-outline" size={12} color={colors.textDim} />
+                          <Text style={styles.warehouseLotTxt}>
+                            {wb.from_consignment_no} · {wb.from_dispatch_date || "no date"}
+                          </Text>
+                        </View>
+                      ) : null}
+                      <TouchableOpacity
+                        style={styles.warehouseRow}
+                        onPress={() => claimFromWarehouse(wb)}
+                        testID={`warehouse-claim-${wb.id}`}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.warehouseBag}>
+                            {wb.bag_no} · {wb.weight_kg} kg
+                          </Text>
+                          <Text style={styles.warehouseMeta} numberOfLines={1}>
+                            {cust?.name ? `${cust.name}` : "no customer"}
+                            {itemSummary ? ` · ${itemSummary}` : ""}
+                          </Text>
+                        </View>
+                        <Ionicons name="arrow-forward-circle" size={20} color={colors.lime} />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
+            <TouchableOpacity
+              style={styles.sheetCancel}
+              onPress={() => setShowWarehouseQueue(false)}
+            >
+              <Text style={styles.sheetCancelText}>Done</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      )}
     </SafeAreaView>
   );
 }
@@ -1222,5 +1450,65 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 6,
     fontStyle: "italic",
+  },
+  // ---- Warehouse FIFO queue ----
+  warehouseBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+    borderColor: colors.lime,
+    borderStyle: "dashed",
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.limeGlow,
+    marginBottom: 4,
+  },
+  warehouseBtnText: {
+    color: colors.lime,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  warehouseHint: {
+    color: colors.textDim,
+    fontSize: 12,
+    lineHeight: 16,
+    marginBottom: spacing.md,
+  },
+  warehouseLotHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    marginTop: 6,
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  warehouseLotTxt: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  warehouseRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    gap: 12,
+  },
+  warehouseBag: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  warehouseMeta: {
+    color: colors.textDim,
+    fontSize: 12,
+    marginTop: 2,
   },
 });

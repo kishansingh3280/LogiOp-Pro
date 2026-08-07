@@ -218,7 +218,33 @@ export default function ShipmentDetail({
   const nextIdx = STATUS_FLOW.indexOf(s.status);
   const nextLabel = nextIdx >= 0 && nextIdx < STATUS_FLOW.length - 1 ? STATUS_FLOW[nextIdx + 1] : null;
   const inWarehouse = s.status === "warehouse_arrived";
+  // Modifications (bag edits, weight changes, freight, carrier pay) are
+  // only allowed while the shipment is `pending` — i.e., not yet on the
+  // road. Once it flips to `in_transit`, `warehouse_arrived`, or
+  // `delivered`, the money side is locked so the invoice and ledger
+  // numbers stay auditable.
+  const canModify = s.status === "pending";
+  const modifyLockedReason = !canModify
+    ? s.status === "delivered"
+      ? "Delivered · locked"
+      : s.status === "in_transit"
+        ? "Dispatched · locked"
+        : s.status === "warehouse_arrived"
+          ? "At warehouse · locked"
+          : "Locked"
+    : null;
   const bagList = bags.data || [];
+
+  const openModify = () => {
+    if (!canModify) {
+      Alert.alert(
+        "Shipment locked",
+        `This shipment is ${s.status.replace("_", " ")}. Modifications are only allowed while the shipment is pending. To make changes, first roll back the status.`,
+      );
+      return;
+    }
+    router.push(`/shipment/new?editId=${s.id}` as never);
+  };
 
   return (
     <Wrapper>
@@ -231,12 +257,18 @@ export default function ShipmentDetail({
             {s.consignment_no}
           </Text>
           <TouchableOpacity
-            onPress={() => router.push(`/shipment/new?editId=${s.id}` as never)}
-            style={styles.modifyBtn}
+            onPress={openModify}
+            style={[styles.modifyBtn, !canModify && styles.modifyBtnDisabled]}
             testID="modify-shipment-btn"
           >
-            <Ionicons name="create-outline" size={14} color={colors.lime} />
-            <Text style={styles.modifyText}>Modify</Text>
+            <Ionicons
+              name={canModify ? "create-outline" : "lock-closed-outline"}
+              size={14}
+              color={canModify ? colors.lime : colors.textDim}
+            />
+            <Text style={[styles.modifyText, !canModify && styles.modifyTextDisabled]}>
+              {canModify ? "Modify" : "Locked"}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={remove} style={styles.iconBtn} testID="delete-btn">
             <Ionicons name="trash-outline" size={20} color={colors.danger} />
@@ -292,12 +324,18 @@ export default function ShipmentDetail({
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              style={styles.modifyBtnBody}
-              onPress={() => router.push(`/shipment/new?editId=${s.id}` as never)}
+              style={[styles.modifyBtnBody, !canModify && styles.modifyBtnBodyDisabled]}
+              onPress={openModify}
               testID="modify-shipment-body-btn"
             >
-              <Ionicons name="create-outline" size={16} color={colors.lime} />
-              <Text style={styles.modifyBtnBodyText}>Modify</Text>
+              <Ionicons
+                name={canModify ? "create-outline" : "lock-closed-outline"}
+                size={16}
+                color={canModify ? colors.lime : colors.textDim}
+              />
+              <Text style={[styles.modifyBtnBodyText, !canModify && styles.modifyTextDisabled]}>
+                {canModify ? "Modify" : modifyLockedReason || "Locked"}
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -664,6 +702,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.chipBg,
   },
   modifyText: { color: colors.lime, fontSize: 12, fontWeight: "800" },
+  modifyBtnDisabled: {
+    backgroundColor: "transparent",
+    borderColor: colors.border,
+  },
+  modifyTextDisabled: {
+    color: colors.textDim,
+  },
+  modifyBtnBodyDisabled: {
+    opacity: 0.55,
+    borderColor: colors.border,
+  },
   content: { padding: spacing.lg, gap: spacing.md },
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   dim: { color: colors.textDim, fontSize: 13, padding: spacing.sm },
