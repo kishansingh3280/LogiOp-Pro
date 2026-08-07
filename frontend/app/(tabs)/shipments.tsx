@@ -159,7 +159,7 @@ export default function ShipmentsScreen() {
                     {item.origin || "—"} <Text style={styles.arrow}>→</Text> {item.destination || "—"}
                   </Text>
                   <View style={styles.rowMeta}>
-                    <Meta icon="cube-outline" text={`${item.bag_count} bag${item.bag_count === 1 ? "" : "s"}`} />
+                    <Meta icon="cube-outline" text={`${item.bag_count ?? 0} bag${(item.bag_count ?? 0) === 1 ? "" : "s"}`} />
                     <Meta icon="scale-outline" text={`${item.weight_kg} kg`} />
                     <Meta icon="airplane-outline" text={(item.mode || "-").replace("_", " ")} />
                   </View>

@@ -147,7 +147,7 @@ export default function ShipmentDetail({
           </View>
 
           <View style={styles.metaRow}>
-            <Metric label="Bags" value={String(s.bag_count)} />
+            <Metric label="Bags" value={String(s.bag_count ?? 0)} />
             <Metric label="Weight" value={`${s.weight_kg} kg`} />
             <Metric label="Mode" value={(s.mode || "-").replace("_", " ")} />
           </View>
