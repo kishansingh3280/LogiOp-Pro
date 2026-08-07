@@ -235,12 +235,55 @@ async def bullion_get_rates():
 @api_router.put("/bullion/rates")
 async def bullion_put_rates(patch: Dict[str, Any]):
     patch = {k: v for k, v in patch.items() if k != "_singleton"}
-    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # Snapshot the current rate row before we mutate it so the change log
+    # captures what actually changed and when. Empty history when this is
+    # the first call.
+    prev = await db.bullion_rates.find_one({"_singleton": True}) or {}
+    prev_snap = _clean_mongo_id(dict(prev))
+    now = datetime.now(timezone.utc).isoformat()
+    patch["updated_at"] = now
     await db.bullion_rates.update_one(
         {"_singleton": True}, {"$set": patch, "$setOnInsert": {"_singleton": True}}, upsert=True,
     )
     doc = await db.bullion_rates.find_one({"_singleton": True})
+    new_snap = _clean_mongo_id(dict(doc or {}))
+
+    # Detect real changes (skip metadata like updated_at) so we don't fill
+    # the history with no-op writes.
+    tracked_keys = [
+        "currency_rate_per_1000",
+        "gold_rate_per_baht",
+        "hand_carry_rate_inr_per_kg",
+    ]
+    diffs: Dict[str, Any] = {}
+    for k in tracked_keys:
+        old = prev_snap.get(k)
+        new = new_snap.get(k)
+        if old != new:
+            diffs[k] = {"from": old, "to": new}
+
+    if diffs:
+        entry = {
+            "id": str(uuid.uuid4()),
+            "timestamp": now,
+            "changed_by": patch.get("changed_by") or "operator",
+            "source": patch.get("source") or "app",  # app | wingman | api
+            "prev": {k: prev_snap.get(k) for k in tracked_keys},
+            "next": {k: new_snap.get(k) for k in tracked_keys},
+            "diffs": diffs,
+        }
+        await db.bullion_rate_history.insert_one(entry.copy())
+
     return _clean_mongo_id(doc or {})
+
+
+@api_router.get("/bullion/rates/history")
+async def bullion_rate_history(limit: int = 50):
+    """Return the most recent rate changes, newest first."""
+    docs = await db.bullion_rate_history.find().sort("timestamp", -1).to_list(
+        min(max(limit, 1), 500)
+    )
+    return [_clean_mongo_id(d) for d in docs]
 
 
 # --------------------------------------------------------------------------

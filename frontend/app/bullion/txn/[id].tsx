@@ -126,7 +126,7 @@ export default function TxnScreen() {
   const save = async () => {
     setBusy(true);
     try {
-      const payload = {
+      const basePayload = {
         type,
         trip_id: tripId,                       // fully optional — trip can be null
         weight_kg: draft.weight_kg,
@@ -144,9 +144,20 @@ export default function TxnScreen() {
       };
       let savedTxn;
       if (isNew) {
+        // Snapshot the live carrier rates ONCE at creation. From now on
+        // this txn's carrier charge is locked to these numbers, immune to
+        // future rate edits.
+        const payload = {
+          ...basePayload,
+          rate_snapshot_currency_per_1000: rates.data.currency_rate_per_1000,
+          rate_snapshot_gold_per_baht: rates.data.gold_rate_per_baht,
+          rate_snapshot_at: new Date().toISOString(),
+        };
         savedTxn = await createTxn(payload);
       } else {
-        savedTxn = await updateTxn(existing!.id, { ...payload, status });
+        // Do NOT touch an existing txn's snapshot on edit — its historical
+        // rate must stay stable regardless of what other fields change.
+        savedTxn = await updateTxn(existing!.id, { ...basePayload, status });
       }
       // Auto-sync the carrier fee to the party ledger the first time a
       // txn is saved as "completed" with a carrier assigned.

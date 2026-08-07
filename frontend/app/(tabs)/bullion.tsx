@@ -24,7 +24,7 @@ import { AirlineBadge } from "@/src/bullion/AirlineBadge";
 import { defaultAirports } from "@/src/bullion/airports";
 import { FlightMap } from "@/src/bullion/FlightMap";
 import { MarketTickerSlim } from "@/src/bullion/MarketTickerSlim";
-import { setRates, useRates } from "@/src/bullion/rates";
+import { getRateHistory, setRates, useRates, type BullionRateHistoryEntry } from "@/src/bullion/rates";
 import { usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import { FYPicker } from "@/src/components/fy-picker";
 import { useFY } from "@/src/context/fy-context";
@@ -380,6 +380,22 @@ function RatesEditorModal({
   const [goldRate, setGoldRate] = useState(String(initial.gold_rate_per_baht));
   const [handCarryRate, setHandCarryRate] = useState(String(initial.hand_carry_rate_inr_per_kg));
   const [saving, setSaving] = useState(false);
+  // Tabs: "edit" (default) shows the rate inputs, "history" shows the
+  // timeline of past changes so the operator can audit what was updated
+  // when. The history is fetched lazily the first time the tab is opened.
+  const [tab, setTab] = useState<"edit" | "history">("edit");
+  const [history, setHistory] = useState<BullionRateHistoryEntry[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const list = await getRateHistory(50);
+      setHistory(list);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const commit = async () => {
     const c = parseFloat(currencyRate);
@@ -391,6 +407,9 @@ function RatesEditorModal({
     setSaving(true);
     try {
       await onSave({ currency_rate_per_1000: c, gold_rate_per_baht: g, hand_carry_rate_inr_per_kg: h });
+      // Invalidate the cached history so it re-fetches with the new entry
+      // next time the operator opens this modal.
+      setHistory(null);
     } finally {
       setSaving(false);
     }
@@ -403,71 +422,218 @@ function RatesEditorModal({
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>Global carrier rates</Text>
           <Text style={styles.rateBlurb}>
-            Applied to every new bullion trade and hand-carry shipment. Existing records keep
-            their previously-computed carrier charge until edited.
+            Applied only to new bullion trades and hand-carry shipments. Existing
+            records keep the rate that was in effect on the day they were saved,
+            so historical carrier fees never move.
           </Text>
 
-          <View style={styles.rateField}>
-            <Text style={styles.rateLabel}>Currency carry — INR per 1,000 units</Text>
-            <TextInput
-              style={styles.rateInput}
-              value={currencyRate}
-              onChangeText={setCurrencyRate}
-              keyboardType="decimal-pad"
-              placeholder="500"
-              placeholderTextColor={colors.textDim}
-              testID="rate-currency-per-1000"
-            />
-            <Text style={styles.rateHelper}>e.g. $1,000 carried → ₹{currencyRate || "0"} carrier fee.</Text>
-          </View>
-
-          <View style={styles.rateField}>
-            <Text style={styles.rateLabel}>Gold carry — INR per baht (15.244 g)</Text>
-            <TextInput
-              style={styles.rateInput}
-              value={goldRate}
-              onChangeText={setGoldRate}
-              keyboardType="decimal-pad"
-              placeholder="2500"
-              placeholderTextColor={colors.textDim}
-              testID="rate-gold-per-baht"
-            />
-            <Text style={styles.rateHelper}>e.g. 10 baht of gold → ₹{(Number(goldRate) || 0) * 10} carrier fee.</Text>
-          </View>
-
-          <View style={styles.rateField}>
-            <Text style={styles.rateLabel}>Hand-carry shipments — INR per kg</Text>
-            <TextInput
-              style={styles.rateInput}
-              value={handCarryRate}
-              onChangeText={setHandCarryRate}
-              keyboardType="decimal-pad"
-              placeholder="200"
-              placeholderTextColor={colors.textDim}
-              testID="rate-hand-carry-per-kg"
-            />
-            <Text style={styles.rateHelper}>
-              e.g. 25 kg hand-carry → ₹{(Number(handCarryRate) || 0) * 25} paid to the carrier.
-            </Text>
-          </View>
-
-          <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
-            <TouchableOpacity style={styles.sheetCancel} onPress={onClose} disabled={saving}>
-              <Text style={styles.sheetCancelText}>Cancel</Text>
+          {/* Edit / History tab switcher */}
+          <View style={styles.rateTabRow}>
+            <TouchableOpacity
+              style={[styles.rateTab, tab === "edit" && styles.rateTabActive]}
+              onPress={() => setTab("edit")}
+              testID="rate-tab-edit"
+            >
+              <Ionicons
+                name="pricetags-outline"
+                size={14}
+                color={tab === "edit" ? colors.bg : colors.textMuted}
+              />
+              <Text style={[styles.rateTabText, tab === "edit" && styles.rateTabTextActive]}>
+                Edit
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.rateSaveBtn, saving && { opacity: 0.6 }]}
-              onPress={commit}
-              disabled={saving}
-              testID="rate-save"
+              style={[styles.rateTab, tab === "history" && styles.rateTabActive]}
+              onPress={() => {
+                setTab("history");
+                if (!history) loadHistory();
+              }}
+              testID="rate-tab-history"
             >
-              <Text style={styles.rateSaveText}>{saving ? "Saving…" : "Save rates"}</Text>
+              <Ionicons
+                name="time-outline"
+                size={14}
+                color={tab === "history" ? colors.bg : colors.textMuted}
+              />
+              <Text style={[styles.rateTabText, tab === "history" && styles.rateTabTextActive]}>
+                History
+              </Text>
             </TouchableOpacity>
           </View>
+
+          {tab === "edit" ? (
+            <>
+              <View style={styles.rateField}>
+                <Text style={styles.rateLabel}>Currency carry — INR per 1,000 units</Text>
+                <TextInput
+                  style={styles.rateInput}
+                  value={currencyRate}
+                  onChangeText={setCurrencyRate}
+                  keyboardType="decimal-pad"
+                  placeholder="500"
+                  placeholderTextColor={colors.textDim}
+                  testID="rate-currency-per-1000"
+                />
+                <Text style={styles.rateHelper}>e.g. $1,000 carried → ₹{currencyRate || "0"} carrier fee.</Text>
+              </View>
+
+              <View style={styles.rateField}>
+                <Text style={styles.rateLabel}>Gold carry — INR per baht (15.244 g)</Text>
+                <TextInput
+                  style={styles.rateInput}
+                  value={goldRate}
+                  onChangeText={setGoldRate}
+                  keyboardType="decimal-pad"
+                  placeholder="2500"
+                  placeholderTextColor={colors.textDim}
+                  testID="rate-gold-per-baht"
+                />
+                <Text style={styles.rateHelper}>e.g. 10 baht of gold → ₹{(Number(goldRate) || 0) * 10} carrier fee.</Text>
+              </View>
+
+              <View style={styles.rateField}>
+                <Text style={styles.rateLabel}>Hand-carry shipments — INR per kg</Text>
+                <TextInput
+                  style={styles.rateInput}
+                  value={handCarryRate}
+                  onChangeText={setHandCarryRate}
+                  keyboardType="decimal-pad"
+                  placeholder="200"
+                  placeholderTextColor={colors.textDim}
+                  testID="rate-hand-carry-per-kg"
+                />
+                <Text style={styles.rateHelper}>
+                  e.g. 25 kg hand-carry → ₹{(Number(handCarryRate) || 0) * 25} paid to the carrier.
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+                <TouchableOpacity style={styles.sheetCancel} onPress={onClose} disabled={saving}>
+                  <Text style={styles.sheetCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.rateSaveBtn, saving && { opacity: 0.6 }]}
+                  onPress={commit}
+                  disabled={saving}
+                  testID="rate-save"
+                >
+                  <Text style={styles.rateSaveText}>{saving ? "Saving…" : "Save rates"}</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : (
+            <RatesHistoryView
+              history={history}
+              loading={historyLoading}
+              onRefresh={loadHistory}
+              onClose={onClose}
+            />
+          )}
         </KeyboardAvoidingView>
       </Pressable>
     </Pressable>
   );
+}
+
+function RatesHistoryView({
+  history,
+  loading,
+  onRefresh,
+  onClose,
+}: {
+  history: BullionRateHistoryEntry[] | null;
+  loading: boolean;
+  onRefresh: () => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const list = history || [];
+  return (
+    <View>
+      <View style={styles.historyHead}>
+        <Text style={styles.historyCount}>
+          {loading ? "Loading…" : `${list.length} change${list.length === 1 ? "" : "s"} recorded`}
+        </Text>
+        <TouchableOpacity onPress={onRefresh} disabled={loading} style={styles.historyRefresh}>
+          <Ionicons name="refresh-outline" size={14} color={colors.lime} />
+          <Text style={styles.historyRefreshText}>Refresh</Text>
+        </TouchableOpacity>
+      </View>
+      {list.length === 0 && !loading ? (
+        <View style={styles.historyEmpty}>
+          <Ionicons name="time-outline" size={36} color={colors.textDim} />
+          <Text style={styles.historyEmptyTitle}>No rate changes yet</Text>
+          <Text style={styles.historyEmptySub}>
+            Save a new rate from the Edit tab and the change will show up here.
+          </Text>
+        </View>
+      ) : (
+        <ScrollView style={styles.historyScroll} showsVerticalScrollIndicator={false}>
+          {list.map((h, idx) => (
+            <View key={h.id} style={styles.historyRow}>
+              <View style={styles.historyDot}>
+                <View style={styles.historyDotInner} />
+                {idx < list.length - 1 ? <View style={styles.historyDotLine} /> : null}
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={styles.historyRowHead}>
+                  <Text style={styles.historyTime}>
+                    {new Date(h.timestamp).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </Text>
+                  {h.source ? (
+                    <View
+                      style={[
+                        styles.historySrcPill,
+                        h.source === "wingman" && { borderColor: colors.info, backgroundColor: colors.info + "22" },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.historySrcText,
+                          h.source === "wingman" && { color: colors.info },
+                        ]}
+                      >
+                        {h.source}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                {Object.keys(h.diffs || {}).length === 0 ? (
+                  <Text style={styles.historyNoChange}>(no numeric change)</Text>
+                ) : (
+                  Object.entries(h.diffs).map(([k, v]) => (
+                    <View key={k} style={styles.historyDiffRow}>
+                      <Text style={styles.historyDiffKey}>{RATE_LABELS[k] || k}</Text>
+                      <Text style={styles.historyDiffFrom}>{formatRateNum(v.from)}</Text>
+                      <Ionicons name="arrow-forward" size={11} color={colors.textDim} />
+                      <Text style={styles.historyDiffTo}>{formatRateNum(v.to)}</Text>
+                    </View>
+                  ))
+                )}
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+      <TouchableOpacity style={[styles.sheetCancel, { marginTop: spacing.md }]} onPress={onClose}>
+        <Text style={styles.sheetCancelText}>Close</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const RATE_LABELS: Record<string, string> = {
+  currency_rate_per_1000: "Currency carry (INR/1,000)",
+  gold_rate_per_baht: "Gold carry (INR/baht)",
+  hand_carry_rate_inr_per_kg: "Hand-carry (INR/kg)",
+};
+
+function formatRateNum(n: number | null | undefined): string {
+  if (n === null || n === undefined || Number.isNaN(n as number)) return "—";
+  return `₹${Number(n).toLocaleString("en-IN")}`;
 }
 
 function fmtKgSmart(n: number): string {
@@ -668,6 +834,148 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill, backgroundColor: colors.chipBg,
   },
   sheetCancelText: { color: colors.text, fontWeight: "700" },
+  // Rate editor tab switcher
+  rateTabRow: {
+    flexDirection: "row",
+    gap: 6,
+    padding: 4,
+    borderRadius: radii.pill,
+    backgroundColor: colors.chipBg,
+    marginBottom: spacing.md,
+  },
+  rateTab: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+  },
+  rateTabActive: {
+    backgroundColor: colors.lime,
+  },
+  rateTabText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  rateTabTextActive: {
+    color: colors.bg,
+  },
+  // Rate change history view
+  historyHead: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  historyCount: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  historyRefresh: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.chipBg,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  historyRefreshText: { color: colors.lime, fontSize: 11, fontWeight: "800" },
+  historyEmpty: {
+    padding: spacing.lg,
+    alignItems: "center",
+    gap: 6,
+  },
+  historyEmptyTitle: { color: colors.text, fontSize: 14, fontWeight: "700", marginTop: 6 },
+  historyEmptySub: { color: colors.textDim, fontSize: 12, textAlign: "center" },
+  historyScroll: { maxHeight: 340 },
+  historyRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  historyDot: {
+    width: 14,
+    alignItems: "center",
+    paddingTop: 4,
+  },
+  historyDotInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.lime,
+  },
+  historyDotLine: {
+    width: 2,
+    flex: 1,
+    backgroundColor: colors.border,
+    marginTop: 3,
+  },
+  historyRowHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  historyTime: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  historySrcPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radii.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.lime,
+    backgroundColor: colors.limeGlow,
+  },
+  historySrcText: {
+    color: colors.lime,
+    fontSize: 9,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  historyDiffRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 2,
+    flexWrap: "wrap",
+  },
+  historyDiffKey: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+    marginRight: 4,
+  },
+  historyDiffFrom: {
+    color: colors.textDim,
+    fontSize: 12,
+    fontWeight: "700",
+    textDecorationLine: "line-through",
+  },
+  historyDiffTo: {
+    color: colors.lime,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  historyNoChange: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontStyle: "italic",
+  },
 });
 
 // Types re-export for other components (BullionTxn imported at top).

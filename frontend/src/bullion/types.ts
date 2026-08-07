@@ -44,6 +44,21 @@ export interface BullionTxn {
   /** ISO date the carrier fee was posted to the ledger. */
   ledger_posted_at?: string | null;
 
+  // ---- Rate-snapshot lock ----
+  // Snapshots the carrier rate that applied at the moment the txn was
+  // created. When present we compute the carrier fee off THIS number, not
+  // the live rate, so historical entries never move because someone
+  // updated the global rate later. Undefined for legacy rows created
+  // before rate-history was introduced — those fall back to live rates.
+  rate_snapshot_currency_per_1000?: number;
+  rate_snapshot_gold_per_baht?: number;
+  /**
+   * When the snapshot was taken (ISO). Purely informational — the numbers
+   * above are what drives the math. Also stamped into the ledger entry
+   * note so downstream auditors can trace what rate was in effect.
+   */
+  rate_snapshot_at?: string;
+
   // ---- Currency carry ----
   currency?: string;                  // USD, AED, SGD, OTHER — free text allowed
   currency_amount?: number;           // foreign units bought
@@ -79,8 +94,18 @@ export function computeCarrierCharge(
   t: BullionTxn,
   rates?: { currency_rate_per_1000: number; gold_rate_per_baht: number },
 ): number {
-  const currencyRate = rates?.currency_rate_per_1000 ?? CARRIER_RATE_CURRENCY;
-  const goldRate = rates?.gold_rate_per_baht ?? CARRIER_RATE_GOLD;
+  // Prefer the per-txn snapshot when present — this keeps historical
+  // entries locked at the rate that applied on the day they were
+  // created, even if the global rate has since changed. Legacy rows
+  // (no snapshot) fall back to the live rate for backward-compat.
+  const currencyRate =
+    typeof t.rate_snapshot_currency_per_1000 === "number"
+      ? t.rate_snapshot_currency_per_1000
+      : rates?.currency_rate_per_1000 ?? CARRIER_RATE_CURRENCY;
+  const goldRate =
+    typeof t.rate_snapshot_gold_per_baht === "number"
+      ? t.rate_snapshot_gold_per_baht
+      : rates?.gold_rate_per_baht ?? CARRIER_RATE_GOLD;
   if (t.type === "currency") {
     const amt = t.currency_amount || 0;
     return Math.round(currencyRate * (amt / 1000));

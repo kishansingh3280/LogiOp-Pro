@@ -10,6 +10,7 @@ import { storage } from "@/src/utils/storage";
 const RATES_KEY = "bullion:rates";
 const RATES_MIGRATION_KEY = "bullion:rates:migration:v1";
 const RATES_PATH = "/api/bullion/rates";
+const RATES_HISTORY_PATH = "/api/bullion/rates/history";
 
 export interface BullionRates {
   /** INR carrier fee charged per $1,000 (or per 1,000 units of foreign currency) carried. */
@@ -22,6 +23,27 @@ export interface BullionRates {
    * Used to auto-fill the "You Pay Carrier" field on new shipments.
    */
   hand_carry_rate_inr_per_kg: number;
+}
+
+export interface BullionRateHistoryEntry {
+  id: string;
+  timestamp: string;
+  changed_by?: string;
+  source?: string;
+  prev: Partial<BullionRates>;
+  next: Partial<BullionRates>;
+  diffs: Record<string, { from: number | null; to: number | null }>;
+}
+
+/** Fetch the rate change log (newest first). */
+export async function getRateHistory(limit = 50): Promise<BullionRateHistoryEntry[]> {
+  try {
+    return await apiGet<BullionRateHistoryEntry[]>(
+      `${RATES_HISTORY_PATH}?limit=${limit}`,
+    );
+  } catch {
+    return [];
+  }
 }
 
 export const DEFAULT_RATES: BullionRates = {

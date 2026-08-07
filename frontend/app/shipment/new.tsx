@@ -78,6 +78,23 @@ export default function NewShipmentScreen() {
   const [pickBillToIdx, setPickBillToIdx] = useState<number | null>(null);
   const [pickItemBagIdx, setPickItemBagIdx] = useState<number | null>(null);
 
+  // Invoice-driven items: when the shipment form is opened from an invoice,
+  // its items become a "pool" the operator distributes across bags. Each
+  // entry tracks the target qty (from the invoice) so we can show progress
+  // and stop the user from allocating more than what's on the invoice.
+  interface InvoiceLine {
+    item_id: string | null;
+    name: string;
+    unit: string;
+    quantity: number;    // target — how many pcs/kg/etc. are on the invoice
+  }
+  const [invoiceLines, setInvoiceLines] = useState<InvoiceLine[]>([]);
+  // Which invoice line is being distributed right now — null means the
+  // distribution sheet is closed. The sheet asks "how many to which bag?".
+  const [distributeIdx, setDistributeIdx] = useState<number | null>(null);
+  const [distributeQty, setDistributeQty] = useState("");
+  const [distributeBagIdx, setDistributeBagIdx] = useState<number | null>(null);
+
   const customers = useMemo(
     () => (parties.data || []).filter((p) => p.role === "customer"),
     [parties.data],
@@ -311,6 +328,90 @@ export default function NewShipmentScreen() {
     ));
   };
 
+  // ---- Invoice-item distribution helpers -------------------------------
+  // For each invoice line, sum up how many pcs/units have already been
+  // dropped into bags. Matching is by item_id when the invoice line is
+  // linked to the catalog; otherwise by (name, unit) so custom lines with
+  // no catalog link still track properly.
+  const invoiceAllocations = useMemo(() => {
+    return invoiceLines.map((line) => {
+      let allocated = 0;
+      const matches: { bagIdx: number; itemIdx: number; qty: number }[] = [];
+      bags.forEach((b, bIdx) => {
+        b.items.forEach((it, iIdx) => {
+          const sameById = line.item_id && it.item_id && line.item_id === it.item_id;
+          const sameByName =
+            !line.item_id &&
+            !it.item_id &&
+            it.name.trim().toLowerCase() === line.name.trim().toLowerCase() &&
+            (it.unit || "pcs") === (line.unit || "pcs");
+          if (sameById || sameByName) {
+            const q = Number(it.quantity) || 0;
+            allocated += q;
+            matches.push({ bagIdx: bIdx, itemIdx: iIdx, qty: q });
+          }
+        });
+      });
+      const remaining = Math.max(0, line.quantity - allocated);
+      const pct = line.quantity > 0 ? Math.min(100, (allocated / line.quantity) * 100) : 0;
+      return { allocated, remaining, pct, matches };
+    });
+  }, [invoiceLines, bags]);
+
+  // Push (or top-up) an invoice line into a specific bag. If the same
+  // catalog item already exists in the target bag, increment its qty
+  // instead of adding a duplicate row.
+  const distributeInvoiceLine = (lineIdx: number, bagIdx: number, qty: number) => {
+    if (!Number.isFinite(qty) || qty <= 0) {
+      toast.warn("Enter a positive quantity");
+      return;
+    }
+    const line = invoiceLines[lineIdx];
+    const alloc = invoiceAllocations[lineIdx];
+    if (!line || !alloc) return;
+    if (qty > alloc.remaining + 0.0001) {
+      toast.warn(
+        `Only ${alloc.remaining} ${line.unit} of ${line.name} left to distribute`,
+      );
+      return;
+    }
+    setBags((prev) => prev.map((b, i) => {
+      if (i !== bagIdx) return b;
+      // Look for an existing row for the same line in this bag.
+      const existingIdx = b.items.findIndex((it) => {
+        if (line.item_id && it.item_id) return it.item_id === line.item_id;
+        return (
+          !line.item_id &&
+          !it.item_id &&
+          it.name.trim().toLowerCase() === line.name.trim().toLowerCase() &&
+          (it.unit || "pcs") === (line.unit || "pcs")
+        );
+      });
+      if (existingIdx >= 0) {
+        const nextItems = b.items.slice();
+        const cur = Number(nextItems[existingIdx].quantity) || 0;
+        nextItems[existingIdx] = {
+          ...nextItems[existingIdx],
+          quantity: String(cur + qty),
+        };
+        return { ...b, items: nextItems };
+      }
+      return {
+        ...b,
+        items: [
+          ...b.items,
+          {
+            item_id: line.item_id || "",
+            name: line.name,
+            quantity: String(qty),
+            unit: line.unit || "pcs",
+          },
+        ],
+      };
+    }));
+    toast.success(`${qty} ${line.unit} → ${bags[bagIdx]?.bag_no || "bag"}`);
+  };
+
   // Prefill fields when in edit mode. Loads once when the screen mounts.
   useEffect(() => {
     if (editId) return; // handled by dedicated edit effect below
@@ -327,6 +428,13 @@ export default function NewShipmentScreen() {
           currency?: string;
           total?: number;
           notes?: string;
+          items?: {
+            description?: string;
+            quantity?: number;
+            unit?: string;
+            rate?: number;
+            item_id?: string | null;
+          }[];
         }[]>("/api/invoices");
         const inv = list.find((x) => x.id === fromInvoiceId);
         if (!inv || cancelled) return;
@@ -340,7 +448,21 @@ export default function NewShipmentScreen() {
         if (inv.party_id) {
           setBags((prev) => prev.map((b, i) => (i === 0 ? { ...b, bill_to_party_id: inv.party_id || null } : b)));
         }
-        toast.info(`Prefilled from invoice ${inv.number}`);
+        // Materialize invoice items as the distribution pool.
+        const seededLines: InvoiceLine[] = (inv.items || [])
+          .filter((it) => (it.description || "").trim().length > 0)
+          .map((it) => ({
+            item_id: it.item_id || null,
+            name: (it.description || "").trim(),
+            unit: it.unit || "pcs",
+            quantity: Number(it.quantity) || 0,
+          }));
+        setInvoiceLines(seededLines);
+        toast.info(
+          seededLines.length
+            ? `Prefilled ${inv.number} — ${seededLines.length} item${seededLines.length === 1 ? "" : "s"} ready to distribute`
+            : `Prefilled from invoice ${inv.number}`,
+        );
       } catch (e) {
         console.warn("Invoice prefill failed:", (e as Error).message);
       }
@@ -670,6 +792,75 @@ export default function NewShipmentScreen() {
 
           {/* Bag details — each bag independently assigned to a customer */}
           <Field label={`Bag details · ${bags.length} bag${bags.length === 1 ? "" : "s"} · ${totalBagWeight ? totalBagWeight.toFixed(1) : "0"} kg total`}>
+            {/* Invoice-driven distribution panel — surfaces the invoice's
+                line items so the operator can allocate qty into bags one
+                chunk at a time (e.g. 30 pcs into BAG-001, 70 into BAG-002).
+                Only visible when we came from an invoice + we found items. */}
+            {invoiceLines.length > 0 ? (
+              <View style={styles.invPoolBox}>
+                <View style={styles.invPoolHead}>
+                  <Ionicons name="receipt-outline" size={14} color={colors.lime} />
+                  <Text style={styles.invPoolTitle}>Invoice items to distribute</Text>
+                </View>
+                <Text style={styles.invPoolHint}>
+                  Tap an item to allocate a quantity into a specific bag.
+                </Text>
+                {invoiceLines.map((line, lIdx) => {
+                  const alloc = invoiceAllocations[lIdx];
+                  const done = alloc.remaining <= 0.0001;
+                  return (
+                    <View key={lIdx} style={styles.invLineRow}>
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.invLineTop}>
+                          <Text style={styles.invLineName} numberOfLines={1}>
+                            {line.name}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.invLineCount,
+                              done ? styles.invLineCountDone : null,
+                            ]}
+                          >
+                            {alloc.allocated} / {line.quantity} {line.unit}
+                          </Text>
+                        </View>
+                        <View style={styles.invProgressTrack}>
+                          <View
+                            style={[
+                              styles.invProgressFill,
+                              { width: `${alloc.pct}%` },
+                              done ? styles.invProgressFillDone : null,
+                            ]}
+                          />
+                        </View>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setDistributeIdx(lIdx);
+                          setDistributeQty(String(Math.max(0, alloc.remaining)));
+                          setDistributeBagIdx(
+                            bags.length > 0 ? bags.length - 1 : 0,
+                          );
+                        }}
+                        disabled={done}
+                        style={[
+                          styles.invAllocBtn,
+                          done && styles.invAllocBtnDone,
+                        ]}
+                        testID={`inv-line-alloc-${lIdx}`}
+                      >
+                        <Ionicons
+                          name={done ? "checkmark" : "add"}
+                          size={16}
+                          color={done ? colors.textDim : colors.bg}
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null}
+
             {/* Warehouse FIFO queue affordance — surfaces older pending
                 bags across other shipments so they can be pulled into
                 this lot first. Only worth surfacing on edit (need a real
@@ -1041,6 +1232,121 @@ export default function NewShipmentScreen() {
         }}
         title={pickItemBagIdx !== null ? `Add item to ${bags[pickItemBagIdx]?.bag_no}` : "Choose item"}
       />
+
+      {/* Invoice-item distribution sheet — asks how many of this item and
+          into which bag, then does the split. */}
+      {distributeIdx !== null && invoiceLines[distributeIdx] ? (
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setDistributeIdx(null)}
+        >
+          <Pressable
+            style={styles.sheet}
+            onPress={(e) => e.stopPropagation()}
+            testID="distribute-sheet"
+          >
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>
+              Allocate {invoiceLines[distributeIdx].name}
+            </Text>
+            <Text style={styles.distributeSub}>
+              {invoiceAllocations[distributeIdx].remaining} {invoiceLines[distributeIdx].unit} left · already in {invoiceAllocations[distributeIdx].matches.length} bag{invoiceAllocations[distributeIdx].matches.length === 1 ? "" : "s"}
+            </Text>
+
+            <Text style={styles.distributeLbl}>Quantity</Text>
+            <View style={styles.distributeQtyRow}>
+              <TextInput
+                style={styles.distributeQtyInput}
+                keyboardType="decimal-pad"
+                value={distributeQty}
+                onChangeText={setDistributeQty}
+                placeholder="0"
+                placeholderTextColor={colors.textDim}
+                testID="distribute-qty-input"
+              />
+              <Text style={styles.distributeUnit}>{invoiceLines[distributeIdx].unit}</Text>
+              <TouchableOpacity
+                style={styles.distributeMaxBtn}
+                onPress={() => setDistributeQty(String(invoiceAllocations[distributeIdx].remaining))}
+              >
+                <Text style={styles.distributeMaxTxt}>Max</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.distributeLbl}>Into bag</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.distributeBagsRow}
+            >
+              {bags.map((b, bi) => {
+                const active = distributeBagIdx === bi;
+                return (
+                  <TouchableOpacity
+                    key={bi}
+                    style={[styles.distributeBagChip, active && styles.distributeBagChipActive]}
+                    onPress={() => setDistributeBagIdx(bi)}
+                    testID={`distribute-bag-${bi}`}
+                  >
+                    <Text style={[styles.distributeBagChipTxt, active && styles.distributeBagChipTxtActive]}>
+                      {b.bag_no}
+                    </Text>
+                    {b.weight_kg ? (
+                      <Text style={[styles.distributeBagChipMeta, active && styles.distributeBagChipMetaActive]}>
+                        {b.weight_kg} kg
+                      </Text>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                style={styles.distributeAddBag}
+                onPress={() => {
+                  addBag();
+                  setDistributeBagIdx(bags.length); // new index after add
+                }}
+                testID="distribute-new-bag"
+              >
+                <Ionicons name="add-circle-outline" size={16} color={colors.lime} />
+                <Text style={styles.distributeAddBagTxt}>New bag</Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            <View style={styles.distributeActions}>
+              <TouchableOpacity
+                style={styles.distributeCancel}
+                onPress={() => setDistributeIdx(null)}
+              >
+                <Text style={styles.distributeCancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.distributeConfirm}
+                onPress={() => {
+                  const q = parseFloat(distributeQty);
+                  if (distributeBagIdx === null) {
+                    toast.warn("Choose a bag first");
+                    return;
+                  }
+                  distributeInvoiceLine(distributeIdx, distributeBagIdx, q);
+                  // If there's still remaining after this allocation, keep
+                  // the sheet open so the operator can chain 30+70 without
+                  // reopening. Otherwise close.
+                  const nextRemaining =
+                    invoiceAllocations[distributeIdx].remaining - q;
+                  if (nextRemaining > 0.0001) {
+                    setDistributeQty(String(Math.max(0, nextRemaining)));
+                  } else {
+                    setDistributeIdx(null);
+                  }
+                }}
+                testID="distribute-confirm"
+              >
+                <Text style={styles.distributeConfirmTxt}>Allocate</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      ) : null}
       {pickCarrier && (
         <PartyPicker
           list={carriers.length ? carriers : (parties.data || [])}
@@ -1550,5 +1856,215 @@ const styles = StyleSheet.create({
     color: colors.textDim,
     fontSize: 12,
     marginTop: 2,
+  },
+  // Invoice-driven item distribution UI
+  invPoolBox: {
+    backgroundColor: colors.limeGlow,
+    borderRadius: radii.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.lime,
+    padding: 12,
+    marginBottom: 12,
+  },
+  invPoolHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  },
+  invPoolTitle: {
+    color: colors.lime,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  invPoolHint: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginBottom: 10,
+  },
+  invLineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 8,
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  invLineTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  invLineName: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  invLineCount: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  invLineCountDone: {
+    color: colors.lime,
+  },
+  invProgressTrack: {
+    height: 4,
+    backgroundColor: colors.chipBg,
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  invProgressFill: {
+    height: "100%",
+    backgroundColor: colors.textMuted,
+    borderRadius: 2,
+  },
+  invProgressFillDone: {
+    backgroundColor: colors.lime,
+  },
+  invAllocBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.lime,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  invAllocBtnDone: {
+    backgroundColor: colors.chipBg,
+  },
+  // Distribution sheet
+  distributeSub: {
+    color: colors.textDim,
+    fontSize: 12,
+    marginBottom: 14,
+  },
+  distributeLbl: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+    marginTop: 12,
+  },
+  distributeQtyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  distributeQtyInput: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: radii.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  distributeUnit: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  distributeMaxBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radii.pill,
+    backgroundColor: colors.chipBg,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  distributeMaxTxt: {
+    color: colors.lime,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  distributeBagsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingRight: 12,
+  },
+  distributeBagChip: {
+    minWidth: 72,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.md,
+    backgroundColor: colors.chipBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    alignItems: "center",
+  },
+  distributeBagChipActive: {
+    backgroundColor: colors.lime,
+    borderColor: colors.lime,
+  },
+  distributeBagChipTxt: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  distributeBagChipTxtActive: {
+    color: colors.bg,
+  },
+  distributeBagChipMeta: {
+    color: colors.textDim,
+    fontSize: 10,
+    marginTop: 2,
+  },
+  distributeBagChipMetaActive: {
+    color: colors.bg,
+  },
+  distributeAddBag: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: radii.md,
+    borderStyle: "dashed",
+    borderWidth: 1,
+    borderColor: colors.lime,
+  },
+  distributeAddBagTxt: {
+    color: colors.lime,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  distributeActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 16,
+  },
+  distributeCancel: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+    backgroundColor: colors.chipBg,
+    alignItems: "center",
+  },
+  distributeCancelTxt: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  distributeConfirm: {
+    flex: 2,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+    backgroundColor: colors.lime,
+    alignItems: "center",
+  },
+  distributeConfirmTxt: {
+    color: colors.bg,
+    fontSize: 13,
+    fontWeight: "800",
   },
 });
