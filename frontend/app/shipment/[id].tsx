@@ -598,11 +598,70 @@ export default function ShipmentDetail({
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Timeline</Text>
           <TimelineRow label="Created" date={s.created_at} tint={colors.textDim} />
+          {linkedInvoice ? (
+            <TimelineRow
+              label={`Invoice ${linkedInvoice.number}`}
+              date={linkedInvoice.created_at}
+              tint={colors.lime}
+              onPress={() => router.push(`/invoice/${linkedInvoice.id}` as never)}
+              testID="timeline-invoice-row"
+            />
+          ) : null}
           <TimelineRow label="Dispatched" date={s.dispatched_at} tint={colors.warn} />
           <TimelineRow label="In transit" date={s.in_transit_at} tint={colors.info} />
           <TimelineRow label="Warehouse" date={s.warehouse_arrived_at} tint={colors.lime} />
           <TimelineRow label="Delivered" date={s.delivered_at} tint={colors.ok} />
         </View>
+
+        {/* Linked invoice summary card — hidden when there's no invoice
+            yet so the details section stays compact for invoice-less
+            shipments. Mirrors the shipment card on invoice/[id] so the
+            two records stay visually paired. */}
+        {linkedInvoice ? (
+          <View style={styles.card}>
+            <View style={styles.linkedInvHead}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sectionEyebrow}>Linked invoice</Text>
+                <Text style={styles.linkedInvNo}>{linkedInvoice.number}</Text>
+                <Text style={styles.linkedInvMeta}>
+                  {shortDate(linkedInvoice.date)} · {(linkedInvoice.items || []).length} line
+                  {(linkedInvoice.items || []).length === 1 ? "" : "s"}
+                </Text>
+              </View>
+              <StatusPill status={linkedInvoice.status || "draft"} />
+            </View>
+            <View style={styles.linkedInvStatsRow}>
+              <View style={styles.linkedInvStat}>
+                <Text style={styles.linkedInvStatLbl}>Subtotal</Text>
+                <Text style={styles.linkedInvStatVal}>
+                  {fmtCurrency(linkedInvoice.subtotal, linkedInvoice.currency)}
+                </Text>
+              </View>
+              <View style={styles.linkedInvStat}>
+                <Text style={styles.linkedInvStatLbl}>Tax</Text>
+                <Text style={styles.linkedInvStatVal}>
+                  {fmtCurrency(linkedInvoice.tax_amount, linkedInvoice.currency)}
+                </Text>
+              </View>
+              <View style={styles.linkedInvStat}>
+                <Text style={styles.linkedInvStatLbl}>Total</Text>
+                <Text style={[styles.linkedInvStatVal, { color: colors.lime }]}>
+                  {fmtCurrency(linkedInvoice.total, linkedInvoice.currency)}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.linkedInvCtaRow}>
+              <TouchableOpacity
+                style={styles.linkedInvEdit}
+                onPress={() => router.push(`/invoice/${linkedInvoice.id}` as never)}
+                testID="open-linked-invoice-detail"
+              >
+                <Ionicons name="open-outline" size={14} color={colors.lime} />
+                <Text style={styles.linkedInvEditText}>Open invoice</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
 
         {/* Related ledger */}
         {related.length > 0 && (
@@ -721,17 +780,40 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TimelineRow({ label, date, tint }: { label: string; date?: string | null; tint: string }) {
+function TimelineRow({
+  label,
+  date,
+  tint,
+  onPress,
+  testID,
+}: {
+  label: string;
+  date?: string | null;
+  tint: string;
+  onPress?: () => void;
+  testID?: string;
+}) {
   const done = !!date;
-  return (
+  const inner = (
     <View style={styles.tlRow}>
       <View style={[styles.tlDot, { backgroundColor: done ? tint : "#1a1a1a", borderColor: tint }]} />
       <View style={styles.tlText}>
         <Text style={[styles.tlLabel, { color: done ? colors.text : colors.textDim }]}>{label}</Text>
         <Text style={styles.tlDate}>{done ? shortDate(date) : "—"}</Text>
       </View>
+      {onPress ? (
+        <Ionicons name="chevron-forward" size={14} color={tint} />
+      ) : null}
     </View>
   );
+  if (onPress) {
+    return (
+      <TouchableOpacity onPress={onPress} activeOpacity={0.7} testID={testID}>
+        {inner}
+      </TouchableOpacity>
+    );
+  }
+  return inner;
 }
 
 const styles = StyleSheet.create({
@@ -1069,4 +1151,71 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   sheetCtaText: { color: colors.bg, fontWeight: "800" },
+  // Linked invoice mini-card (mirrors LinkedShipmentCard on invoice/[id])
+  linkedInvHead: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: spacing.md,
+  },
+  sectionEyebrow: {
+    color: colors.textDim,
+    fontSize: 10,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  linkedInvNo: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  linkedInvMeta: {
+    color: colors.textMuted,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  linkedInvStatsRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  linkedInvStat: {
+    flex: 1,
+    backgroundColor: colors.chipBg,
+    borderRadius: radii.md,
+    padding: 10,
+    alignItems: "center",
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  linkedInvStatLbl: {
+    color: colors.textDim,
+    fontSize: 10,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  linkedInvStatVal: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  linkedInvCtaRow: {
+    flexDirection: "row",
+    marginTop: spacing.md,
+  },
+  linkedInvEdit: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: radii.pill,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.chipBg,
+  },
+  linkedInvEditText: { color: colors.lime, fontSize: 12, fontWeight: "800" },
 });
