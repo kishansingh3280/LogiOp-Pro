@@ -15,10 +15,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { createTxn, deleteTxn, updateTxn, usedSlotsFor, useTrips, useTxns } from "@/src/bullion/store";
+import { createTxn, deleteTxn, updateTxn, usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import {
   computeTxn,
   STATUS_LABEL,
+  tripCapacityKg,
   type BullionTxn,
   type CarryType,
   type GoldUnit,
@@ -52,6 +53,7 @@ export default function TxnScreen() {
   const [goldCostInr, setGoldCostInr] = useState(existing?.gold_cost_inr?.toString() || "");
   const [goldSaleInr, setGoldSaleInr] = useState(existing?.gold_sale_inr?.toString() || "");
   const [tripId, setTripId] = useState<string | null>(existing?.trip_id || null);
+  const [weightKg, setWeightKg] = useState(existing?.weight_kg?.toString() || "");
   const [status, setStatus] = useState<TxnStatus>(existing?.status || "open");
   const [notes, setNotes] = useState(existing?.notes || "");
   const [pickTrip, setPickTrip] = useState(false);
@@ -73,6 +75,7 @@ export default function TxnScreen() {
       setGoldCostInr(existing.gold_cost_inr?.toString() || "");
       setGoldSaleInr(existing.gold_sale_inr?.toString() || "");
       setTripId(existing.trip_id || null);
+      setWeightKg(existing.weight_kg?.toString() || "");
       setNotes(existing.notes || "");
     }
   }, [isNew, existing?.id]);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -84,6 +87,7 @@ export default function TxnScreen() {
       type,
       status,
       trip_id: tripId,
+      weight_kg: parseFloatOrUndef(weightKg),
       notes,
       created_at: existing?.created_at || new Date().toISOString(),
       currency: type === "currency" ? currency : undefined,
@@ -97,7 +101,7 @@ export default function TxnScreen() {
       gold_cost_inr: parseFloatOrUndef(goldCostInr),
       gold_sale_inr: parseFloatOrUndef(goldSaleInr),
     }),
-    [existing, type, status, tripId, notes, currency, currencyAmount, purchaseRate, exchangeRate,
+    [existing, type, status, tripId, weightKg, notes, currency, currencyAmount, purchaseRate, exchangeRate,
       transferRate, goldUnit, goldAmount, goldPurchaseThb, goldCostInr, goldSaleInr],
   );
 
@@ -107,18 +111,22 @@ export default function TxnScreen() {
   const tripOptions = useMemo(
     () =>
       trips.data
-        .map((t) => ({ ...t, used: usedSlotsFor(t.id, txns.data.filter((x) => x.id !== existing?.id)) }))
+        .map((t) => ({
+          ...t,
+          capacity_kg: tripCapacityKg(t),
+          used_kg: usedWeightKgFor(t.id, txns.data.filter((x) => x.id !== existing?.id)),
+        }))
         .sort((a, b) => (a.date < b.date ? -1 : 1)),
     [trips.data, txns.data, existing?.id],
   );
 
   const save = async () => {
-    if (!tripId) return Alert.alert("Missing", "Assign a carrier trip");
     setBusy(true);
     try {
       const payload = {
         type,
-        trip_id: tripId,
+        trip_id: tripId,                       // fully optional — trip can be null
+        weight_kg: draft.weight_kg,
         notes,
         currency: type === "currency" ? currency : undefined,
         currency_amount: draft.currency_amount,
@@ -189,14 +197,32 @@ export default function TxnScreen() {
             />
           </View>
 
-          {/* Trip */}
-          <Field label="Carrier trip *">
+          {/* Trip — optional. A trip can carry bullion, shipment bags, or both. */}
+          <Field label="Carrier trip (optional)">
             <TouchableOpacity style={styles.selectBtn} onPress={() => setPickTrip(true)} testID="pick-trip">
               <Text style={[styles.selectText, !trip && styles.selectPh]}>
-                {trip ? `${shortDate(trip.date)} · ${trip.carrier_name || "TBD"} · ${trip.route === "IN_TO_TH" ? "IN → BKK" : "BKK → IN"}` : "Choose carrier trip"}
+                {trip ? `${shortDate(trip.date)} · ${trip.carrier_name || "TBD"} · ${trip.route === "IN_TO_TH" ? "IN → BKK" : "BKK → IN"}` : "Not linked to a trip"}
               </Text>
               <Ionicons name="chevron-down" size={16} color={colors.textDim} />
             </TouchableOpacity>
+            {trip ? (
+              <TouchableOpacity onPress={() => setTripId(null)} style={styles.clearLinkBtn} testID="clear-trip">
+                <Ionicons name="close-circle-outline" size={14} color={colors.textDim} />
+                <Text style={styles.clearLinkText}>Remove trip link</Text>
+              </TouchableOpacity>
+            ) : null}
+          </Field>
+
+          <Field label="Weight consumed on trip (kg, optional)">
+            <TextInput
+              style={styles.input}
+              value={weightKg}
+              onChangeText={setWeightKg}
+              keyboardType="decimal-pad"
+              placeholder="e.g. 2.5"
+              placeholderTextColor={colors.textDim}
+              testID="txn-weight-kg"
+            />
           </Field>
 
           {type === "currency" ? (
@@ -329,13 +355,12 @@ export default function TxnScreen() {
                 <Text style={styles.pickEmpty}>No trips yet. Add one from the Bullion tab.</Text>
               ) : (
                 tripOptions.map((t) => {
-                  const free = t.available_slots - t.used;
-                  const disabled = free <= 0 && t.id !== tripId;
+                  const free = Math.max(0, t.capacity_kg - t.used_kg);
+                  const full = t.capacity_kg > 0 && free <= 0 && t.id !== tripId;
                   return (
                     <TouchableOpacity
                       key={t.id}
-                      disabled={disabled}
-                      style={[styles.pickRow, disabled && { opacity: 0.4 }]}
+                      style={styles.pickRow}
                       onPress={() => { setTripId(t.id); setPickTrip(false); }}
                       testID={`pick-trip-${t.id}`}
                     >
@@ -344,10 +369,10 @@ export default function TxnScreen() {
                           {shortDate(t.date)} · {t.carrier_name || "TBD"}
                         </Text>
                         <Text style={styles.pickMeta}>
-                          {t.route === "IN_TO_TH" ? "IN → BKK" : "BKK → IN"} · {free}/{t.available_slots} slots free
+                          {t.route === "IN_TO_TH" ? "IN → BKK" : "BKK → IN"} · {fmtKg(free)}/{fmtKg(t.capacity_kg)} kg free
                         </Text>
                       </View>
-                      {disabled ? <Text style={styles.fullTag}>FULL</Text> : <Ionicons name="chevron-forward" size={16} color={colors.textDim} />}
+                      {full ? <Text style={styles.fullTag}>FULL</Text> : <Ionicons name="chevron-forward" size={16} color={colors.textDim} />}
                     </TouchableOpacity>
                   );
                 })
@@ -366,6 +391,11 @@ export default function TxnScreen() {
 function parseFloatOrUndef(s: string): number | undefined {
   const n = parseFloat(s);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function fmtKg(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -438,6 +468,16 @@ const styles = StyleSheet.create({
   },
   selectText: { color: colors.text, fontSize: 15 },
   selectPh: { color: colors.textDim },
+  clearLinkBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  clearLinkText: { color: colors.textDim, fontSize: 12 },
   profitCard: {
     backgroundColor: colors.surface, borderRadius: radii.lg,
     borderColor: colors.lime, borderWidth: 1,

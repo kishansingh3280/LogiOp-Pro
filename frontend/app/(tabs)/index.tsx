@@ -8,7 +8,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { subscribeQueue, getQueue, flushQueue } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { DashboardStats, LedgerSummary, Shipment, WarehouseSummary } from "@/src/api/types";
-import { useTrips, useTxns, usedSlotsFor } from "@/src/bullion/store";
+import { useTrips, useTxns, usedWeightKgFor } from "@/src/bullion/store";
+import { tripCapacityKg } from "@/src/bullion/types";
 import { Card } from "@/src/components/ui";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
@@ -227,9 +228,9 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Active carrier slots (Bullion) */}
+        {/* Active carrier weight (Bullion) */}
         <View style={styles.recentHeader}>
-          <Text style={styles.cardTitle}>Active carrier slots</Text>
+          <Text style={styles.cardTitle}>Active carrier trips</Text>
           <TouchableOpacity onPress={() => router.push("/bullion")} testID="see-all-bullion">
             <Text style={styles.link}>Bullion →</Text>
           </TouchableOpacity>
@@ -238,7 +239,11 @@ export default function DashboardScreen() {
           const today = new Date().toISOString().slice(0, 10);
           const upcoming = trips.data
             .filter((t) => t.date >= today)
-            .map((t) => ({ ...t, used: usedSlotsFor(t.id, batches.data) }))
+            .map((t) => ({
+              ...t,
+              capacity_kg: tripCapacityKg(t),
+              used_kg: usedWeightKgFor(t.id, batches.data),
+            }))
             .sort((a, b) => (a.date < b.date ? -1 : 1))
             .slice(0, tablet ? 6 : 3);
           if (upcoming.length === 0) {
@@ -253,9 +258,9 @@ export default function DashboardScreen() {
           return (
             <View style={{ gap: spacing.md }}>
               {upcoming.map((t) => {
-                const free = Math.max(0, t.available_slots - t.used);
-                const pct = t.available_slots > 0 ? Math.round((t.used / t.available_slots) * 100) : 0;
-                const full = free === 0;
+                const free = Math.max(0, t.capacity_kg - t.used_kg);
+                const pct = t.capacity_kg > 0 ? Math.round((t.used_kg / t.capacity_kg) * 100) : 0;
+                const full = t.capacity_kg > 0 && free <= 0;
                 return (
                   <TouchableOpacity
                     key={t.id}
@@ -275,9 +280,9 @@ export default function DashboardScreen() {
                         </View>
                         <View style={{ alignItems: "flex-end" }}>
                           <Text style={[styles.recValue, full && { color: colors.danger }]}>
-                            {full ? "FULL" : `${free}/${t.available_slots}`}
+                            {full ? "FULL" : `${fmtKgDash(free)}/${fmtKgDash(t.capacity_kg)}`}
                           </Text>
-                          <Text style={styles.recDim}>slots free</Text>
+                          <Text style={styles.recDim}>kg free</Text>
                         </View>
                       </View>
                       <View style={styles.trackMini}>
@@ -335,6 +340,12 @@ export default function DashboardScreen() {
     </SafeAreaView>
   );
 }
+
+function fmtKgDash(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
 
 function StatTile({
   title,

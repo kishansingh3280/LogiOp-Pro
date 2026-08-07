@@ -156,6 +156,13 @@ export function useTxns() {
   return { data, loading, refresh };
 }
 
+export function usedWeightKgFor(tripId: string, txns: BullionTxn[]): number {
+  return txns
+    .filter((t) => t.trip_id === tripId)
+    .reduce((sum, t) => sum + (typeof t.weight_kg === "number" ? t.weight_kg : 0), 0);
+}
+
+/** @deprecated Use usedWeightKgFor. Kept temporarily for legacy call-sites. */
 export function usedSlotsFor(tripId: string, txns: BullionTxn[]): number {
-  return txns.filter((t) => t.trip_id === tripId).length;
+  return usedWeightKgFor(tripId, txns);
 }

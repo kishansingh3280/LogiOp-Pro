@@ -14,7 +14,9 @@ export interface CarrierTrip {
   route: BullionRoute;
   carrier_party_id?: string | null;
   carrier_name?: string;
-  available_slots: number;
+  available_weight_kg: number;        // Total capacity in kilograms
+  /** @deprecated Legacy field – kept for backward compat with older stored trips. */
+  available_slots?: number;
   notes?: string;
   created_at: string;
 }
@@ -24,9 +26,13 @@ export interface BullionTxn {
   txn_no: string;                     // TXN-001
   type: CarryType;
   status: TxnStatus;
-  trip_id?: string | null;            // Carrier trip link
+  trip_id?: string | null;            // Carrier trip link — fully optional
   notes?: string;
   created_at: string;
+
+  // Physical weight this txn consumes from a carrier trip's capacity (kg).
+  // Optional — currency carries usually leave this blank / 0.
+  weight_kg?: number;
 
   // ---- Currency carry ----
   currency?: string;                  // USD, AED, SGD, OTHER — free text allowed
@@ -124,3 +130,19 @@ export const STATUS_COLOR: Record<TxnStatus, "warn" | "info" | "ok"> = {
   in_transit: "info",
   completed: "ok",
 };
+
+/**
+ * Backwards-compatible capacity reader.
+ * Older stored trips only had `available_slots` (a count). New trips use
+ * `available_weight_kg`. This helper prefers the new field and falls back
+ * to the legacy value so persisted data keeps working after the rename.
+ */
+export function tripCapacityKg(t: Pick<CarrierTrip, "available_weight_kg" | "available_slots">): number {
+  if (typeof t.available_weight_kg === "number" && !Number.isNaN(t.available_weight_kg)) {
+    return t.available_weight_kg;
+  }
+  if (typeof t.available_slots === "number" && !Number.isNaN(t.available_slots)) {
+    return t.available_slots;
+  }
+  return 0;
+}

@@ -29,7 +29,7 @@ export default function NewTripScreen() {
   const [route, setRoute] = useState<BullionRoute>("IN_TO_TH");
   const [carrierId, setCarrierId] = useState<string | null>(null);
   const [carrierName, setCarrierName] = useState("");
-  const [availableSlots, setAvailableSlots] = useState("5");
+  const [availableWeight, setAvailableWeight] = useState("20");
   const [notes, setNotes] = useState("");
   const [pickOpen, setPickOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -41,8 +41,10 @@ export default function NewTripScreen() {
   const currentCarrier = (parties.data || []).find((p) => p.id === carrierId);
 
   const save = async () => {
-    const slots = parseInt(availableSlots, 10);
-    if (!slots || slots <= 0) return Alert.alert("Invalid", "Available slots must be > 0");
+    const weight = parseFloat(availableWeight);
+    if (!Number.isFinite(weight) || weight < 0) {
+      return Alert.alert("Invalid", "Available weight must be 0 or more (kg)");
+    }
     setBusy(true);
     try {
       await createTrip({
@@ -50,7 +52,7 @@ export default function NewTripScreen() {
         route,
         carrier_party_id: carrierId,
         carrier_name: currentCarrier?.name || carrierName || undefined,
-        available_slots: slots,
+        available_weight_kg: weight,
         notes,
       });
       router.back();
@@ -126,14 +128,20 @@ export default function NewTripScreen() {
             />
           </Field>
 
-          <Field label="Available slots (capacity for bags/batches)">
+          <Field label="Available weight (kg)">
             <TextInput
               style={styles.input}
-              keyboardType="number-pad"
-              value={availableSlots}
-              onChangeText={setAvailableSlots}
-              testID="trip-slots"
+              keyboardType="decimal-pad"
+              value={availableWeight}
+              onChangeText={setAvailableWeight}
+              placeholder="e.g. 20"
+              placeholderTextColor={colors.textDim}
+              testID="trip-weight-kg"
             />
+            <Text style={styles.helper}>
+              Total capacity the carrier can carry, in kg. Works independently — this
+              trip can hold currency/gold, shipment bags, or both. Set to 0 if none.
+            </Text>
           </Field>
 
           <Field label="Notes (optional)">
@@ -208,6 +216,7 @@ const styles = StyleSheet.create({
   content: { padding: spacing.lg },
   field: { marginBottom: spacing.md },
   label: { color: colors.textMuted, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 },
+  helper: { color: colors.textDim, fontSize: 12, marginTop: 6, lineHeight: 16 },
   input: {
     backgroundColor: colors.surface,
     borderRadius: radii.md,

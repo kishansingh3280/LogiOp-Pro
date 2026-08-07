@@ -15,11 +15,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApi } from "@/src/api/hooks";
 import type { Party } from "@/src/api/types";
-import { usedSlotsFor, useTrips, useTxns } from "@/src/bullion/store";
+import { usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import {
   computeTxn,
   STATUS_COLOR,
   STATUS_LABEL,
+  tripCapacityKg,
   type BullionTxn,
 } from "@/src/bullion/types";
 import { colors, radii, spacing } from "@/src/theme";
@@ -225,9 +226,10 @@ export default function BullionScreen() {
             </View>
           }
           renderItem={({ item }) => {
-            const used = usedSlotsFor(item.id, txns.data);
-            const free = Math.max(0, item.available_slots - used);
-            const pct = item.available_slots > 0 ? Math.round((used / item.available_slots) * 100) : 0;
+            const capacity = tripCapacityKg(item);
+            const used = usedWeightKgFor(item.id, txns.data);
+            const free = Math.max(0, capacity - used);
+            const pct = capacity > 0 ? Math.round((used / capacity) * 100) : 0;
             const carrier = item.carrier_party_id ? partyMap[item.carrier_party_id] : undefined;
             return (
               <View style={styles.tripCard} testID={`trip-${item.id}`}>
@@ -242,7 +244,7 @@ export default function BullionScreen() {
                   <View style={styles.slotsTrack}>
                     <View style={[styles.slotsFill, { width: `${Math.min(100, pct)}%` }]} />
                   </View>
-                  <Text style={styles.slotsText}>{free}/{item.available_slots} free</Text>
+                  <Text style={styles.slotsText}>{fmtKgSmart(free)}/{fmtKgSmart(capacity)} kg free</Text>
                 </View>
                 {item.notes ? <Text style={styles.tripNotes}>{item.notes}</Text> : null}
               </View>
@@ -290,6 +292,12 @@ export default function BullionScreen() {
     </SafeAreaView>
   );
 }
+
+function fmtKgSmart(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
 
 function SegBtn({ label, active, onPress, testID }: { label: string; active: boolean; onPress: () => void; testID?: string }) {
   return (
