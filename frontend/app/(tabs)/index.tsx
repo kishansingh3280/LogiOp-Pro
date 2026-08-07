@@ -1,27 +1,32 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { subscribeQueue, getQueue, flushQueue } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
-import type { DashboardStats, LedgerSummary, Shipment, WarehouseSummary } from "@/src/api/types";
+import type { DashboardStats, LedgerEntry, LedgerSummary, Shipment, WarehouseSummary } from "@/src/api/types";
 import { useTrips, useTxns, usedWeightKgFor } from "@/src/bullion/store";
 import { tripCapacityKg } from "@/src/bullion/types";
+import { FYPicker } from "@/src/components/fy-picker";
 import { Card } from "@/src/components/ui";
+import { useFY } from "@/src/context/fy-context";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, relTime, shortDate } from "@/src/utils/format";
+import { isInFY } from "@/src/utils/fy";
 
 export default function DashboardScreen() {
   const router = useRouter();
   const tablet = useIsTablet();
+  const { fy } = useFY();
   const stats = useApi<DashboardStats>("/api/dashboard/stats");
   const warehouse = useApi<WarehouseSummary>("/api/dashboard/warehouse");
   const ledger = useApi<LedgerSummary>("/api/dashboard/ledger-summary");
   const shipments = useApi<Shipment[]>("/api/shipments");
+  const entries = useApi<LedgerEntry[]>("/api/ledger/entries");
   const trips = useTrips();
   const batches = useTxns();
 
@@ -34,16 +39,58 @@ export default function DashboardScreen() {
 
   const onRefresh = useCallback(async () => {
     await flushQueue();
-    await Promise.all([stats.refresh(), warehouse.refresh(), ledger.refresh(), shipments.refresh()]);
-  }, [stats, warehouse, ledger, shipments]);
+    await Promise.all([
+      stats.refresh(),
+      warehouse.refresh(),
+      ledger.refresh(),
+      shipments.refresh(),
+      entries.refresh(),
+    ]);
+  }, [stats, warehouse, ledger, shipments, entries]);
 
   const loading = stats.loading || warehouse.loading || ledger.loading;
 
-  const s = stats.data?.shipments;
-  const total = s?.total || 0;
+  // FY-filtered shipments/ledger — dashboard stat counters and receivable
+  // tiles now reflect the selected Financial Year. Aggregate endpoints
+  // don't accept FY params, so we recompute client-side from the raw
+  // lists. `warehouse` remains real-time (it's a "right now" metric).
+  const fyShipments = useMemo(
+    () => (shipments.data || []).filter((sh) => isInFY(sh.dispatch_date || sh.created_at, fy)),
+    [shipments.data, fy],
+  );
+  const fyStats = useMemo(() => {
+    const acc = { total: 0, delivered: 0, in_transit: 0, pending: 0, warehouse_arrived: 0, cancelled: 0 };
+    for (const sh of fyShipments) {
+      acc.total += 1;
+      const key = (sh.status || "pending") as keyof typeof acc;
+      if (key in acc) (acc as Record<string, number>)[key] += 1;
+    }
+    return acc;
+  }, [fyShipments]);
+
+  const fyLedger = useMemo(() => {
+    const perParty: Record<string, { inr: number; thb: number }> = {};
+    for (const e of entries.data || []) {
+      if (!isInFY(e.date, fy)) continue;
+      const cur = (e.currency || "INR").toUpperCase() === "THB" ? "thb" : "inr";
+      const bucket = (perParty[e.party_id] ||= { inr: 0, thb: 0 });
+      bucket[cur] += (e.debit || 0) - (e.credit || 0);
+    }
+    let recInr = 0, recThb = 0, payInr = 0, payThb = 0;
+    for (const bal of Object.values(perParty)) {
+      if (bal.inr > 0) recInr += bal.inr;
+      else if (bal.inr < 0) payInr += -bal.inr;
+      if (bal.thb > 0) recThb += bal.thb;
+      else if (bal.thb < 0) payThb += -bal.thb;
+    }
+    return { receivable: { inr: recInr, thb: recThb }, payable: { inr: payInr, thb: payThb } };
+  }, [entries.data, fy]);
+
+  const s = fyStats;
+  const total = s.total || 0;
   const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
 
-  const recent = (shipments.data || []).slice(0, tablet ? 6 : 4);
+  const recent = fyShipments.slice(0, tablet ? 6 : 4);
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
@@ -54,46 +101,49 @@ export default function DashboardScreen() {
       >
         {/* Header */}
         <View style={styles.header} testID="overview-header">
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.eyebrow}>Welcome back, Admin</Text>
             <Text style={styles.title}>India <Text style={styles.lime}>⇄</Text> Thailand</Text>
             <Text style={styles.subtitle}>Live view of shipments, ledger and warehouse.</Text>
           </View>
-          {pending > 0 ? (
-            <TouchableOpacity style={styles.badge} onPress={onRefresh} testID="sync-badge">
-              <Ionicons name="cloud-upload-outline" size={14} color={colors.lime} />
-              <Text style={styles.badgeText}>{pending} queued</Text>
-            </TouchableOpacity>
-          ) : null}
+          <View style={{ gap: 8, alignItems: "flex-end" }}>
+            <FYPicker earliest="2024-04-01" />
+            {pending > 0 ? (
+              <TouchableOpacity style={styles.badge} onPress={onRefresh} testID="sync-badge">
+                <Ionicons name="cloud-upload-outline" size={14} color={colors.lime} />
+                <Text style={styles.badgeText}>{pending} queued</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
 
         {/* Stat cards */}
         <View style={[styles.statsGrid, tablet && styles.statsGridTablet]} testID="stat-grid">
           <StatTile
             title="Delivered"
-            value={String(s?.delivered ?? 0)}
-            sub={`${pct(s?.delivered || 0)}% of total`}
+            value={String(s.delivered)}
+            sub={`${pct(s.delivered)}% of total`}
             tint={colors.ok}
             icon="checkmark-done-outline"
           />
           <StatTile
             title="In Transit"
-            value={String(s?.in_transit ?? 0)}
-            sub={`${pct(s?.in_transit || 0)}% of total`}
+            value={String(s.in_transit)}
+            sub={`${pct(s.in_transit)}% of total`}
             tint={colors.info}
             icon="airplane-outline"
           />
           <StatTile
             title="Pending"
-            value={String(s?.pending ?? 0)}
-            sub={`${pct(s?.pending || 0)}% of total`}
+            value={String(s.pending)}
+            sub={`${pct(s.pending)}% of total`}
             tint={colors.warn}
             icon="time-outline"
           />
           <StatTile
             title="Warehouse"
-            value={String(s?.warehouse_arrived ?? 0)}
-            sub={`${pct(s?.warehouse_arrived || 0)}% of total`}
+            value={String(s.warehouse_arrived)}
+            sub={`${pct(s.warehouse_arrived)}% of total`}
             tint={colors.lime}
             icon="business-outline"
           />
@@ -164,8 +214,8 @@ export default function DashboardScreen() {
                 <View style={[styles.ledgerDot, { backgroundColor: colors.ok }]} />
                 <Text style={styles.ledgerLabel}>Customer will pay</Text>
               </View>
-              <Text style={styles.ledgerBig}>{fmtCurrency(ledger.data?.receivable.inr, "INR")}</Text>
-              <Text style={styles.ledgerAlt}>{fmtCurrency(ledger.data?.receivable.thb, "THB")}</Text>
+              <Text style={styles.ledgerBig}>{fmtCurrency(fyLedger.receivable.inr, "INR")}</Text>
+              <Text style={styles.ledgerAlt}>{fmtCurrency(fyLedger.receivable.thb, "THB")}</Text>
               {ledger.data?.top_get?.[0] ? (
                 <Text style={styles.ledgerHint} numberOfLines={1}>
                   Top: {ledger.data.top_get[0].name}
@@ -184,8 +234,8 @@ export default function DashboardScreen() {
                 <View style={[styles.ledgerDot, { backgroundColor: colors.danger }]} />
                 <Text style={styles.ledgerLabel}>You pay carrier</Text>
               </View>
-              <Text style={styles.ledgerBig}>{fmtCurrency(ledger.data?.payable.inr, "INR")}</Text>
-              <Text style={styles.ledgerAlt}>{fmtCurrency(ledger.data?.payable.thb, "THB")}</Text>
+              <Text style={styles.ledgerBig}>{fmtCurrency(fyLedger.payable.inr, "INR")}</Text>
+              <Text style={styles.ledgerAlt}>{fmtCurrency(fyLedger.payable.thb, "THB")}</Text>
               {ledger.data?.top_give?.[0] ? (
                 <Text style={styles.ledgerHint} numberOfLines={1}>
                   Top: {ledger.data.top_give[0].name}

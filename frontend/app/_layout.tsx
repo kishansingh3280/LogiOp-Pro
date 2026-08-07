@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { ToastHost } from "@/src/components/toast";
+import { FYProvider } from "@/src/context/fy-context";
 import { colors } from "@/src/theme";
 
 LogBox.ignoreAllLogs(true);
@@ -28,15 +29,17 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <SafeAreaProvider>
-        <StatusBar style="light" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.bg },
-            animation: "slide_from_right",
-          }}
-        />
-        <ToastHost />
+        <FYProvider>
+          <StatusBar style="light" />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: colors.bg },
+              animation: "slide_from_right",
+            }}
+          />
+          <ToastHost />
+        </FYProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

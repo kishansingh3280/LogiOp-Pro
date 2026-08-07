@@ -16,9 +16,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApi } from "@/src/api/hooks";
 import type { LedgerEntry, Party } from "@/src/api/types";
+import { FYPicker } from "@/src/components/fy-picker";
+import { useFY } from "@/src/context/fy-context";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
+import { isInFY } from "@/src/utils/fy";
 
 type Role = "all" | "customer" | "supplier" | "carrier";
 
@@ -45,11 +48,21 @@ export default function LedgerScreen() {
   // INR and THB entries (freight in THB + forex settlement in INR, etc.),
   // so we track each currency independently and expose the balance in the
   // party's *default* currency for the summary chip.
+  //
+  // FY-filtered — only entries whose `date` falls inside the currently
+  // selected Financial Year (April 1 → March 31) contribute to totals.
+  // Entries outside are still available in the raw API response but never
+  // pollute the dashboard headline numbers.
+  const { fy } = useFY();
+  const fyEntries = useMemo(
+    () => (entries.data || []).filter((e) => isInFY(e.date, fy)),
+    [entries.data, fy],
+  );
   const perParty = useMemo(() => {
     type CurrencyBucket = { debit: number; credit: number; balance: number };
     type PartyBuckets = { inr: CurrencyBucket; thb: CurrencyBucket; last?: string };
     const map: Record<string, PartyBuckets> = {};
-    for (const e of entries.data || []) {
+    for (const e of fyEntries) {
       const cur = (e.currency || "INR").toUpperCase() === "THB" ? "thb" : "inr";
       const bucket = (map[e.party_id] ||= {
         inr: { debit: 0, credit: 0, balance: 0 },
@@ -61,7 +74,7 @@ export default function LedgerScreen() {
       if (!bucket.last || e.date > bucket.last) bucket.last = e.date;
     }
     return map;
-  }, [entries.data]);
+  }, [fyEntries]);
 
   // Totals split by currency — sum the actual currency balance for each
   // party, not the mixed-currency total the old code produced.
@@ -155,10 +168,11 @@ export default function LedgerScreen() {
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
       <View style={styles.header}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.title}>Ledger</Text>
           <Text style={styles.subtitle}>{parties.data?.length || 0} parties · tap to view or add entry</Text>
         </View>
+        <FYPicker />
       </View>
 
       <FlatList
@@ -544,6 +558,9 @@ function MiniRow({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,

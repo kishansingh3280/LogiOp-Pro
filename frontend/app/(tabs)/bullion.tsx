@@ -26,6 +26,8 @@ import { FlightMap } from "@/src/bullion/FlightMap";
 import { MarketTickerSlim } from "@/src/bullion/MarketTickerSlim";
 import { setRates, useRates } from "@/src/bullion/rates";
 import { usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
+import { FYPicker } from "@/src/components/fy-picker";
+import { useFY } from "@/src/context/fy-context";
 import {
   computeTxn,
   STATUS_COLOR,
@@ -35,6 +37,7 @@ import {
 } from "@/src/bullion/types";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
+import { isInFY } from "@/src/utils/fy";
 
 type View_ = "trades" | "trips";
 type Filter = "all" | "currency" | "gold" | "open" | "completed";
@@ -56,9 +59,24 @@ export default function BullionScreen() {
     return m;
   }, [parties.data]);
 
+  const { fy } = useFY();
+  const fyTrips = useMemo(
+    () => trips.data.filter((t) => isInFY(t.date, fy)),
+    [trips.data, fy],
+  );
+  // For txns we bucket by the parent trip's date when available; otherwise
+  // fall back to the txn's own created_at.
+  const fyTxns = useMemo(() => {
+    const tripDates = new Map(trips.data.map((t) => [t.id, t.date]));
+    return txns.data.filter((t) => {
+      const anchor = (t.trip_id && tripDates.get(t.trip_id)) || t.created_at;
+      return isInFY(anchor, fy);
+    });
+  }, [txns.data, trips.data, fy]);
+
   const tradesSorted = useMemo(
-    () => txns.data.slice().sort((a, b) => (a.created_at > b.created_at ? -1 : 1)),
-    [txns.data],
+    () => fyTxns.slice().sort((a, b) => (a.created_at > b.created_at ? -1 : 1)),
+    [fyTxns],
   );
 
   const filtered = useMemo(() => {
@@ -69,20 +87,20 @@ export default function BullionScreen() {
   }, [tradesSorted, filter]);
 
   const tripsSorted = useMemo(
-    () => trips.data.slice().sort((a, b) => (a.date > b.date ? -1 : 1)),
-    [trips.data],
+    () => fyTrips.slice().sort((a, b) => (a.date > b.date ? -1 : 1)),
+    [fyTrips],
   );
 
-  // Aggregate stats
+  // Aggregate stats — FY-scoped
   const stats = useMemo(() => {
     let openCnt = 0, completedCnt = 0, totalProfit = 0;
-    txns.data.forEach((t) => {
+    fyTxns.forEach((t) => {
       const calc = computeTxn(t, rates.data);
       if (t.status === "completed") completedCnt++; else openCnt++;
       if (calc.profit_inr !== null) totalProfit += calc.profit_inr;
     });
     return { openCnt, completedCnt, totalProfit };
-  }, [txns.data, rates.data]);
+  }, [fyTxns, rates.data]);
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
@@ -90,9 +108,10 @@ export default function BullionScreen() {
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Bullion Work</Text>
           <Text style={styles.subtitle}>
-            {txns.data.length} trade{txns.data.length === 1 ? "" : "s"} · {trips.data.length} trip{trips.data.length === 1 ? "" : "s"}
+            {fyTxns.length} trade{fyTxns.length === 1 ? "" : "s"} · {fyTrips.length} trip{fyTrips.length === 1 ? "" : "s"}
           </Text>
         </View>
+        <FYPicker earliest="2024-04-01" />
         <TouchableOpacity
           onPress={() => setEditRates(true)}
           style={styles.editRatesBtn}
