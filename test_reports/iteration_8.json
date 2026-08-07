@@ -1,0 +1,28 @@
+{
+  "summary": "PASS. Combined 'Top receivables + Top payables' snippet on Ledger tab verified on both tablet (1280x800) and mobile (390x844) viewports. Single card testID='top-balances' present; top-receivables & top-payables share the same parent DOM node. Tablet renders columns side-by-side (rec box: x=17 w=623.5, pay box: x=640.5 w=622.5, both same y=232) with hairline divider. Mobile stacks vertically (payables y=364.5 immediately below receivables y+h=364.5). Green dot before 'TOP RECEIVABLES' and red dot before 'TOP PAYABLES' visible in screenshots. Content correct: Lalit ₹5,305 + Rahul HandCarrier ₹1,400 in receivables; Raj Hand-Carrier ₹1,500 in payables. Big totals widget intact (6,705 / 1,500 / net 5,205). FAB 'fab-add-entry' visible on both viewports. Navigation regression check passed — tapping Lalit in receivables column navigates to /party/{id} with 'You gave'/'You got' action bar present. No uncaught JS errors, no red-box overlay, no 'reading replace' regressions. All required testIDs (top-balances, top-receivables, top-payables, fab-add-entry, ledger-parties-search, ledger-role-all/customer/supplier/carrier, ledger-totals) confirmed. Since receivables=2 and payables=1, toggle-receivables/toggle-payables not rendered (expected, only shown when count>3).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "styles.fab", "issue": "React Native Web deprecation warning: 'shadow*' style props are deprecated, use 'boxShadow'. Reference: /app/frontend/app/(tabs)/ledger.tsx:633-636 (shadowColor/shadowOffset/shadowOpacity/shadowRadius). Non-blocking but should migrate."},
+      {"component": "Pressable/pointerEvents", "issue": "React Native Web warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Non-blocking, likely coming from react-native-safe-area-context or similar library, not from ledger.tsx directly."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "No functional fixes required. Optional cleanup: migrate fab shadow* props to boxShadow to silence RN Web deprecation warnings."
+  ],
+  "critical_code_review_comments": [
+    "Combined balances snippet implementation is clean. Column parent equality confirmed for consistent DOM structure across viewports.",
+    "Consider adding a visual divider between the two columns in the mobile-stacked layout — currently only the receivables mini-row top border separates them, which can look like a receivables row rather than a payables header. Not a bug, just a UX polish suggestion."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only iteration)", "frontend": "100%"},
+  "seed_data_creation": "None (read-only sweep).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Ledger tab combined balances snippet fully verified. Tablet breakpoint = 900 dp via useIsTablet. All testIDs stable. Live backend at https://logistics-hub-1349.emergent.host served data correctly (6 parties, entries producing 6,705 receivable / 1,500 payable / net 5,205).",
+  "rca_of_issue": "N/A"
+}

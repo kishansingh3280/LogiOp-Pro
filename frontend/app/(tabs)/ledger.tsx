@@ -16,6 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApi } from "@/src/api/hooks";
 import type { LedgerEntry, Party } from "@/src/api/types";
+import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
 
@@ -30,6 +31,7 @@ type Role = "all" | "customer" | "supplier" | "carrier";
  */
 export default function LedgerScreen() {
   const router = useRouter();
+  const tablet = useIsTablet();
   const parties = useApi<Party[]>("/api/parties");
   const entries = useApi<LedgerEntry[]>("/api/ledger/entries");
 
@@ -156,53 +158,88 @@ export default function LedgerScreen() {
               </View>
             </View>
 
-            {/* Top receivables collapsed */}
-            {receivables.length > 0 && (
-              <View style={styles.section} testID="top-receivables">
-                <View style={styles.sectionHead}>
-                  <Text style={styles.sectionTitle}>Top receivables</Text>
-                  {receivables.length > 3 ? (
-                    <TouchableOpacity onPress={() => setShowAllReceivables((x) => !x)} testID="toggle-receivables">
-                      <Text style={styles.link}>
-                        {showAllReceivables ? "Show top 3" : `Show all (${receivables.length})`}
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-                {shownReceivables.map((p) => (
-                  <MiniRow
-                    key={p.id}
-                    p={p}
-                    balance={perParty[p.id]?.balance || 0}
-                    last={perParty[p.id]?.last}
-                    tint={colors.ok}
-                    onPress={() => router.push(`/party/${p.id}` as never)}
-                  />
-                ))}
-              </View>
-            )}
+            {/* Top receivables + payables — combined snippet, side-by-side on tablet */}
+            {(receivables.length > 0 || payables.length > 0) && (
+              <View style={styles.balancesCard} testID="top-balances">
+                <View style={[styles.balancesRow, !tablet && styles.balancesStacked]}>
+                  {/* Receivables column */}
+                  <View
+                    style={[
+                      styles.balancesCol,
+                      tablet && styles.balancesColTablet,
+                      tablet && styles.balancesColDivider,
+                    ]}
+                    testID="top-receivables"
+                  >
+                    <View style={styles.sectionHead}>
+                      <View style={styles.dotRow}>
+                        <View style={[styles.dot, { backgroundColor: colors.ok }]} />
+                        <Text style={styles.sectionTitle}>Top receivables</Text>
+                      </View>
+                      {receivables.length > 3 ? (
+                        <TouchableOpacity
+                          onPress={() => setShowAllReceivables((x) => !x)}
+                          testID="toggle-receivables"
+                        >
+                          <Text style={styles.link}>
+                            {showAllReceivables ? "Top 3" : `All (${receivables.length})`}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    {shownReceivables.length === 0 ? (
+                      <Text style={styles.emptyCol}>All clear</Text>
+                    ) : (
+                      shownReceivables.map((p) => (
+                        <MiniRow
+                          key={p.id}
+                          p={p}
+                          balance={perParty[p.id]?.balance || 0}
+                          last={perParty[p.id]?.last}
+                          tint={colors.ok}
+                          onPress={() => router.push(`/party/${p.id}` as never)}
+                        />
+                      ))
+                    )}
+                  </View>
 
-            {/* Top payables collapsed */}
-            {payables.length > 0 && (
-              <View style={styles.section} testID="top-payables">
-                <View style={styles.sectionHead}>
-                  <Text style={styles.sectionTitle}>Top payables</Text>
-                  {payables.length > 3 ? (
-                    <TouchableOpacity onPress={() => setShowAllPayables((x) => !x)} testID="toggle-payables">
-                      <Text style={styles.link}>{showAllPayables ? "Show top 3" : `Show all (${payables.length})`}</Text>
-                    </TouchableOpacity>
-                  ) : null}
+                  {/* Payables column */}
+                  <View
+                    style={[styles.balancesCol, tablet && styles.balancesColTablet]}
+                    testID="top-payables"
+                  >
+                    <View style={styles.sectionHead}>
+                      <View style={styles.dotRow}>
+                        <View style={[styles.dot, { backgroundColor: colors.danger }]} />
+                        <Text style={styles.sectionTitle}>Top payables</Text>
+                      </View>
+                      {payables.length > 3 ? (
+                        <TouchableOpacity
+                          onPress={() => setShowAllPayables((x) => !x)}
+                          testID="toggle-payables"
+                        >
+                          <Text style={styles.link}>
+                            {showAllPayables ? "Top 3" : `All (${payables.length})`}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    {shownPayables.length === 0 ? (
+                      <Text style={styles.emptyCol}>All clear</Text>
+                    ) : (
+                      shownPayables.map((p) => (
+                        <MiniRow
+                          key={p.id}
+                          p={p}
+                          balance={perParty[p.id]?.balance || 0}
+                          last={perParty[p.id]?.last}
+                          tint={colors.danger}
+                          onPress={() => router.push(`/party/${p.id}` as never)}
+                        />
+                      ))
+                    )}
+                  </View>
                 </View>
-                {shownPayables.map((p) => (
-                  <MiniRow
-                    key={p.id}
-                    p={p}
-                    balance={perParty[p.id]?.balance || 0}
-                    last={perParty[p.id]?.last}
-                    tint={colors.danger}
-                    onPress={() => router.push(`/party/${p.id}` as never)}
-                  />
-                ))}
               </View>
             )}
 
@@ -458,6 +495,36 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.md,
     marginBottom: spacing.lg,
+  },
+  // Combined balances snippet
+  balancesCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    marginBottom: spacing.lg,
+    overflow: "hidden",
+  },
+  balancesRow: { flexDirection: "row" },
+  balancesStacked: { flexDirection: "column" },
+  balancesCol: {
+    flex: 1,
+    padding: spacing.md,
+    minWidth: 0,
+  },
+  balancesColTablet: {
+    flex: 1,
+    minWidth: 0,
+  },
+  balancesColDivider: {
+    borderRightColor: colors.border,
+    borderRightWidth: StyleSheet.hairlineWidth,
+  },
+  emptyCol: {
+    color: colors.textDim,
+    fontSize: 12,
+    paddingVertical: 12,
+    textAlign: "center",
   },
   sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm },
   sectionTitle: { color: colors.text, fontSize: 13, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.6 },
