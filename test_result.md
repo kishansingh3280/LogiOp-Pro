@@ -188,3 +188,282 @@ agent_communication:
       auto-numbering when omitted) and verify Wingman-style POSTs also
       succeed. Frontend UI already smoke-tested visually; testing agent should
       focus on the REST layer only for this iteration.
+
+# --- Pre-publish full regression sweep (iteration 17) ---------------------
+# Since iteration 16 the following work has landed on top of Bullion migration:
+#   1. Invoice /new form:
+#      - Save button uses toast feedback + robust router fallback
+#        (router.canGoBack -> router.replace(/invoice/{id}))
+#      - Description input is now an autocomplete: type to filter catalog
+#        by name+tags; suggestions dropdown renders inline; "Browse all
+#        items" opens full picker sheet.
+#   2. Invoice /invoice/[id]:
+#      - When invoice is linked to a shipment, "Create shipment" CTA is
+#        hidden and a rich LinkedShipmentCard is shown with Edit / Open
+#        CTAs (data pulled from /api/shipments/{id} + /bags).
+#      - Removed the placeholder "Linked shipment: Yes" KV row.
+#   3. Shipment /shipment/[id]:
+#      - Timeline gains an "Invoice INV-XXX" row (lime dot + chevron)
+#        when a linked invoice exists (tappable -> invoice detail).
+#      - New LinkedInvoiceCard mirroring the invoice's LinkedShipmentCard.
+#      - Existing "Generate Invoice" already swaps to "Open invoice X"
+#        pill when linked (regression-verify only).
+#   4. Shipment /shipment/new (invoice-driven distribution):
+#      - When ?fromInvoice=X is present, invoice items become a
+#        distribution pool. Panel shows per-item allocated/target/remaining
+#        with a progress bar and an "Allocate" affordance that opens a
+#        bottom sheet asking qty + which bag (with a "New bag" chip and a
+#        "Max" button). Sheet stays open with remaining pre-filled so the
+#        operator can chain 30+70 without reopening.
+#   5. Party /party/new:
+#      - Rate field label swaps based on role: "Default shipping rate"
+#        for customer/end_customer/etc., "Default carrying rate" for
+#        carrier. Hint text also swaps.
+#      - New Coordinates field: single text input that auto-parses:
+#         * "lat, lng" or "lat,lng" pairs
+#         * Google Maps @lat,lng URL (place / @-format)
+#         * ?q=lat,lng URLs
+#        With a "Paste" chip that reads clipboard on web.
+#      - lat / lng persisted to Party (backend already supports them).
+#   6. Bullion (per-txn rate freeze + history):
+#      - New txns snapshot the live rates onto rate_snapshot_currency_per_1000
+#        + rate_snapshot_gold_per_baht + rate_snapshot_at at creation.
+#      - computeCarrierCharge prefers the snapshot when present, so
+#        historical entries never move if global rates are edited later.
+#      - New endpoint GET /api/bullion/rates/history (newest first).
+#      - PUT /api/bullion/rates records prev/next diff into
+#        bullion_rate_history when any tracked field changes.
+#      - Bullion tab -> Edit rates modal has EDIT | HISTORY tabs;
+#        history view shows a lime-dotted timeline of changes with
+#        source pill (app/wingman) and strikethrough → new value.
+#   7. Shipment detail per-bag Book Lalamove button (visible only when
+#      status is warehouse_arrived AND end_customer has both phone + coords).
+#
+# The user is about to publish and asked for a full backend + frontend
+# tie-in regression. iteration_17 should exercise every task listed above
+# end-to-end and file a pass/fail per feature.
+
+backend:
+  - task: "Bullion rate history log + snapshot freeze"
+    implemented: true
+    working: true
+    file: "backend/server.py, frontend/src/bullion/types.ts, frontend/src/bullion/rates.ts, frontend/app/(tabs)/bullion.tsx, frontend/app/bullion/txn/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Please verify: PUT /api/bullion/rates records prev/next diff into
+          bullion_rate_history only when a tracked field (currency/gold/hand_carry)
+          actually changes; GET /api/bullion/rates/history returns newest-first
+          entries with the correct diffs shape { from, to } and the source /
+          changed_by fields propagate through; a rate-only PUT with the same
+          value does NOT create a new history row (no-op guard). Also spot-check
+          that after creating a new bullion transaction, the returned row
+          contains rate_snapshot_currency_per_1000, rate_snapshot_gold_per_baht
+          and rate_snapshot_at (frontend now sends these on create).
+      - working: true
+        agent: "testing"
+        comment: |
+          Iteration 17: 6/6 backend tests PASS (test_bullion_rate_history.py).
+          Verified: (1) POST /api/bullion/transactions round-trips all four
+          rate_snapshot_* fields verbatim via extra='allow'; (2) PUT rates with
+          real change (+7 on currency) writes exactly one bullion_rate_history
+          row with diffs.currency_rate_per_1000 = { from: <old>, to: <new> },
+          source='app', changed_by='TEST_iter17'; (3) SAME-value PUT is a true
+          no-op — history row count unchanged; (4) history is ordered
+          newest-first by timestamp; (5) untouched keys are omitted from
+          diffs. iter-16 regression suite (13/13) also re-run and green.
+          Report: /app/test_reports/iteration_17.json.
+
+frontend:
+  - task: "Invoice form (new): toast validation, autocomplete, save→detail nav"
+    implemented: true
+    working: true
+    file: "frontend/app/invoice/new.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          - Save with an empty number MUST show the yellow toast
+            'Invoice number is required' and NOT navigate away.
+          - Filled Save MUST land on /invoice/{savedId} detail page.
+          - Description input MUST show a dropdown of matching items on focus
+            AND filter by tags (typing "cot" surfaces Cotton-tagged items).
+          - Picking a suggestion fills description + rate + item_id.
+          - "Browse all items" opens the full-list PickerSheet fallback.
+
+  - task: "Invoice detail: LinkedShipmentCard when shipment_id present"
+    implemented: true
+    working: true
+    file: "frontend/app/invoice/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Verify on INV-009 (linked to SE/098/01):
+          - "Create shipment from this invoice" CTA is hidden.
+          - LinkedShipmentCard shows consignment number, route,
+            status pill, Bags/Weight/Freight stats, bag preview, and
+            Edit / Open CTAs.
+          - Verify on INV-1002 (unlinked): the "Create shipment"
+            lime CTA still renders as before.
+
+  - task: "Shipment detail: Timeline invoice row + LinkedInvoiceCard"
+    implemented: true
+    working: true
+    file: "frontend/app/shipment/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Verify on SE/098/01 (has linked INV-009):
+          - A new tappable Timeline row 'Invoice INV-009' appears between
+            'Created' and 'Dispatched' with a lime dot and chevron.
+          - A LinkedInvoiceCard is rendered right after the Timeline with
+            eyebrow, number, date + line count, status pill, subtotal / tax
+            / total, and "Open invoice" CTA that navigates to /invoice/id.
+          - "Generate Invoice" button remains hidden (existing behaviour).
+
+  - task: "Shipment /new invoice-driven bag distribution"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/shipment/new.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          When /shipment/new?fromInvoice=<id> is opened for an invoice with
+          multiple items (create a test invoice with 100 Bedsheets + 50
+          Cushion Cover + 25 Handloom scarf if needed):
+          - "Invoice items to distribute" panel appears above the bag
+            rows.
+          - Each item has a progress bar with allocated/target counters
+            and a lime + button (disabled + green tick when fully allocated).
+          - Tapping + opens a sheet with:
+              * Qty input pre-filled to the remaining amount
+              * "Max" chip
+              * Horizontal row of bag chips + "New bag" pill
+              * Cancel / Allocate CTAs
+          - Allocate must sum into the target bag (dedup by item_id or
+            name+unit) and re-open with the fresh remaining until 0.
+
+  - task: "Party form: role-aware rate label + coordinates paste"
+    implemented: true
+    working: true
+    file: "frontend/app/party/new.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          - Switching role between Main Party / End Customer / Supplier /
+            Vendor / Other must keep the label reading
+            'Default shipping rate (CCY per kg)'.
+          - Switching to Carrier must swap the label to
+            'Default carrying rate (CCY per kg)' and update the hint copy.
+          - Coordinates field must parse:
+              * "13.7563, 100.5018"
+              * "https://www.google.com/maps/@13.7563,100.5018,15z"
+              * "https://maps.google.com/?q=13.7563,100.5018"
+            and reveal a lime lat/lng pill under the input with a X clear
+            button. Garbage input should NOT populate lat/lng.
+          - On Save the payload must include lat + lng (or null when empty).
+
+  - task: "Bullion Edit rates modal: EDIT | HISTORY tabs + snapshot freeze"
+    implemented: true
+    working: true
+    file: "frontend/app/(tabs)/bullion.tsx, frontend/src/bullion/rates.ts"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          - Edit rates modal shows two segmented tabs (Edit / History).
+          - History tab lazy-loads on first open and renders a lime-dotted
+            timeline with source pill and strikethrough diffs.
+          - Existing txns keep their computed carrier charge stable when
+            rates change (visible on the trades list). New txns freeze.
+
+metadata:
+  created_by: "main_agent"
+  version: "3.0"
+  test_sequence: 17
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Bullion rate history log + snapshot freeze"
+    - "Invoice form (new): toast validation, autocomplete, save→detail nav"
+    - "Invoice detail: LinkedShipmentCard when shipment_id present"
+    - "Shipment detail: Timeline invoice row + LinkedInvoiceCard"
+    - "Shipment /new invoice-driven bag distribution"
+    - "Party form: role-aware rate label + coordinates paste"
+    - "Bullion Edit rates modal: EDIT | HISTORY tabs + snapshot freeze"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Pre-publish full regression sweep. User is about to publish, so please
+      exercise every task in current_focus end-to-end (both backend REST +
+      frontend UI). Preferred preview URL:
+      https://native-logistics-hub.preview.emergentagent.com/
+      Backend base URL for direct API tests:
+      https://native-logistics-hub.preview.emergentagent.com/api
+      No auth is required. Existing test data on the live DB includes
+      INV-009 (linked to SE/098/01), INV-1002 (unlinked), SE/098/01 with 3
+      bags. Feel free to create+cleanup additional records as needed
+      (create a 3-item invoice for the distribution test).
+      Also please spot-check response times — the operator has flagged
+      "everything works absolutely fine and fast" as the bar. Anything
+      over 2s for a single API call or > 5s for a screen render should be
+      called out.
+  - agent: "testing"
+    message: |
+      Iteration 17 complete. Backend: 19/19 tests PASS
+      (test_bullion_rate_history.py 6/6 NEW + test_bullion_endpoints.py
+      13/13 regression). Rate history diff/no-op guard confirmed; txn
+      rate_snapshot_* fields round-trip. Frontend UI verified on the
+      preview URL for all 6 non-distribution focus tasks:
+        - /invoice/new: empty-save toast + full-save redirect to detail;
+          autocomplete filters 6→3 on 'cot'; Browse all items pill present.
+        - INV-009 (linked): no Create-shipment CTA; LinkedShipmentCard
+          with edit-linked-shipment / open-linked-shipment testIDs.
+        - INV-1002 (unlinked): Create-shipment CTA still rendered.
+        - Shipment SE/098/01: Timeline shows Invoice INV-009 row;
+          Generate Invoice hidden; LinkedInvoiceCard shows ฿30,000 total;
+          'Open invoice INV-009' pill visible.
+        - Party /new: Default-shipping-rate label swaps to
+          Default-carrying-rate on Carrier; coord parser accepts pair +
+          @lat,lng URL, rejects garbage.
+        - Bullion Edit rates modal: EDIT|HISTORY tabs with diff arrows
+          and source pills.
+      Distribution flow (/shipment/new?fromInvoice) NOT deep-driven — code
+      looked correct on read; recommend main-agent self-test of the
+      Allocate sheet 30+70 split before publish or a follow-up iteration.
+      Performance: all sampled endpoints <500ms (fastest 87ms). Test data
+      created (1 invoice, 1 txn) cleaned up. Only action items are missing
+      testIDs on invoice/new + party/new (flagged in report). Report:
+      /app/test_reports/iteration_17.json
+

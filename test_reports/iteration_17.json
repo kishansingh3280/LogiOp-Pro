@@ -1,0 +1,48 @@
+{
+  "summary": "Pre-publish full regression sweep across the 7 focus tasks. Backend: 6/6 new iter-17 tests PASSED (test_bullion_rate_history.py) plus 13/13 iter-16 regression PASSED (test_bullion_endpoints.py) — 19/19 backend PASS. Verified (1) POST /api/bullion/transactions round-trips rate_snapshot_currency_per_1000 / rate_snapshot_gold_per_baht / rate_snapshot_hand_carry_inr_per_kg / rate_snapshot_at verbatim via extra='allow'; (2) PUT /api/bullion/rates with a real change (bumped currency +7) inserts exactly one row into bullion_rate_history with correct diffs {from,to} shape, source='app', changed_by='TEST_iter17', ordered newest-first (timestamp sort verified); (3) SAME-value PUT is a true no-op — history row count unchanged; (4) untouched keys omitted from diffs; (5) CRUD smoke on trips/txns/rates still green. Frontend UI (Playwright, mobile 390x844): (a) /invoice/new empty Save → yellow toast 'Invoice number is required' and URL stayed on /invoice/new ✅; (b) Full Save (number+client=Lalit+desc 'Test XYZ'+rate 250) navigated to /invoice/{uuid} ✅ (test invoice cleaned up after); (c) Description autocomplete: focusing an empty line-desc-0 shows 6 suggestions, typing 'cot' filters to 3 cotton-tagged items (Bedsheets/Cotton bedsheets/Cotton fabric), 'Browse all items' pill visible ✅; (d) INV-009 (linked) — 'Create shipment' hidden, LinkedShipmentCard with SE/098/01, Pending, Bags=3, Weight=83.0 kg, Freight=฿12,210, bag preview (BAG-001..003), Edit shipment + Open CTAs (testIDs edit-linked-shipment / open-linked-shipment) ✅; (e) INV-1002 (unlinked) — lime 'Create shipment from this invoice' CTA still renders ✅; (f) Shipment SE/098/01 — 'Open invoice INV-009' pill present, 'Generate Invoice' NOT present, LinkedInvoiceCard shows ฿30,000 total ✅; (g) Party /new — 'DEFAULT SHIPPING RATE (INR PER KG)' by default, swaps to 'DEFAULT CARRYING RATE (INR PER KG)' when Carrier role tapped; hint copy also swaps ('freight per bag when this party is billed' → 'what this carrier bills you per shipment kg'); coordinates parse '13.7563, 100.5018' and Google Maps @lat,lng URL correctly and reject garbage input ✅; (h) Bullion Edit rates modal — EDIT | HISTORY tabs, HISTORY view renders diff arrows (→) and source pills ✅. Performance: all 7 sampled endpoints < 500ms (fastest 87ms, slowest 497ms). Fast enough to publish.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "invoice/new save button + number/currency inputs",
+        "issue": "The Save button, Number input, Currency INR/THB pills, tax input, and client picker chip lack testID attributes. Only line-desc-{i}, line-remove-{i} and line-suggest-{i}-{itemId} are wired. This forced the Playwright suite to fall back to text/index-based selectors. Recommend adding testIDs like invoice-save, invoice-number-input, invoice-currency-INR/THB, invoice-client-picker. Reference: frontend/app/invoice/new.tsx:226-284"
+      },
+      {
+        "component": "party/new form",
+        "issue": "The role chips, coordinates input, Paste chip and Save button have no testIDs. Placeholder-based selection worked but is brittle. Recommend: party-role-{role}, party-coord-input, party-coord-paste, party-save. Reference: frontend/app/party/new.tsx"
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bullion_rate_history.py",
+    "/app/backend/tests/test_bullion_endpoints.py",
+    "/app/test_reports/pytest/iter17_history_results.xml",
+    "/app/test_reports/pytest/bullion_iter16_results.xml"
+  ],
+  "action_items": [
+    "Add testIDs to /invoice/new interactive elements (save, number-input, currency pills, tax, client picker) to make Playwright regression stable — brittle text-based selectors currently required.",
+    "Add testIDs to /party/new interactive elements (role chips, coord-input, paste-chip, save).",
+    "Optional (from iter-16 code review, still valid): auto txn_no assignment loads all txns into memory each POST — use a Mongo counter or indexed max query before the collection grows past a few thousand rows."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py:236-277 — bullion_put_rates diff detection is only against tracked_keys (currency_rate_per_1000/gold_rate_per_baht/hand_carry_rate_inr_per_kg). If a future field is added, remember to extend the list or history will silently miss it.",
+    "backend/server.py:236 — PUT /api/bullion/rates accepts arbitrary Dict[str, Any] with no Pydantic validation (by design for Wingman) but this means the changed_by/source fields aren't type-checked; malformed values persist in history as-is.",
+    "frontend/app/invoice/new.tsx:149-221 — save() flow is now robust with three fallback nav paths (savedId → router.replace, canGoBack → back, else → tabs). No issue, just confirming during review."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bullion_rate_history.py (new)",
+    "/app/test_reports/pytest/iter17_history_results.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19 across iter17 + iter16 regression)",
+    "frontend": "100% on the 7 focus tasks tested (Invoice new save/validation/autocomplete, Invoice detail linked/unlinked, Shipment detail timeline + linked invoice card, Party role labels + coord parsing, Bullion Edit-rates EDIT/HISTORY tabs)"
+  },
+  "seed_data_creation": "Created 1 test invoice via UI (id 75dea9a1-0abb-40cf-8eef-4f7d897036b6) and 1 bullion txn via backend test; both DELETED as part of cleanup. Rates were bumped +7 then restored to originals via test_99 cleanup step. INV-009 remains linked to SE/098/01 as requested. Note: two additional bullion_rate_history rows were written by the change-test and cleanup-test respectively — these are expected byproducts of exercising the history endpoint and are harmless.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter-17 covered all 7 focus tasks. Backend regression: reuse test_bullion_endpoints.py + test_bullion_rate_history.py. Both are single-class to satisfy pytest-xdist loadscope. Frontend: DO NOT rely on testIDs for /invoice/new save button or /party/new form controls — they are missing (flagged in action_items). Distribution flow (Shipment /new?fromInvoice=X) was NOT deep-tested this run beyond code review — the panel logic lives in frontend/app/shipment/new.tsx and looked structurally correct on read; a future run should drive the Allocate sheet with 30+70 split against a fresh 3-item invoice to fully exercise the dedup-by-name-and-unit logic. Book Lalamove per-bag button (task #7 in main-agent notes) was also out of scope. All Bullion snapshot-freeze behaviour is proven at the backend layer (rate_snapshot_* fields round-trip); the frontend consumes those fields via computeCarrierCharge which prefers snapshot when present. Performance baseline: /api/invoices 497ms, /api/shipments 379ms, all bullion endpoints <130ms, /api/parties 139ms — all well under the 2s bar.",
+  "rca_of_issue": "N/A — no failures found. During Playwright the first fill_and_save attempt returned to /invoice/new because I hadn't picked a client (save() correctly warns 'Choose a client first'). Second attempt with Lalit selected navigated to /invoice/{id} as expected. No product bug."
+}
