@@ -8,10 +8,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { subscribeQueue, getQueue, flushQueue } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { DashboardStats, LedgerSummary, Shipment, WarehouseSummary } from "@/src/api/types";
+import { useBatches, useTrips, usedSlotsFor } from "@/src/bullion/store";
 import { Card } from "@/src/components/ui";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
-import { fmtCurrency, relTime } from "@/src/utils/format";
+import { fmtCurrency, relTime, shortDate } from "@/src/utils/format";
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -20,6 +21,8 @@ export default function DashboardScreen() {
   const warehouse = useApi<WarehouseSummary>("/api/dashboard/warehouse");
   const ledger = useApi<LedgerSummary>("/api/dashboard/ledger-summary");
   const shipments = useApi<Shipment[]>("/api/shipments");
+  const trips = useTrips();
+  const batches = useBatches();
 
   const [pending, setPending] = useState(0);
   useEffect(() => {
@@ -223,6 +226,70 @@ export default function DashboardScreen() {
             </Card>
           </View>
         </View>
+
+        {/* Active carrier slots (Bullion) */}
+        <View style={styles.recentHeader}>
+          <Text style={styles.cardTitle}>Active carrier slots</Text>
+          <TouchableOpacity onPress={() => router.push("/bullion")} testID="see-all-bullion">
+            <Text style={styles.link}>Bullion →</Text>
+          </TouchableOpacity>
+        </View>
+        {(() => {
+          const today = new Date().toISOString().slice(0, 10);
+          const upcoming = trips.data
+            .filter((t) => t.date >= today)
+            .map((t) => ({ ...t, used: usedSlotsFor(t.id, batches.data) }))
+            .sort((a, b) => (a.date < b.date ? -1 : 1))
+            .slice(0, tablet ? 6 : 3);
+          if (upcoming.length === 0) {
+            return (
+              <Card>
+                <Text style={styles.dim}>
+                  No upcoming trips. Open the Bullion tab to add a carrier trip.
+                </Text>
+              </Card>
+            );
+          }
+          return (
+            <View style={{ gap: spacing.md }}>
+              {upcoming.map((t) => {
+                const free = Math.max(0, t.available_slots - t.used);
+                const pct = t.available_slots > 0 ? Math.round((t.used / t.available_slots) * 100) : 0;
+                const full = free === 0;
+                return (
+                  <TouchableOpacity
+                    key={t.id}
+                    activeOpacity={0.85}
+                    onPress={() => router.push("/bullion")}
+                    testID={`dash-trip-${t.id}`}
+                  >
+                    <Card>
+                      <View style={styles.recRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.recTitle}>
+                            {t.carrier_name || "Carrier TBD"}
+                          </Text>
+                          <Text style={styles.recSub}>
+                            {t.route === "IN_TO_TH" ? "India → BKK" : "BKK → India"} · {shortDate(t.date)}
+                          </Text>
+                        </View>
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text style={[styles.recValue, full && { color: colors.danger }]}>
+                            {full ? "FULL" : `${free}/${t.available_slots}`}
+                          </Text>
+                          <Text style={styles.recDim}>slots free</Text>
+                        </View>
+                      </View>
+                      <View style={styles.trackMini}>
+                        <View style={[styles.trackFillMini, { width: `${Math.min(100, pct)}%` }]} />
+                      </View>
+                    </Card>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          );
+        })()}
 
         {/* Recent */}
         <View style={styles.recentHeader}>
@@ -442,4 +509,6 @@ const styles = StyleSheet.create({
   recSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
   recValue: { color: colors.lime, fontSize: 15, fontWeight: "700" },
   recDim: { color: colors.textDim, fontSize: 11, marginTop: 2 },
+  trackMini: { height: 4, backgroundColor: "#1c1c1c", borderRadius: 2, overflow: "hidden", marginTop: 10 },
+  trackFillMini: { height: "100%", backgroundColor: colors.lime, borderRadius: 2 },
 });
