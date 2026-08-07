@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -21,11 +22,38 @@ import { createTrip } from "@/src/bullion/store";
 import type { BullionRoute } from "@/src/bullion/types";
 import { colors, radii, spacing } from "@/src/theme";
 
+const MONTHS_LONG = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function toISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseISODate(s: string): Date {
+  // Interpret YYYY-MM-DD as local time to avoid TZ drift.
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || "");
+  if (!m) return new Date();
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? new Date() : d;
+}
+
+function formatLongDate(s: string): string {
+  const d = parseISODate(s);
+  const weekday = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
+  return `${weekday}, ${d.getDate()} ${MONTHS_LONG[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 export default function NewTripScreen() {
   const router = useRouter();
   const parties = useApi<Party[]>("/api/parties");
 
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => toISODate(new Date()));
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [route, setRoute] = useState<BullionRoute>("IN_TO_TH");
   const [carrierId, setCarrierId] = useState<string | null>(null);
   const [carrierName, setCarrierName] = useState("");
@@ -77,16 +105,57 @@ export default function NewTripScreen() {
 
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Field label="Trip date (YYYY-MM-DD)">
-            <TextInput
-              style={styles.input}
-              value={date}
-              onChangeText={setDate}
-              placeholder="2026-08-15"
-              placeholderTextColor={colors.textDim}
-              autoCapitalize="none"
-              testID="trip-date"
-            />
+          <Field label="Trip date">
+            {Platform.OS === "web" ? (
+              // On web use a native HTML5 date input so the browser calendar shows.
+              React.createElement("input", {
+                type: "date",
+                value: date,
+                onChange: (e: { target: { value: string } }) => setDate(e.target.value),
+                "data-testid": "trip-date",
+                style: {
+                  backgroundColor: colors.surface,
+                  color: colors.text,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: radii.md,
+                  padding: "14px",
+                  fontSize: 15,
+                  fontFamily: "inherit",
+                  colorScheme: "dark",
+                  width: "100%",
+                  boxSizing: "border-box",
+                  outline: "none",
+                },
+              })
+            ) : (
+              <TouchableOpacity
+                style={styles.selectBtn}
+                onPress={() => setShowDatePicker(true)}
+                testID="trip-date"
+              >
+                <Text style={styles.selectText}>{formatLongDate(date)}</Text>
+                <Ionicons name="calendar-outline" size={18} color={colors.textDim} />
+              </TouchableOpacity>
+            )}
+            {showDatePicker && Platform.OS !== "web" && (
+              <DateTimePicker
+                value={parseISODate(date)}
+                mode="date"
+                display={Platform.OS === "ios" ? "inline" : "default"}
+                themeVariant="dark"
+                onChange={(event: DateTimePickerEvent, selected?: Date) => {
+                  // Android auto-dismisses; iOS inline stays until user taps outside.
+                  if (Platform.OS === "android") setShowDatePicker(false);
+                  if (event.type === "dismissed") return;
+                  if (selected) setDate(toISODate(selected));
+                }}
+              />
+            )}
+            {showDatePicker && Platform.OS === "ios" && (
+              <TouchableOpacity onPress={() => setShowDatePicker(false)} style={styles.doneBtn}>
+                <Text style={styles.doneBtnText}>Done</Text>
+              </TouchableOpacity>
+            )}
           </Field>
 
           <Field label="Route">
@@ -271,4 +340,13 @@ const styles = StyleSheet.create({
   pickMeta: { color: colors.textDim, fontSize: 12, marginTop: 2, textTransform: "capitalize" },
   sheetCancel: { marginTop: spacing.md, paddingVertical: 12, alignItems: "center", borderRadius: radii.pill, backgroundColor: colors.chipBg },
   sheetCancelText: { color: colors.text, fontWeight: "700" },
+  doneBtn: {
+    marginTop: 8,
+    alignSelf: "flex-end",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    backgroundColor: colors.chipBg,
+  },
+  doneBtnText: { color: colors.lime, fontWeight: "700", fontSize: 13 },
 });
