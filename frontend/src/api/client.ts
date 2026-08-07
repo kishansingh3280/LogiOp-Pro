@@ -32,7 +32,9 @@ function notify() {
 
 export function subscribeQueue(cb: () => void) {
   listeners.add(cb);
-  return () => listeners.delete(cb);
+  return () => {
+    listeners.delete(cb);
+  };
 }
 
 export async function getQueue(): Promise<QueuedMutation[]> {
