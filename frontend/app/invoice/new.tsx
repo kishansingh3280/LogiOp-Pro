@@ -19,6 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiGet, apiPost } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Invoice, Item, Party, Shipment, ShipmentBag } from "@/src/api/types";
+import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
 
@@ -143,49 +144,74 @@ export default function NewInvoiceScreen() {
     setLines((prev) => (prev.length === 1 ? prev : prev.filter((_, idx) => idx !== i)));
 
   const save = async () => {
-    if (!number.trim()) return Alert.alert("Missing", "Invoice number required");
-    if (!partyId) return Alert.alert("Missing", "Choose a client");
-    if (lines.every((l) => !l.description.trim())) return Alert.alert("Missing", "Add at least one line");
+    if (busy) return;                                          // guard double-tap
+    const trimmedNumber = number.trim();
+    if (!trimmedNumber) {
+      toast.warn("Invoice number is required");
+      return;
+    }
+    if (!partyId) {
+      toast.warn("Choose a client first");
+      return;
+    }
+    const validLines = lines.filter((l) => l.description.trim());
+    if (validLines.length === 0) {
+      toast.warn("Add at least one line item with a description");
+      return;
+    }
     setBusy(true);
     try {
       const payload = {
-        number: number.trim(),
+        number: trimmedNumber,
         party_id: partyId,
         shipment_id: shipmentId,
         date: new Date().toISOString().slice(0, 10),
         currency,
-        items: lines
-          .filter((l) => l.description.trim())
-          .map((l) => ({
-            description: l.description.trim(),
-            quantity: Number(l.quantity) || 0,
-            rate: Number(l.rate) || 0,
-            item_id: l.item_id || null,
-          })),
+        items: validLines.map((l) => ({
+          description: l.description.trim(),
+          quantity: Number(l.quantity) || 0,
+          rate: Number(l.rate) || 0,
+          item_id: l.item_id || null,
+        })),
         tax_percent: Number(taxPct) || 0,
         notes,
         status: "draft",
       };
       const res = await apiPost<Invoice>("/api/invoices", payload);
+
       if ((res as { queued?: boolean }).queued) {
-        Alert.alert("Queued", "Invoice saved locally — syncing later.");
+        toast.info("Saved locally — will sync when back online");
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace("/(tabs)/invoices" as never);
+        }
+        return;
       }
-      // Prefer going back to the previous screen, but if the invoice form was
-      // opened deep-linked (no back stack) `router.back()` becomes a no-op and
-      // the user sees the button appear to "do nothing" even though the invoice
-      // did save. Fall through to a hard navigation so the flow always ends.
-      if (router.canGoBack()) {
+
+      const savedId = (res as { id?: string }).id;
+      toast.success(`Invoice ${trimmedNumber} saved`);
+
+      // Always navigate away: prefer the newly-created invoice detail so the
+      // user sees confirmation of what saved, fall back to the list, and only
+      // as a last resort go back in history.
+      if (savedId) {
+        router.replace(`/invoice/${savedId}` as never);
+      } else if (router.canGoBack()) {
         router.back();
       } else {
-        const savedId = (res as { id?: string }).id;
-        if (savedId) {
-          router.replace(`/invoice/${savedId}` as never);
-        } else {
-          router.replace("/invoices" as never);
-        }
+        router.replace("/(tabs)/invoices" as never);
       }
     } catch (e) {
-      Alert.alert("Failed", (e as Error).message);
+      const msg = (e as Error).message || "Save failed";
+      // Log so we can see stack traces in the Metro/Expo console when a user
+      // reports 'save doesn't work'.
+      console.error("[invoice/new] Save failed", e);
+      toast.error(`Save failed: ${msg}`);
+      // Also surface a blocking alert as a belt-and-suspenders fallback for
+      // the odd case where the toast layer is unmounted (e.g. app came out
+      // of background mid-request).
+      Alert.alert("Save failed", msg);
     } finally {
       setBusy(false);
     }
