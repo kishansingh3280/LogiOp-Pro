@@ -21,6 +21,9 @@ import { useApi } from "@/src/api/hooks";
 import type { Party } from "@/src/api/types";
 import { findAirline } from "@/src/bullion/airlines";
 import { AirlineBadge } from "@/src/bullion/AirlineBadge";
+import { defaultAirports } from "@/src/bullion/airports";
+import { FlightMap } from "@/src/bullion/FlightMap";
+import { MarketTicker } from "@/src/bullion/MarketTicker";
 import { setRates, useRates } from "@/src/bullion/rates";
 import { usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import {
@@ -98,6 +101,10 @@ export default function BullionScreen() {
           <Ionicons name="options-outline" size={14} color={colors.lime} />
           <Text style={styles.editRatesText}>Edit rates</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.tickerWrap}>
+        <MarketTicker />
       </View>
 
       <View style={styles.segRow}>
@@ -249,8 +256,14 @@ export default function BullionScreen() {
             const pct = capacity > 0 ? Math.round((used / capacity) * 100) : 0;
             const carrier = item.carrier_party_id ? partyMap[item.carrier_party_id] : undefined;
             const airline = findAirline(item.airline_code);
+            const airports = defaultAirports(item.route);
             return (
-              <View style={styles.tripCard} testID={`trip-${item.id}`}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={styles.tripCard}
+                onPress={() => router.push(`/bullion/trip/${item.id}` as never)}
+                testID={`trip-${item.id}`}
+              >
                 <View style={styles.tripHead}>
                   <AirlineBadge airline={airline} size="md" />
                   <View style={{ flex: 1, marginLeft: spacing.md }}>
@@ -273,8 +286,12 @@ export default function BullionScreen() {
                   </View>
                   <Text style={styles.slotsText}>{fmtKgSmart(free)}/{fmtKgSmart(capacity)} kg free</Text>
                 </View>
+                {/* Compact route-map thumbnail */}
+                <View style={{ marginTop: spacing.md }}>
+                  <FlightMap from={airports.from} to={airports.to} size="sm" showLabels />
+                </View>
                 {item.notes ? <Text style={styles.tripNotes}>{item.notes}</Text> : null}
-              </View>
+              </TouchableOpacity>
             );
           }}
         />
@@ -557,6 +574,7 @@ const styles = StyleSheet.create({
     borderColor: colors.lime, borderWidth: StyleSheet.hairlineWidth,
   },
   editRatesText: { color: colors.lime, fontSize: 12, fontWeight: "700" },
+  tickerWrap: { paddingHorizontal: spacing.lg, marginBottom: spacing.md },
   rateBlurb: { color: colors.textDim, fontSize: 12, lineHeight: 17, marginBottom: spacing.md },
   rateField: { marginBottom: spacing.md },
   rateLabel: {
