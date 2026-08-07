@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiGet, apiPost, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Direction, Party, Shipment, ShipmentMode } from "@/src/api/types";
+import { useRates as useBullionRates } from "@/src/bullion/rates";
 import { ItemPicker } from "@/src/components/item-picker";
 import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
@@ -155,6 +156,54 @@ export default function NewShipmentScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFreightStr, freightManuallyEdited]);
 
+  // ---- Auto carrier-pay calculation ------------------------------------
+  // For hand-carry shipments, the global Bullion "Hand-carry rate (INR/kg)"
+  // is applied to the total bag weight to produce a proposed carrier
+  // payout. The value stays fully editable — a "Use auto" chip appears
+  // whenever the user overrides so they can snap back to the computed
+  // amount. Non-hand-carry modes fall back to a manual entry (rate = 0).
+  const bullionRates = useBullionRates();
+  const [carrierPay, setCarrierPay] = useState("");
+  const [carrierPayManuallyEdited, setCarrierPayManuallyEdited] = useState(false);
+
+  const carrierRatePerKgINR = mode === "hand_carry"
+    ? Number(bullionRates.data.hand_carry_rate_inr_per_kg) || 0
+    : 0;
+  const autoCarrierPayINR = carrierId
+    ? Math.round(carrierRatePerKgINR * totalBagWeight * 100) / 100
+    : 0;
+  const autoCarrierPayStr = autoCarrierPayINR > 0 ? String(autoCarrierPayINR) : "";
+
+  useEffect(() => {
+    if (carrierPayManuallyEdited) return;
+    if (autoCarrierPayStr === carrierPay) return;
+    setCarrierPay(autoCarrierPayStr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCarrierPayStr, carrierPayManuallyEdited]);
+
+  // ---- Live margin (Freight - Carrier Pay, in freight currency) --------
+  // Carrier pay is stored in INR; freight can be INR or THB. Convert the
+  // carrier side into the freight currency using `forex_rate` before
+  // subtracting so the profit reflects a single-currency P&L.
+  const marginBreakdown = useMemo(() => {
+    const freightNum = Number(freight) || 0;
+    const carrierINR = Number(carrierPay) || 0;
+    const fx = Number(forexRate) || 0;
+    let carrierInFreightCcy = carrierINR;
+    if (freightCcy === "THB") {
+      // freight in THB, carrier in INR → THB = INR / fx (fx = INR/THB)
+      carrierInFreightCcy = fx > 0 ? carrierINR / fx : 0;
+    }
+    const margin = freightNum - carrierInFreightCcy;
+    return {
+      freight: freightNum,
+      carrierINR,
+      carrierInFreightCcy: Math.round(carrierInFreightCcy * 100) / 100,
+      margin: Math.round(margin * 100) / 100,
+      hasFx: freightCcy === "INR" || fx > 0,
+    };
+  }, [freight, carrierPay, forexRate, freightCcy]);
+
   // Bag-row mutators
   const addBag = () => {
     setBags((prev) => [
@@ -218,6 +267,17 @@ export default function NewShipmentScreen() {
         setFreightCcy((s.freight_currency as Currency) || "THB");
         setForexRate(String(s.forex_rate ?? ""));
         setCarrierId(s.carrier_party_id || null);
+        // Hydrate carrier pay. If backend stored per_kg, materialize the
+        // total; otherwise use the flat value. Mark as manually edited so
+        // we don't clobber the saved amount on mount.
+        {
+          const cc = Number(s.carrier_charge) || 0;
+          const materialized = s.carrier_charge_type === "per_kg"
+            ? Math.round(cc * (Number(s.weight_kg) || 0) * 100) / 100
+            : cc;
+          setCarrierPay(materialized > 0 ? String(materialized) : "");
+          setCarrierPayManuallyEdited(true);
+        }
         setNotes(s.notes || "");
         // Load existing bags into the per-bag editor.
         try {
@@ -283,6 +343,12 @@ export default function NewShipmentScreen() {
         freight_currency: freightCcy,
         forex_rate: Number(forexRate) || 0,
         carrier_party_id: carrierId,
+        // Carrier pay is stored as a flat INR total so the ledger entry
+        // (in `shipment-ledger-sync`) matches the "You Pay Carrier" value
+        // the user actually saw and confirmed.
+        carrier_charge: Number(carrierPay) || 0,
+        carrier_charge_type: "flat",
+        carrier_currency: "INR",
         status: "pending",
         dispatch_date: new Date().toISOString().slice(0, 10),
         notes,
@@ -345,7 +411,10 @@ export default function NewShipmentScreen() {
               freight: Number(savedShipment.freight ?? freight) || 0,
               freight_currency: (savedShipment.freight_currency || freightCcy) as string,
               carrier_party_id: savedShipment.carrier_party_id ?? carrierId,
-              carrier_charge: Number(savedShipment.carrier_charge) || 0,
+              // The frontend now materializes carrier pay as a flat INR
+              // total on submit. Use the fresh backend value so the ledger
+              // entry mirrors exactly what was persisted.
+              carrier_charge: Number(savedShipment.carrier_charge ?? carrierPay) || 0,
               carrier_charge_type: (savedShipment.carrier_charge_type || "flat") as string,
               carrier_currency: (savedShipment.carrier_currency || "INR") as string,
               dispatch_date: savedShipment.dispatch_date || shipmentPayload.dispatch_date,
@@ -627,12 +696,112 @@ export default function NewShipmentScreen() {
 
           <Field label="Carrier (optional)">
             <TouchableOpacity style={styles.selectBtn} onPress={() => setPickCarrier(true)}>
-              <Text style={[styles.selectText, !currentCarrier && styles.selectPh]}>
-                {currentCarrier?.name || "Choose carrier"}
-              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.selectText, !currentCarrier && styles.selectPh]}>
+                  {currentCarrier?.name || "Choose carrier"}
+                </Text>
+                {currentCarrier && mode === "hand_carry" && carrierRatePerKgINR > 0 ? (
+                  <Text style={styles.rateChip}>
+                    {carrierRatePerKgINR} INR/kg · from Bullion settings
+                  </Text>
+                ) : currentCarrier && mode !== "hand_carry" ? (
+                  <Text style={styles.rateChipMissing}>
+                    Auto rate applies to Hand-Carry mode only
+                  </Text>
+                ) : null}
+              </View>
               <Ionicons name="chevron-down" size={16} color={colors.textDim} />
             </TouchableOpacity>
           </Field>
+
+          {carrierId ? (
+            <Field label="You Pay Carrier (INR)">
+              <TextInput
+                style={styles.input}
+                keyboardType="decimal-pad"
+                value={carrierPay}
+                onChangeText={(t) => {
+                  setCarrierPay(t);
+                  setCarrierPayManuallyEdited(true);
+                }}
+                placeholder="0"
+                placeholderTextColor={colors.textDim}
+                testID="input-carrier-pay"
+              />
+              {autoCarrierPayINR > 0 ? (
+                carrierPayManuallyEdited ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setCarrierPayManuallyEdited(false);
+                      setCarrierPay(autoCarrierPayStr);
+                    }}
+                    style={styles.autoResetBtn}
+                    testID="reset-auto-carrier"
+                  >
+                    <Ionicons name="refresh" size={12} color={colors.lime} />
+                    <Text style={styles.autoResetText}>
+                      Use auto: {autoCarrierPayStr} INR ({totalBagWeight} kg × {carrierRatePerKgINR})
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.autoOkRow}>
+                    <Ionicons name="flash" size={11} color={colors.lime} />
+                    <Text style={styles.autoOkText}>
+                      Auto · {totalBagWeight} kg × {carrierRatePerKgINR} INR/kg
+                    </Text>
+                  </View>
+                )
+              ) : mode === "hand_carry" && totalBagWeight === 0 ? (
+                <Text style={styles.rateChipMissing}>
+                  Add bag weights to auto-calc.
+                </Text>
+              ) : null}
+            </Field>
+          ) : null}
+
+          {(marginBreakdown.freight > 0 || marginBreakdown.carrierINR > 0) ? (
+            <View
+              style={[
+                styles.marginCard,
+                marginBreakdown.margin >= 0 ? styles.marginProfit : styles.marginLoss,
+              ]}
+              testID="margin-card"
+            >
+              <View style={styles.marginRow}>
+                <Text style={styles.marginLbl}>Freight income</Text>
+                <Text style={styles.marginVal}>
+                  {marginBreakdown.freight.toFixed(2)} {freightCcy}
+                </Text>
+              </View>
+              <View style={styles.marginRow}>
+                <Text style={styles.marginLbl}>Carrier pay</Text>
+                <Text style={styles.marginVal}>
+                  −{marginBreakdown.carrierInFreightCcy.toFixed(2)} {freightCcy}
+                  {freightCcy !== "INR" && marginBreakdown.carrierINR > 0 ? (
+                    <Text style={styles.marginNote}> ({marginBreakdown.carrierINR} INR)</Text>
+                  ) : null}
+                </Text>
+              </View>
+              <View style={styles.marginDivider} />
+              <View style={styles.marginRow}>
+                <Text style={styles.marginLblBold}>Your margin</Text>
+                <Text
+                  style={[
+                    styles.marginTotal,
+                    { color: marginBreakdown.margin >= 0 ? colors.lime : colors.danger },
+                  ]}
+                >
+                  {marginBreakdown.margin >= 0 ? "+" : ""}
+                  {marginBreakdown.margin.toFixed(2)} {freightCcy}
+                </Text>
+              </View>
+              {!marginBreakdown.hasFx && freightCcy === "THB" ? (
+                <Text style={styles.marginWarn}>
+                  Enter forex rate above for accurate cross-currency margin.
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
 
           <Field label="Notes">
             <TextInput
@@ -1011,5 +1180,47 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 0.4,
+  },
+  // ---- Live Margin card ----
+  marginCard: {
+    borderRadius: radii.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    backgroundColor: colors.chipBg,
+  },
+  marginProfit: { borderColor: colors.lime },
+  marginLoss: { borderColor: colors.danger },
+  marginRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 3,
+  },
+  marginLbl: { color: colors.textDim, fontSize: 12, fontWeight: "600" },
+  marginLblBold: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  marginVal: { color: colors.text, fontSize: 13, fontWeight: "700" },
+  marginNote: { color: colors.textDim, fontSize: 10, fontWeight: "500" },
+  marginDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginVertical: 6,
+  },
+  marginTotal: {
+    fontSize: 16,
+    fontWeight: "900",
+    letterSpacing: 0.3,
+  },
+  marginWarn: {
+    color: colors.textDim,
+    fontSize: 11,
+    marginTop: 6,
+    fontStyle: "italic",
   },
 });

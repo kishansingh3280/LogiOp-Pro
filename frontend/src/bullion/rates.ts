@@ -9,11 +9,18 @@ export interface BullionRates {
   currency_rate_per_1000: number;
   /** INR carrier fee per baht (15.244g) of gold carried. */
   gold_rate_per_baht: number;
+  /**
+   * Generic hand-carry courier fee, INR per kg. Applied automatically to
+   * every "hand_carry" mode shipment (regular goods — not bullion trades).
+   * Used to auto-fill the "You Pay Carrier" field on new shipments.
+   */
+  hand_carry_rate_inr_per_kg: number;
 }
 
 export const DEFAULT_RATES: BullionRates = {
   currency_rate_per_1000: 500,
   gold_rate_per_baht: 2500,
+  hand_carry_rate_inr_per_kg: 200,
 };
 
 type Listener = (r: BullionRates) => void;
@@ -42,6 +49,10 @@ export async function getRates(): Promise<BullionRates> {
         typeof parsed.gold_rate_per_baht === "number"
           ? parsed.gold_rate_per_baht
           : DEFAULT_RATES.gold_rate_per_baht,
+      hand_carry_rate_inr_per_kg:
+        typeof parsed.hand_carry_rate_inr_per_kg === "number"
+          ? parsed.hand_carry_rate_inr_per_kg
+          : DEFAULT_RATES.hand_carry_rate_inr_per_kg,
     };
     return cache;
   } catch {
@@ -54,6 +65,7 @@ export async function setRates(next: BullionRates): Promise<void> {
   const clean: BullionRates = {
     currency_rate_per_1000: Math.max(0, Number(next.currency_rate_per_1000) || 0),
     gold_rate_per_baht: Math.max(0, Number(next.gold_rate_per_baht) || 0),
+    hand_carry_rate_inr_per_kg: Math.max(0, Number(next.hand_carry_rate_inr_per_kg) || 0),
   };
   cache = clean;
   await storage.setItem(RATES_KEY, JSON.stringify(clean));

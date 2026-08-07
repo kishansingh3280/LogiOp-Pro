@@ -353,22 +353,25 @@ function RatesEditorModal({
   onClose,
   onSave,
 }: {
-  initial: { currency_rate_per_1000: number; gold_rate_per_baht: number };
+  initial: { currency_rate_per_1000: number; gold_rate_per_baht: number; hand_carry_rate_inr_per_kg: number };
   onClose: () => void;
-  onSave: (next: { currency_rate_per_1000: number; gold_rate_per_baht: number }) => void | Promise<void>;
+  onSave: (next: { currency_rate_per_1000: number; gold_rate_per_baht: number; hand_carry_rate_inr_per_kg: number }) => void | Promise<void>;
 }) {
   const [currencyRate, setCurrencyRate] = useState(String(initial.currency_rate_per_1000));
   const [goldRate, setGoldRate] = useState(String(initial.gold_rate_per_baht));
+  const [handCarryRate, setHandCarryRate] = useState(String(initial.hand_carry_rate_inr_per_kg));
   const [saving, setSaving] = useState(false);
 
   const commit = async () => {
     const c = parseFloat(currencyRate);
     const g = parseFloat(goldRate);
+    const h = parseFloat(handCarryRate);
     if (!Number.isFinite(c) || c < 0) return Alert.alert("Invalid", "Currency rate must be ≥ 0");
     if (!Number.isFinite(g) || g < 0) return Alert.alert("Invalid", "Gold rate must be ≥ 0");
+    if (!Number.isFinite(h) || h < 0) return Alert.alert("Invalid", "Hand-carry rate must be ≥ 0");
     setSaving(true);
     try {
-      await onSave({ currency_rate_per_1000: c, gold_rate_per_baht: g });
+      await onSave({ currency_rate_per_1000: c, gold_rate_per_baht: g, hand_carry_rate_inr_per_kg: h });
     } finally {
       setSaving(false);
     }
@@ -381,8 +384,8 @@ function RatesEditorModal({
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>Global carrier rates</Text>
           <Text style={styles.rateBlurb}>
-            Applied to every new bullion trade. Existing trades keep their previously-computed
-            carrier charge until edited.
+            Applied to every new bullion trade and hand-carry shipment. Existing records keep
+            their previously-computed carrier charge until edited.
           </Text>
 
           <View style={styles.rateField}>
@@ -411,6 +414,22 @@ function RatesEditorModal({
               testID="rate-gold-per-baht"
             />
             <Text style={styles.rateHelper}>e.g. 10 baht of gold → ₹{(Number(goldRate) || 0) * 10} carrier fee.</Text>
+          </View>
+
+          <View style={styles.rateField}>
+            <Text style={styles.rateLabel}>Hand-carry shipments — INR per kg</Text>
+            <TextInput
+              style={styles.rateInput}
+              value={handCarryRate}
+              onChangeText={setHandCarryRate}
+              keyboardType="decimal-pad"
+              placeholder="200"
+              placeholderTextColor={colors.textDim}
+              testID="rate-hand-carry-per-kg"
+            />
+            <Text style={styles.rateHelper}>
+              e.g. 25 kg hand-carry → ₹{(Number(handCarryRate) || 0) * 25} paid to the carrier.
+            </Text>
           </View>
 
           <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
