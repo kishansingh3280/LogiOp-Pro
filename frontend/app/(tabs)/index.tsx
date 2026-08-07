@@ -162,7 +162,7 @@ export default function DashboardScreen() {
             <Card style={styles.ledgerCard}>
               <View style={styles.ledgerHeader}>
                 <View style={[styles.ledgerDot, { backgroundColor: colors.ok }]} />
-                <Text style={styles.ledgerLabel}>You will get</Text>
+                <Text style={styles.ledgerLabel}>Customer will pay</Text>
               </View>
               <Text style={styles.ledgerBig}>{fmtCurrency(ledger.data?.receivable.inr, "INR")}</Text>
               <Text style={styles.ledgerAlt}>{fmtCurrency(ledger.data?.receivable.thb, "THB")}</Text>
@@ -182,7 +182,7 @@ export default function DashboardScreen() {
             <Card style={styles.ledgerCard}>
               <View style={styles.ledgerHeader}>
                 <View style={[styles.ledgerDot, { backgroundColor: colors.danger }]} />
-                <Text style={styles.ledgerLabel}>You will give</Text>
+                <Text style={styles.ledgerLabel}>You pay carrier</Text>
               </View>
               <Text style={styles.ledgerBig}>{fmtCurrency(ledger.data?.payable.inr, "INR")}</Text>
               <Text style={styles.ledgerAlt}>{fmtCurrency(ledger.data?.payable.thb, "THB")}</Text>

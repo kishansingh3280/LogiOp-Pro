@@ -38,17 +38,26 @@ export default function NewShipmentScreen() {
   const [mode, setMode] = useState<ShipmentMode>("air");
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
-  const [bagCount, setBagCount] = useState("1");
-  const [weight, setWeight] = useState("");
   const [freight, setFreight] = useState("");
   const [freightCcy, setFreightCcy] = useState<Currency>("THB");
   const [forexRate, setForexRate] = useState("");
-  const [partyId, setPartyId] = useState<string | null>(null);
   const [carrierId, setCarrierId] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
-  const [pickParty, setPickParty] = useState(false);
   const [pickCarrier, setPickCarrier] = useState(false);
+
+  // Per-bag rows: each bag can be assigned to a different customer. This
+  // replaces the old top-level "Party / Client" field so multi-customer
+  // consignments can be booked in one shot.
+  interface BagRow {
+    bag_no: string;         // display only (auto-numbered)
+    weight_kg: string;
+    end_customer_id: string | null;
+  }
+  const [bags, setBags] = useState<BagRow[]>([
+    { bag_no: "BAG-001", weight_kg: "", end_customer_id: null },
+  ]);
+  const [pickBagIdx, setPickBagIdx] = useState<number | null>(null);
 
   const customers = useMemo(
     () => (parties.data || []).filter((p) => p.role === "customer"),
@@ -59,8 +68,34 @@ export default function NewShipmentScreen() {
     [parties.data],
   );
 
-  const currentParty = (parties.data || []).find((p) => p.id === partyId);
   const currentCarrier = (parties.data || []).find((p) => p.id === carrierId);
+  const totalBagWeight = useMemo(
+    () => bags.reduce((s, b) => s + (parseFloat(b.weight_kg) || 0), 0),
+    [bags],
+  );
+
+  // Bag-row mutators
+  const addBag = () => {
+    setBags((prev) => [
+      ...prev,
+      {
+        bag_no: `BAG-${String(prev.length + 1).padStart(3, "0")}`,
+        weight_kg: "",
+        end_customer_id: null,
+      },
+    ]);
+  };
+  const removeBag = (idx: number) => {
+    setBags((prev) => {
+      if (prev.length <= 1) return prev;
+      const next = prev.slice(0, idx).concat(prev.slice(idx + 1));
+      // Renumber remaining bags so numbering stays contiguous.
+      return next.map((b, i) => ({ ...b, bag_no: `BAG-${String(i + 1).padStart(3, "0")}` }));
+    });
+  };
+  const patchBag = (idx: number, patch: Partial<BagRow>) => {
+    setBags((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
+  };
 
   // Prefill fields when in edit mode. Loads once when the screen mounts.
   useEffect(() => {
@@ -75,14 +110,28 @@ export default function NewShipmentScreen() {
         setMode((s.mode as ShipmentMode) || "air");
         setOrigin(s.origin || "");
         setDestination(s.destination || "");
-        setBagCount(String(s.bag_count ?? 0));
-        setWeight(String(s.weight_kg ?? ""));
         setFreight(String(s.freight ?? ""));
         setFreightCcy((s.freight_currency as Currency) || "THB");
         setForexRate(String(s.forex_rate ?? ""));
-        setPartyId(s.party_id || null);
         setCarrierId(s.carrier_party_id || null);
         setNotes(s.notes || "");
+        // Load existing bags into the per-bag editor.
+        try {
+          const rawBags = await apiGet<{ id: string; bag_no: string; weight_kg: number; end_customer_id: string | null }[]>(
+            `/api/shipments/${editId}/bags`,
+          );
+          if (!cancelled && Array.isArray(rawBags) && rawBags.length > 0) {
+            setBags(
+              rawBags.map((b, i) => ({
+                bag_no: b.bag_no || `BAG-${String(i + 1).padStart(3, "0")}`,
+                weight_kg: String(b.weight_kg ?? ""),
+                end_customer_id: b.end_customer_id || null,
+              })),
+            );
+          }
+        } catch {
+          // best effort — leave the default single-row placeholder
+        }
       } catch (e) {
         toast.error(`Failed to load: ${(e as Error).message}`);
       }
@@ -95,21 +144,31 @@ export default function NewShipmentScreen() {
       toast.warn("Consignment number is required");
       return;
     }
-    if (!partyId) {
-      toast.warn("Choose a party");
+    // At least one bag must be assigned to a customer — otherwise there's
+    // no ledger link to bill the shipment against.
+    const firstAssigned = bags.find((b) => !!b.end_customer_id);
+    if (!firstAssigned) {
+      toast.warn("Assign each bag to a party/customer");
       return;
     }
     setBusy(true);
     try {
-      const payload = {
+      // The backend still requires a `party_id` on the shipment (it treats
+      // it as the "primary client"). We use the first bag's customer so the
+      // record stays queryable in the parties view — but the real per-bag
+      // billing happens through each bag's `end_customer_id`.
+      const primaryPartyId = firstAssigned.end_customer_id!;
+      const totalBags = bags.length;
+      const totalWeightKg = bags.reduce((s, b) => s + (parseFloat(b.weight_kg) || 0), 0);
+      const shipmentPayload = {
         consignment_no: consignmentNo.trim(),
-        party_id: partyId,
+        party_id: primaryPartyId,
         direction,
         mode,
         origin,
         destination,
-        bag_count: Number(bagCount) || 0,
-        weight_kg: Number(weight) || 0,
+        bag_count: totalBags,
+        weight_kg: totalWeightKg,
         freight: Number(freight) || 0,
         freight_currency: freightCcy,
         forex_rate: Number(forexRate) || 0,
@@ -118,14 +177,42 @@ export default function NewShipmentScreen() {
         dispatch_date: new Date().toISOString().slice(0, 10),
         notes,
       };
-      const res = isEdit
-        ? await apiPut<Shipment>(`/api/shipments/${editId}`, payload)
-        : await apiPost<Shipment>("/api/shipments", payload);
-      if ((res as { queued?: boolean }).queued) {
+      const saved = isEdit
+        ? await apiPut<Shipment>(`/api/shipments/${editId}`, shipmentPayload)
+        : await apiPost<Shipment>("/api/shipments", shipmentPayload);
+      if ((saved as { queued?: boolean }).queued) {
         toast.info(`Queued • ${consignmentNo.trim()} will sync when online`);
-      } else {
-        toast.success(isEdit ? `Shipment ${consignmentNo.trim()} updated` : `Shipment ${consignmentNo.trim()} saved`);
+        router.back();
+        return;
       }
+
+      // Once the shipment exists, sync bag-level details. The backend
+      // auto-creates N empty bags on shipment create/update; we PUT each
+      // one with its customer + weight so the ledger + FIFO planner have
+      // per-bag data.
+      let liveBags: { id: string }[] = [];
+      try {
+        liveBags = await apiGet<{ id: string; bag_no: string }[]>(
+          `/api/shipments/${saved.id}/bags`,
+        );
+      } catch {
+        liveBags = [];
+      }
+      const bagUpdates = liveBags.slice(0, bags.length).map((lb, i) => {
+        const row = bags[i];
+        return apiPut(`/api/bags/${lb.id}`, {
+          end_customer_id: row.end_customer_id,
+          weight_kg: parseFloat(row.weight_kg) || 0,
+        }).catch((e) => {
+          console.warn(`Bag ${i + 1} update failed:`, (e as Error).message);
+        });
+      });
+      await Promise.all(bagUpdates);
+      toast.success(
+        isEdit
+          ? `Shipment ${consignmentNo.trim()} updated · ${totalBags} bag${totalBags === 1 ? "" : "s"}`
+          : `Shipment ${consignmentNo.trim()} saved · ${totalBags} bag${totalBags === 1 ? "" : "s"}`,
+      );
       router.back();
     } catch (e) {
       toast.error(`Save failed: ${(e as Error).message}`);
@@ -189,19 +276,58 @@ export default function NewShipmentScreen() {
             </View>
           </View>
 
-          <View style={styles.row2}>
-            <View style={{ flex: 1 }}>
-              <Field label="Bags">
-                <TextInput style={styles.input} keyboardType="number-pad" value={bagCount} onChangeText={setBagCount} />
-              </Field>
+          {/* Bag details — each bag independently assigned to a customer */}
+          <Field label={`Bag details · ${bags.length} bag${bags.length === 1 ? "" : "s"} · ${totalBagWeight ? totalBagWeight.toFixed(1) : "0"} kg total`}>
+            <View style={{ gap: 10 }}>
+              {bags.map((b, idx) => {
+                const cust = (parties.data || []).find((p) => p.id === b.end_customer_id);
+                return (
+                  <View key={idx} style={styles.bagCard}>
+                    <View style={styles.bagCardHead}>
+                      <Text style={styles.bagCardNo}>{b.bag_no}</Text>
+                      {bags.length > 1 ? (
+                        <TouchableOpacity onPress={() => removeBag(idx)} testID={`remove-bag-${idx}`}>
+                          <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    <View style={styles.row2}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.bagFieldLbl}>Weight (kg)</Text>
+                        <TextInput
+                          style={styles.input}
+                          keyboardType="decimal-pad"
+                          value={b.weight_kg}
+                          onChangeText={(t) => patchBag(idx, { weight_kg: t })}
+                          placeholder="0"
+                          placeholderTextColor={colors.textDim}
+                          testID={`bag-weight-${idx}`}
+                        />
+                      </View>
+                      <View style={{ width: 10 }} />
+                      <View style={{ flex: 1.4 }}>
+                        <Text style={styles.bagFieldLbl}>Party / Customer</Text>
+                        <TouchableOpacity
+                          style={styles.selectBtn}
+                          onPress={() => setPickBagIdx(idx)}
+                          testID={`bag-party-${idx}`}
+                        >
+                          <Text style={[styles.selectText, !cust && styles.selectPh]} numberOfLines={1}>
+                            {cust?.name || "Choose"}
+                          </Text>
+                          <Ionicons name="chevron-down" size={14} color={colors.textDim} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })}
+              <TouchableOpacity style={styles.addBagBtn} onPress={addBag} testID="add-bag-btn">
+                <Ionicons name="add" size={16} color={colors.lime} />
+                <Text style={styles.addBagText}>Add another bag</Text>
+              </TouchableOpacity>
             </View>
-            <View style={{ width: 12 }} />
-            <View style={{ flex: 1 }}>
-              <Field label="Weight (kg)">
-                <TextInput style={styles.input} keyboardType="decimal-pad" value={weight} onChangeText={setWeight} />
-              </Field>
-            </View>
-          </View>
+          </Field>
 
           <View style={styles.row2}>
             <View style={{ flex: 1 }}>
@@ -228,15 +354,6 @@ export default function NewShipmentScreen() {
             <TextInput style={styles.input} keyboardType="decimal-pad" value={forexRate} onChangeText={setForexRate} placeholder="2.65" placeholderTextColor={colors.textDim} />
           </Field>
 
-          <Field label="Party / Client">
-            <TouchableOpacity style={styles.selectBtn} onPress={() => setPickParty(true)} testID="pick-party-btn">
-              <Text style={[styles.selectText, !currentParty && styles.selectPh]}>
-                {currentParty?.name || "Choose party"}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color={colors.textDim} />
-            </TouchableOpacity>
-          </Field>
-
           <Field label="Carrier (optional)">
             <TouchableOpacity style={styles.selectBtn} onPress={() => setPickCarrier(true)}>
               <Text style={[styles.selectText, !currentCarrier && styles.selectPh]}>
@@ -261,15 +378,15 @@ export default function NewShipmentScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {pickParty && (
+      {pickBagIdx !== null && (
         <PartyPicker
           list={customers.length ? customers : (parties.data || [])}
-          onClose={() => setPickParty(false)}
+          onClose={() => setPickBagIdx(null)}
           onPick={(p) => {
-            setPartyId(p.id);
-            setPickParty(false);
+            patchBag(pickBagIdx, { end_customer_id: p.id });
+            setPickBagIdx(null);
           }}
-          title="Choose party"
+          title={`Bag ${(bags[pickBagIdx]?.bag_no) || ""} — choose customer`}
         />
       )}
       {pickCarrier && (
@@ -393,6 +510,50 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   multiline: { minHeight: 80, textAlignVertical: "top" },
+  bagCard: {
+    backgroundColor: colors.chipBg,
+    borderRadius: radii.md,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.md,
+    gap: 8,
+  },
+  bagCardHead: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  bagCardNo: {
+    color: colors.lime,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+  },
+  bagFieldLbl: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  addBagBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderStyle: "dashed",
+    backgroundColor: colors.chipBg,
+  },
+  addBagText: {
+    color: colors.lime,
+    fontSize: 13,
+    fontWeight: "800",
+  },
   row2: { flexDirection: "row" },
   segRow: { gap: 8, paddingVertical: 2 },
   seg: {
