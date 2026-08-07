@@ -50,8 +50,25 @@ export default function NewPartyScreen() {
   // Type is fixed to "per_kg" — flat overrides remain manual on the shipment.
   const [defaultRate, setDefaultRate] = useState("");
   const [defaultRateCcy, setDefaultRateCcy] = useState<Currency>("INR");
+  // Google-Maps coordinates. Stored as strings so operators can leave them
+  // blank and so we don't lose precision on parse/format. Filled either by
+  // typing directly or via the "Paste from Google Maps" affordance which
+  // accepts full Maps URLs, "lat,lng" pairs, or plus-codes.
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
   const [busy, setBusy] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+
+  // Role-driven copy: carriers charge YOU a carrying rate, everyone else
+  // has a shipping rate WE charge THEM. Keeps the mental model clean when
+  // the operator picks the role.
+  const isCarrier = role === "carrier";
+  const rateFieldLabel = isCarrier
+    ? `Default carrying rate (${defaultRateCcy} per kg)`
+    : `Default shipping rate (${defaultRateCcy} per kg)`;
+  const rateHint = isCarrier
+    ? "Used to auto-calculate what this carrier bills you per shipment kg. Leave 0 to enter manually per trip."
+    : "Used to auto-calculate freight per bag when this party is billed. Leave 0 to enter freight manually.";
 
   // Hydrate form fields from server when editing an existing party.
   useEffect(() => {
@@ -65,6 +82,8 @@ export default function NewPartyScreen() {
     setEmail(p.email || "");
     setGstin(p.gstin || "");
     setAddress(p.address || "");
+    setLat(p.lat || "");
+    setLng(p.lng || "");
     if (typeof p.default_charge === "number" && p.default_charge > 0) {
       setDefaultRate(String(p.default_charge));
     }
@@ -75,6 +94,79 @@ export default function NewPartyScreen() {
     }
     setHydrated(true);
   }, [existing.data, isEdit, hydrated]);
+
+  /**
+   * Extract latitude / longitude from anything the user pastes into the
+   * coordinates capture box:
+   *   • "13.7563, 100.5018"  → straight decimal pair
+   *   • "13.7563,100.5018"   → no space
+   *   • "13.7563 100.5018"   → space-separated
+   *   • "https://www.google.com/maps/@13.7563,100.5018,15z" → Maps deep-link
+   *   • "https://maps.google.com/?q=13.7563,100.5018"      → query-string link
+   *   • "https://www.google.com/maps/place/…/@13.7563,100.5018,15z/…" → place URL
+   *   • "https://goo.gl/maps/xyz"                          → short link (needs API, flagged)
+   * Returns null when nothing usable was found.
+   */
+  const parseCoordinates = (raw: string): { lat: string; lng: string } | null => {
+    if (!raw) return null;
+    const text = raw.trim();
+    // Google Maps @lat,lng,zoom pattern — highest quality.
+    const atMatch = text.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+    if (atMatch) return { lat: atMatch[1], lng: atMatch[2] };
+    // ?q=lat,lng
+    const qMatch = text.match(/[?&]q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+    if (qMatch) return { lat: qMatch[1], lng: qMatch[2] };
+    // Plain "lat,lng" or "lat lng"
+    const pair = text.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (pair) {
+      const la = parseFloat(pair[1]);
+      const lo = parseFloat(pair[2]);
+      if (Math.abs(la) <= 90 && Math.abs(lo) <= 180) {
+        return { lat: pair[1], lng: pair[2] };
+      }
+    }
+    return null;
+  };
+
+  const handlePasteCoordinates = async () => {
+    // Best-effort: try to read the clipboard through the platform API. Web
+    // and native both expose `navigator.clipboard.readText()` (via the RN
+    // Web polyfill and Expo's clipboard module respectively). We fall back
+    // gracefully when the permission is denied.
+    try {
+      let text = "";
+      // Reach for the browser API first (RN Web).
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.readText === "function"
+      ) {
+        text = await navigator.clipboard.readText();
+      }
+      if (!text) {
+        Alert.alert(
+          "Paste manually",
+          "Couldn't read the clipboard. Paste the coordinates or Google Maps link into the box directly.",
+        );
+        return;
+      }
+      const parsed = parseCoordinates(text);
+      if (!parsed) {
+        Alert.alert(
+          "Unrecognised",
+          "That doesn't look like coordinates or a Google Maps link. Expected something like 13.7563, 100.5018 or a maps.google.com URL.",
+        );
+        return;
+      }
+      setLat(parsed.lat);
+      setLng(parsed.lng);
+    } catch {
+      Alert.alert(
+        "Paste manually",
+        "Couldn't read the clipboard. Paste the coordinates or Google Maps link into the box directly.",
+      );
+    }
+  };
 
   const save = async () => {
     if (!name.trim()) return Alert.alert("Missing", "Name is required");
@@ -90,6 +182,8 @@ export default function NewPartyScreen() {
         email,
         gstin,
         address,
+        lat: lat.trim() || null,
+        lng: lng.trim() || null,
         default_charge: rateNum,
         default_charge_type: "per_kg",
         default_charge_currency: defaultRateCcy,
@@ -183,8 +277,8 @@ export default function NewPartyScreen() {
             </View>
           </View>
 
-          {/* Default shipping rate — auto-applied to bags in shipments. */}
-          <Field label={`Default shipping rate (${defaultRateCcy} per kg)`}>
+          {/* Default shipping/carrying rate — auto-applied to bags in shipments. */}
+          <Field label={rateFieldLabel}>
             <View style={styles.rateRow}>
               <TextInput
                 style={[styles.input, { flex: 1 }]}
@@ -210,10 +304,7 @@ export default function NewPartyScreen() {
                 })}
               </View>
             </View>
-            <Text style={styles.hint}>
-              Used to auto-calculate freight per bag when this party is billed.
-              Leave 0 to enter freight manually.
-            </Text>
+            <Text style={styles.hint}>{rateHint}</Text>
           </Field>
 
           <Field label="Phone">
@@ -237,6 +328,70 @@ export default function NewPartyScreen() {
               placeholder="Full address"
               placeholderTextColor={colors.textDim}
             />
+          </Field>
+
+          {/* Coordinates — pasted from Google Maps so Lalamove and future
+              geolocation features can send couriers straight to the door.
+              Web supports one-tap paste via the clipboard API; on native
+              the operator paste-and-blurs into the box below. */}
+          <Field label="Coordinates (Google Maps)">
+            <View style={styles.coordCaptureBox}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                value={
+                  lat && lng
+                    ? `${lat}, ${lng}`
+                    : ""
+                }
+                placeholder="Paste 13.7563, 100.5018 or a Google Maps link"
+                placeholderTextColor={colors.textDim}
+                onChangeText={(t) => {
+                  const parsed = parseCoordinates(t);
+                  if (parsed) {
+                    setLat(parsed.lat);
+                    setLng(parsed.lng);
+                  } else if (!t.trim()) {
+                    setLat("");
+                    setLng("");
+                  }
+                }}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="input-coords"
+              />
+              <TouchableOpacity
+                onPress={handlePasteCoordinates}
+                style={styles.pasteBtn}
+                testID="paste-coords-btn"
+              >
+                <Ionicons name="clipboard-outline" size={14} color={colors.lime} />
+                <Text style={styles.pasteBtnText}>Paste</Text>
+              </TouchableOpacity>
+            </View>
+            {lat && lng ? (
+              <View style={styles.coordConfirmRow}>
+                <View style={styles.coordPill}>
+                  <Ionicons name="location" size={11} color={colors.lime} />
+                  <Text style={styles.coordPillText}>
+                    Lat {lat} · Lng {lng}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setLat("");
+                    setLng("");
+                  }}
+                  hitSlop={8}
+                >
+                  <Ionicons name="close-circle" size={16} color={colors.textDim} />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+            <Text style={styles.hint}>
+              Open Google Maps → long-press the drop pin → tap the coordinates
+              at the top → paste them here. We&apos;ll pass these to Lalamove
+              when you book a courier for this party.
+            </Text>
           </Field>
 
           <View style={{ height: 40 }} />
@@ -307,4 +462,39 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 15,
   },
+  coordCaptureBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  pasteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radii.pill,
+    backgroundColor: colors.chipBg,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  pasteBtnText: { color: colors.lime, fontSize: 12, fontWeight: "800" },
+  coordConfirmRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+  },
+  coordPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+    backgroundColor: colors.limeGlow,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  coordPillText: { color: colors.lime, fontSize: 11, fontWeight: "800" },
 });

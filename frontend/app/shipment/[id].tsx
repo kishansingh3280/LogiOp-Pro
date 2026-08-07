@@ -519,7 +519,39 @@ export default function ShipmentDetail({
                             {endCustomer.lat}, {endCustomer.lng}
                           </Text>
                         </View>
-                      ) : null}
+                      ) : (
+                        <View style={styles.bagContactRow}>
+                          <Ionicons name="warning-outline" size={12} color={colors.warn} />
+                          <Text style={[styles.bagContactText, { color: colors.warn }]}>
+                            Missing coordinates — add to enable one-tap Lalamove
+                          </Text>
+                        </View>
+                      )}
+                      {/* One-tap Lalamove booking — only enabled when we
+                          have both a phone and coordinates so the courier
+                          request has enough to route on. */}
+                      <TouchableOpacity
+                        style={[
+                          styles.bagLalamoveBtn,
+                          (!endCustomer.phone || !endCustomer.lat || !endCustomer.lng) &&
+                            styles.bagLalamoveBtnDisabled,
+                        ]}
+                        disabled={
+                          !endCustomer.phone ||
+                          !endCustomer.lat ||
+                          !endCustomer.lng ||
+                          busy
+                        }
+                        onPress={() =>
+                          router.push(
+                            `/lalamove?shipmentId=${s.id}&bagId=${bag.id}&endCustomerId=${endCustomer.id}` as never,
+                          )
+                        }
+                        testID={`book-lalamove-${bag.bag_no}`}
+                      >
+                        <Ionicons name="bicycle" size={14} color={colors.bg} />
+                        <Text style={styles.bagLalamoveTxt}>Book Lalamove for this bag</Text>
+                      </TouchableOpacity>
                     </View>
                   )}
                 </View>
@@ -932,6 +964,27 @@ const styles = StyleSheet.create({
   },
   bagContactRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   bagContactText: { color: colors.textMuted, fontSize: 12 },
+  bagLalamoveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: radii.pill,
+    backgroundColor: colors.lime,
+  },
+  bagLalamoveBtnDisabled: {
+    backgroundColor: colors.chipBg,
+    opacity: 0.6,
+  },
+  bagLalamoveTxt: {
+    color: colors.bg,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
 
   // Lalamove CTA
   lalamoveBtn: {
