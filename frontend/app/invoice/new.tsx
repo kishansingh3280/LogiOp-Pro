@@ -227,7 +227,7 @@ export default function NewInvoiceScreen() {
           <Ionicons name="close" size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.headTitle}>New invoice</Text>
-        <TouchableOpacity onPress={save} disabled={busy} style={styles.saveBtn}>
+        <TouchableOpacity onPress={save} disabled={busy} style={styles.saveBtn} testID="save-invoice-btn">
           <Text style={styles.saveText}>{busy ? "Saving…" : "Save"}</Text>
         </TouchableOpacity>
       </View>
@@ -244,6 +244,7 @@ export default function NewInvoiceScreen() {
                   autoCapitalize="characters"
                   value={number}
                   onChangeText={setNumber}
+                  testID="input-invoice-number"
                 />
               </Field>
             </View>
@@ -269,7 +270,7 @@ export default function NewInvoiceScreen() {
           </View>
 
           <Field label="Client">
-            <TouchableOpacity style={styles.selectBtn} onPress={() => setPickParty(true)}>
+            <TouchableOpacity style={styles.selectBtn} onPress={() => setPickParty(true)} testID="input-invoice-client">
               <Text style={[styles.selectText, !currentParty && styles.selectPh]}>
                 {currentParty?.name || "Choose party"}
               </Text>

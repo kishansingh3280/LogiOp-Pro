@@ -229,6 +229,7 @@ export default function NewPartyScreen() {
                     key={r}
                     onPress={() => setRole(r)}
                     style={[styles.seg, active && styles.segActive]}
+                    testID={`role-${r}`}
                   >
                     <Text style={[styles.segText, active && styles.segTextActive]}>{ROLE_LABEL[r]}</Text>
                   </TouchableOpacity>
