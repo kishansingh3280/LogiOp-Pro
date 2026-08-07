@@ -1,0 +1,34 @@
+{
+  "summary": "Backend-only iteration for Indian FY reporting + bank-style party statement. Wrote /app/backend/tests/test_fy_and_ledger.py — 19/19 pass. Verified: (1) GET /api/parties returns Lalit (5ef74d41-…) with default_currency + default_charge; (2) GET /api/ledger/entries returns rows with id, date, debit, credit, party_id, currency, ref_type, ref_id, description — INR + THB both present, ref_type populated on real rows; (3) FY math mirroring /app/frontend/src/utils/fy.ts is correct at both boundaries (getFYKey('2026-04-01')='2026-27', getFYKey('2026-03-31')='2025-26', isInFY('2026-04-01','2026-27')=true, isInFY('2026-03-31','2026-27')=false, and 2027-03-31T23:59 still in 2026-27, 2027-04-01T00:00 not); (4) Lalit’s running balance derivation (client-side algorithm in party/[id].tsx) matches sum(debit-credit) grouped by currency both for FY 2026-27 (INR +5000, THB +13703.8) and for the FY of the latest entry (auto-picked); (5) Regression: /api/wingman/health OK, /api/bullion/rates returns hand_carry_rate_inr_per_kg + gold_rate_per_baht + currency_rate_per_1000, /api/bullion/trips is a list.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fy_and_ledger.py",
+    "/app/test_reports/pytest/fy_ledger_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "fy.ts uses UTC (getUTCFullYear/getUTCMonth) for FY bucketing but ledger dates like '2026-04-01' are date-only and are parsed as UTC midnight — this is correct and matches the Python mirror. Just be aware: if any future ledger row carries a timezoned datetime near midnight IST on April 1, the UTC vs local-day mismatch could flip its FY. Current data is safe.",
+    "party/[id].tsx merges legacy no-currency rows into the INR bucket — matches backend seed behaviour and is exercised by the test suite."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fy_and_ledger.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19)",
+    "frontend": "not tested (backend-only per request)"
+  },
+  "seed_data_creation": "None — tests read-only against live seeded data (Lalit has 2 rows in FY 2025-26 and 4 rows in FY 2026-27, mixed INR/THB).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run: `EXPO_BACKEND_URL=https://native-logistics-hub.preview.emergentagent.com pytest /app/backend/tests/test_fy_and_ledger.py -v`. FY math is mirrored in Python inside the test file, so if the JS fy.ts changes semantics, update _get_fy_key/_is_in_fy accordingly. Bullion /rates schema keys are: hand_carry_rate_inr_per_kg, gold_rate_per_baht, currency_rate_per_1000, updated_at (not the earlier gold_price_inr_per_10g / usd_inr names).",
+  "rca_of_issue": "N/A"
+}

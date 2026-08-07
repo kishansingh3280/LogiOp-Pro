@@ -6,9 +6,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Invoice, LedgerEntry, Party, Shipment } from "@/src/api/types";
+import { FYPicker } from "@/src/components/fy-picker";
 import { Card, KV, StatusPill } from "@/src/components/ui";
+import { useFY } from "@/src/context/fy-context";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
+import { fyLabel, isInFY } from "@/src/utils/fy";
 
 export default function PartyDetail({ idOverride, embedded }: { idOverride?: string; embedded?: boolean } = {}) {
   const params = useLocalSearchParams<{ id: string }>();
@@ -20,13 +23,36 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
   const shipments = useApi<Shipment[]>("/api/shipments");
   const invoices = useApi<Invoice[]>("/api/invoices");
 
+  const { fy } = useFY();
+
+  // Statement rows: chronological (oldest → newest) so running balance
+  // accumulates the same way a bank statement does. Filtered by the
+  // globally selected Financial Year so opening/closing figures match
+  // the totals shown on the Ledger dashboard.
   const entries = useMemo(
     () =>
       (ledger.data || [])
-        .filter((e) => e.party_id === id)
-        .sort((a, b) => (a.date > b.date ? -1 : 1)),
-    [ledger.data, id],
+        .filter((e) => e.party_id === id && isInFY(e.date, fy))
+        .sort((a, b) => (a.date > b.date ? 1 : -1)),
+    [ledger.data, id, fy],
   );
+
+  // Attach a running INR + THB balance to each entry — mirrors what a
+  // passbook shows. Legacy rows without `currency` are treated as INR.
+  const statementRows = useMemo(() => {
+    let inr = 0;
+    let thb = 0;
+    return entries.map((e) => {
+      const ccy = (e.currency || "INR").toUpperCase();
+      const delta = (e.debit || 0) - (e.credit || 0);
+      if (ccy === "THB") thb += delta;
+      else inr += delta;
+      return { entry: e, ccy, balanceInr: inr, balanceThb: thb };
+    });
+  }, [entries]);
+  // Reverse for display so newest is on top (matches operator's mental
+  // model on mobile); the running balance already reflects the same day.
+  const displayRows = useMemo(() => [...statementRows].reverse(), [statementRows]);
 
   const partyShipments = useMemo(
     () => (shipments.data || []).filter((s) => s.party_id === id || s.carrier_party_id === id).slice(0, 6),
@@ -182,37 +208,107 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
         </Card>
 
         <Card style={{ marginTop: spacing.md }}>
-          <Text style={styles.sectionTitle}>Ledger statement</Text>
-          {entries.length === 0 ? (
-            <Text style={styles.dim}>No ledger entries yet</Text>
+          <View style={styles.stmtHead}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>Statement</Text>
+              <Text style={styles.stmtSub}>{fyLabel(fy)} · running balance</Text>
+            </View>
+            <FYPicker compact />
+          </View>
+
+          {/* Bank-style column headers */}
+          <View style={styles.stmtColHead}>
+            <Text style={[styles.stmtHeadTxt, { width: 62 }]}>Date</Text>
+            <Text style={[styles.stmtHeadTxt, { flex: 1 }]}>Description</Text>
+            <Text style={[styles.stmtHeadTxt, styles.stmtNumCol]}>Debit</Text>
+            <Text style={[styles.stmtHeadTxt, styles.stmtNumCol]}>Credit</Text>
+            <Text style={[styles.stmtHeadTxt, styles.stmtNumCol]}>Balance</Text>
+          </View>
+
+          {displayRows.length === 0 ? (
+            <Text style={styles.dim}>No transactions in {fyLabel(fy)}</Text>
           ) : (
-            entries.map((e) => {
-              const entryCcy = (e.currency || "INR") as Currency;
+            displayRows.map(({ entry: e, ccy, balanceInr, balanceThb }) => {
+              const balForRow = ccy === "THB" ? balanceThb : balanceInr;
               return (
-                <View key={e.id} style={styles.entryRow}>
+                <View key={e.id} style={styles.stmtRow}>
+                  <Text style={[styles.stmtCell, { width: 62 }]}>{shortDate(e.date)}</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.entryDesc} numberOfLines={1}>
-                      {e.description}
+                    <Text style={styles.stmtDesc} numberOfLines={2}>
+                      {e.description || "—"}
                     </Text>
-                    <View style={styles.entryMetaRow}>
-                      <Text style={styles.entryDate}>{shortDate(e.date)}</Text>
-                      <View style={styles.entryCurTag}>
-                        <Text style={styles.entryCurText}>{entryCcy}</Text>
+                    <View style={styles.stmtMeta}>
+                      <View style={[styles.stmtCcyTag, ccy === "THB" ? styles.stmtCcyThb : styles.stmtCcyInr]}>
+                        <Text style={styles.stmtCcyText}>{ccy}</Text>
                       </View>
+                      {e.ref_type ? (
+                        <Text style={styles.stmtRef}>{e.ref_type.replace("_", " ")}</Text>
+                      ) : null}
                     </View>
                   </View>
+                  <Text style={[styles.stmtCell, styles.stmtNumCol, { color: (e.debit || 0) > 0 ? colors.ok : colors.textDim }]}>
+                    {e.debit ? fmtCurrency(e.debit, ccy as Currency) : "—"}
+                  </Text>
+                  <Text style={[styles.stmtCell, styles.stmtNumCol, { color: (e.credit || 0) > 0 ? colors.danger : colors.textDim }]}>
+                    {e.credit ? fmtCurrency(e.credit, ccy as Currency) : "—"}
+                  </Text>
                   <Text
                     style={[
-                      styles.entryAmt,
-                      { color: e.debit > 0 ? colors.ok : colors.danger },
+                      styles.stmtCell,
+                      styles.stmtNumCol,
+                      styles.stmtBalCol,
+                      { color: balForRow >= 0 ? colors.text : colors.danger },
                     ]}
                   >
-                    {e.debit > 0 ? `+${fmtCurrency(e.debit, entryCcy)}` : `-${fmtCurrency(e.credit, entryCcy)}`}
+                    {fmtCurrency(Math.abs(balForRow), ccy as Currency)}
+                    {balForRow < 0 ? " Cr" : balForRow > 0 ? " Dr" : ""}
                   </Text>
                 </View>
               );
             })
           )}
+
+          {/* Closing balances footer */}
+          {statementRows.length > 0 ? (
+            <View style={styles.stmtFooter}>
+              <Text style={styles.stmtFooterLabel}>Closing balance</Text>
+              <View style={styles.stmtFooterCcys}>
+                {(() => {
+                  const last = statementRows[statementRows.length - 1];
+                  const chips: React.ReactNode[] = [];
+                  if (Math.abs(last.balanceInr) > 0.005) {
+                    chips.push(
+                      <Text
+                        key="inr"
+                        style={[
+                          styles.stmtFooterVal,
+                          { color: last.balanceInr >= 0 ? colors.ok : colors.danger },
+                        ]}
+                      >
+                        {fmtCurrency(Math.abs(last.balanceInr), "INR")}
+                        <Text style={styles.stmtFooterTag}>{last.balanceInr >= 0 ? " Dr" : " Cr"}</Text>
+                      </Text>,
+                    );
+                  }
+                  if (Math.abs(last.balanceThb) > 0.005) {
+                    chips.push(
+                      <Text
+                        key="thb"
+                        style={[
+                          styles.stmtFooterVal,
+                          { color: last.balanceThb >= 0 ? colors.ok : colors.danger },
+                        ]}
+                      >
+                        {fmtCurrency(Math.abs(last.balanceThb), "THB")}
+                        <Text style={styles.stmtFooterTag}>{last.balanceThb >= 0 ? " Dr" : " Cr"}</Text>
+                      </Text>,
+                    );
+                  }
+                  return chips.length ? chips : <Text style={styles.dim}>Settled</Text>;
+                })()}
+              </View>
+            </View>
+          ) : null}
         </Card>
 
         {partyShipments.length > 0 && (
@@ -367,6 +463,71 @@ const styles = StyleSheet.create({
   entryDesc: { color: colors.text, fontSize: 14 },
   entryDate: { color: colors.textDim, fontSize: 11, marginTop: 2 },
   entryAmt: { fontSize: 14, fontWeight: "800", marginLeft: spacing.md },
+
+  // ---- Bank-style statement ----
+  stmtHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  stmtSub: { color: colors.textDim, fontSize: 11, marginTop: 2 },
+  stmtColHead: {
+    flexDirection: "row",
+    marginTop: spacing.md,
+    paddingBottom: 6,
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 6,
+  },
+  stmtHeadTxt: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  stmtNumCol: { width: 68, textAlign: "right" },
+  stmtBalCol: { fontWeight: "800" },
+  stmtRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    gap: 6,
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  stmtCell: { color: colors.text, fontSize: 12 },
+  stmtDesc: { color: colors.text, fontSize: 13, fontWeight: "600" },
+  stmtMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 },
+  stmtCcyTag: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 3,
+  },
+  stmtCcyInr: { backgroundColor: colors.limeGlow, borderColor: colors.lime, borderWidth: StyleSheet.hairlineWidth },
+  stmtCcyThb: { backgroundColor: colors.chipBg, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth },
+  stmtCcyText: { color: colors.textMuted, fontSize: 9, fontWeight: "800" },
+  stmtRef: {
+    color: colors.textDim,
+    fontSize: 10,
+    textTransform: "capitalize",
+    fontStyle: "italic",
+  },
+  stmtFooter: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopColor: colors.lime,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+  },
+  stmtFooterLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  stmtFooterCcys: { alignItems: "flex-end", gap: 4 },
+  stmtFooterVal: { fontSize: 14, fontWeight: "900" },
+  stmtFooterTag: { color: colors.textDim, fontSize: 10, fontWeight: "600" },
   linkRow: {
     flexDirection: "row",
     alignItems: "center",
