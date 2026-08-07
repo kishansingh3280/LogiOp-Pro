@@ -3,13 +3,15 @@ import NetInfo from "@react-native-community/netinfo";
 
 import { storage } from "@/src/utils/storage";
 
-// Backend base URL. We hard-pin to the live backend that the web app uses,
-// so the app keeps working even if EXPO_PUBLIC_BACKEND_URL gets reset by
-// the platform to the local preview host (which does NOT have our data).
-const LIVE_BACKEND = "https://logistics-hub-1349.emergent.host";
-const envUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
-const BASE =
-  envUrl && !envUrl.includes("preview.emergentagent.com") ? envUrl : LIVE_BACKEND;
+// Backend base URL — sourced exclusively from EXPO_PUBLIC_BACKEND_URL.
+// Fails fast at import time if the env var is missing, so we never silently
+// call a wrong host in production.
+const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
+if (!BASE) {
+  throw new Error(
+    "EXPO_PUBLIC_BACKEND_URL is not defined. Set it in frontend/.env before starting Expo.",
+  );
+}
 const CACHE_PREFIX = "cache:";
 const QUEUE_KEY = "pendingMutations";
 
