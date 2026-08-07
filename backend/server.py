@@ -23,11 +23,8 @@ db = client[os.environ['DB_NAME']]
 # Remote backend the Expo mobile app actually talks to. The FastAPI service
 # here is only a light-weight proxy so the deployment context matches the
 # `/api/*` contract expected by the mobile client. All business logic lives
-# on the remote host.
-REMOTE_BACKEND_URL = os.environ.get(
-    "REMOTE_BACKEND_URL",
-    "https://logistics-hub-1349.emergent.host",
-).rstrip("/")
+# on the remote host. The URL MUST come from environment configuration.
+REMOTE_BACKEND_URL = os.environ.get("REMOTE_BACKEND_URL", "").rstrip("/")
 
 # Create the main app without a prefix
 app = FastAPI()
@@ -122,6 +119,13 @@ async def proxy_to_remote_backend(path: str, request: Request):
     deployment container's `/api/*` contract in sync with the mobile client
     without duplicating business logic locally.
     """
+    if not REMOTE_BACKEND_URL:
+        logger.error("REMOTE_BACKEND_URL is not configured; cannot proxy %s", path)
+        return Response(
+            content=b'{"detail":"Backend not configured"}',
+            status_code=503,
+            media_type="application/json",
+        )
     target_url = f"{REMOTE_BACKEND_URL}/api/{path}"
     fwd_headers = {
         k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
