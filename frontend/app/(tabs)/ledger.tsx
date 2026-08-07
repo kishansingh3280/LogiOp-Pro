@@ -41,38 +41,59 @@ export default function LedgerScreen() {
   const [showAllPayables, setShowAllPayables] = useState(false);
   const [pickForFab, setPickForFab] = useState(false);
 
-  // Compute per-party balance in party.default_currency
+  // Per-party balance split by currency. A single party can accrue both
+  // INR and THB entries (freight in THB + forex settlement in INR, etc.),
+  // so we track each currency independently and expose the balance in the
+  // party's *default* currency for the summary chip.
   const perParty = useMemo(() => {
-    const map: Record<string, { last?: string; debit: number; credit: number; balance: number }> = {};
+    type CurrencyBucket = { debit: number; credit: number; balance: number };
+    type PartyBuckets = { inr: CurrencyBucket; thb: CurrencyBucket; last?: string };
+    const map: Record<string, PartyBuckets> = {};
     for (const e of entries.data || []) {
-      const b = (map[e.party_id] ||= { debit: 0, credit: 0, balance: 0 });
-      b.debit += e.debit || 0;
-      b.credit += e.credit || 0;
-      b.balance = b.debit - b.credit;
-      if (!b.last || e.date > b.last) b.last = e.date;
+      const cur = (e.currency || "INR").toUpperCase() === "THB" ? "thb" : "inr";
+      const bucket = (map[e.party_id] ||= {
+        inr: { debit: 0, credit: 0, balance: 0 },
+        thb: { debit: 0, credit: 0, balance: 0 },
+      });
+      bucket[cur].debit += e.debit || 0;
+      bucket[cur].credit += e.credit || 0;
+      bucket[cur].balance = bucket[cur].debit - bucket[cur].credit;
+      if (!bucket.last || e.date > bucket.last) bucket.last = e.date;
     }
     return map;
   }, [entries.data]);
 
-  // Totals split by currency
+  // Totals split by currency — sum the actual currency balance for each
+  // party, not the mixed-currency total the old code produced.
   const totals = useMemo(() => {
     let recInr = 0,
       payInr = 0,
       recThb = 0,
       payThb = 0;
     for (const p of parties.data || []) {
-      const bal = perParty[p.id]?.balance || 0;
-      const cur = p.default_currency;
-      if (bal >= 0) {
-        if (cur === "INR") recInr += bal;
-        else recThb += bal;
-      } else {
-        if (cur === "INR") payInr += -bal;
-        else payThb += -bal;
-      }
+      const b = perParty[p.id];
+      if (!b) continue;
+      if (b.inr.balance > 0) recInr += b.inr.balance;
+      else if (b.inr.balance < 0) payInr += -b.inr.balance;
+      if (b.thb.balance > 0) recThb += b.thb.balance;
+      else if (b.thb.balance < 0) payThb += -b.thb.balance;
     }
     return { recInr, payInr, recThb, payThb };
   }, [parties.data, perParty]);
+
+  // Sort key: absolute balance in the party's default currency, falling
+  // back to the other currency's absolute balance so parties with only
+  // secondary-currency activity still surface.
+  const primaryBal = (pid: string, defCur: "INR" | "THB") => {
+    const b = perParty[pid];
+    if (!b) return 0;
+    return defCur === "INR" ? b.inr.balance : b.thb.balance;
+  };
+  const otherBal = (pid: string, defCur: "INR" | "THB") => {
+    const b = perParty[pid];
+    if (!b) return 0;
+    return defCur === "INR" ? b.thb.balance : b.inr.balance;
+  };
 
   const filtered = useMemo(() => {
     let list = parties.data || [];
@@ -83,23 +104,42 @@ export default function LedgerScreen() {
         (p) => (p.name || "").toLowerCase().includes(needle) || (p.phone || "").toLowerCase().includes(needle),
       );
     }
-    // Sort: highest absolute balance first
-    return list.sort((a, b) => Math.abs(perParty[b.id]?.balance || 0) - Math.abs(perParty[a.id]?.balance || 0));
+    // Sort: highest absolute balance in party default currency first
+    return list.sort((a, b) => {
+      const bA = Math.abs(primaryBal(a.id, a.default_currency)) + Math.abs(otherBal(a.id, a.default_currency));
+      const bB = Math.abs(primaryBal(b.id, b.default_currency)) + Math.abs(otherBal(b.id, b.default_currency));
+      return bB - bA;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parties.data, role, q, perParty]);
 
   const receivables = useMemo(
     () =>
       filtered
-        .filter((p) => (perParty[p.id]?.balance || 0) > 0)
-        .sort((a, b) => (perParty[b.id]?.balance || 0) - (perParty[a.id]?.balance || 0)),
+        .filter((p) => {
+          const b = perParty[p.id];
+          return b && (b.inr.balance > 0 || b.thb.balance > 0);
+        })
+        .sort((a, b) => {
+          const ba = (perParty[b.id]?.inr.balance || 0) + (perParty[b.id]?.thb.balance || 0);
+          const aa = (perParty[a.id]?.inr.balance || 0) + (perParty[a.id]?.thb.balance || 0);
+          return ba - aa;
+        }),
     [filtered, perParty],
   );
 
   const payables = useMemo(
     () =>
       filtered
-        .filter((p) => (perParty[p.id]?.balance || 0) < 0)
-        .sort((a, b) => (perParty[a.id]?.balance || 0) - (perParty[b.id]?.balance || 0)),
+        .filter((p) => {
+          const b = perParty[p.id];
+          return b && (b.inr.balance < 0 || b.thb.balance < 0);
+        })
+        .sort((a, b) => {
+          const ba = (perParty[b.id]?.inr.balance || 0) + (perParty[b.id]?.thb.balance || 0);
+          const aa = (perParty[a.id]?.inr.balance || 0) + (perParty[a.id]?.thb.balance || 0);
+          return aa - ba;
+        }),
     [filtered, perParty],
   );
 
@@ -194,9 +234,10 @@ export default function LedgerScreen() {
                         <MiniRow
                           key={p.id}
                           p={p}
-                          balance={perParty[p.id]?.balance || 0}
+                          buckets={perParty[p.id]}
                           last={perParty[p.id]?.last}
                           tint={colors.ok}
+                          side="get"
                           onPress={() => router.push(`/party/${p.id}` as never)}
                         />
                       ))
@@ -231,9 +272,10 @@ export default function LedgerScreen() {
                         <MiniRow
                           key={p.id}
                           p={p}
-                          balance={perParty[p.id]?.balance || 0}
+                          buckets={perParty[p.id]}
                           last={perParty[p.id]?.last}
                           tint={colors.danger}
+                          side="give"
                           onPress={() => router.push(`/party/${p.id}` as never)}
                         />
                       ))
@@ -289,10 +331,15 @@ export default function LedgerScreen() {
           </View>
         }
         renderItem={({ item }) => {
-          const bal = perParty[item.id]?.balance || 0;
-          const last = perParty[item.id]?.last;
-          const isGet = bal > 0;
-          const isGive = bal < 0;
+          const buckets = perParty[item.id];
+          const inrBal = buckets?.inr.balance || 0;
+          const thbBal = buckets?.thb.balance || 0;
+          const last = buckets?.last;
+          const hasInr = Math.abs(inrBal) > 0.005;
+          const hasThb = Math.abs(thbBal) > 0.005;
+          const showBoth = hasInr && hasThb;
+          const singleBal = hasInr ? inrBal : thbBal;
+          const singleCcy: "INR" | "THB" = hasInr ? "INR" : "THB";
           return (
             <TouchableOpacity
               onPress={() => router.push(`/party/${item.id}` as never)}
@@ -313,22 +360,45 @@ export default function LedgerScreen() {
                   </Text>
                 </View>
                 <View style={{ alignItems: "flex-end" }}>
-                  <Text
-                    style={[
-                      styles.balAmount,
-                      { color: isGet ? colors.ok : isGive ? colors.danger : colors.textDim },
-                    ]}
-                  >
-                    {fmtCurrency(Math.abs(bal), item.default_currency)}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.balTag,
-                      { color: isGet ? colors.ok : isGive ? colors.danger : colors.textDim },
-                    ]}
-                  >
-                    {isGet ? "You'll get" : isGive ? "You'll give" : "Settled"}
-                  </Text>
+                  {showBoth ? (
+                    <>
+                      <Text
+                        style={[
+                          styles.balAmount,
+                          { color: inrBal > 0 ? colors.ok : inrBal < 0 ? colors.danger : colors.textDim, fontSize: 14 },
+                        ]}
+                      >
+                        {inrBal >= 0 ? "" : "-"}{fmtCurrency(Math.abs(inrBal), "INR")}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.balAmount,
+                          { color: thbBal > 0 ? colors.ok : thbBal < 0 ? colors.danger : colors.textDim, fontSize: 14, marginTop: 2 },
+                        ]}
+                      >
+                        {thbBal >= 0 ? "" : "-"}{fmtCurrency(Math.abs(thbBal), "THB")}
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text
+                        style={[
+                          styles.balAmount,
+                          { color: singleBal > 0 ? colors.ok : singleBal < 0 ? colors.danger : colors.textDim },
+                        ]}
+                      >
+                        {fmtCurrency(Math.abs(singleBal), singleCcy)}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.balTag,
+                          { color: singleBal > 0 ? colors.ok : singleBal < 0 ? colors.danger : colors.textDim },
+                        ]}
+                      >
+                        {singleBal > 0 ? "You'll get" : singleBal < 0 ? "You'll give" : "Settled"}
+                      </Text>
+                    </>
+                  )}
                 </View>
               </View>
             </TouchableOpacity>
@@ -377,7 +447,8 @@ export default function LedgerScreen() {
 
             <ScrollView style={{ maxHeight: 460 }} keyboardShouldPersistTaps="handled">
               {(parties.data || []).map((p) => {
-                const bal = perParty[p.id]?.balance || 0;
+                const buckets = perParty[p.id];
+                const primary = buckets ? (p.default_currency === "INR" ? buckets.inr.balance : buckets.thb.balance) : 0;
                 return (
                   <TouchableOpacity
                     key={p.id}
@@ -398,10 +469,10 @@ export default function LedgerScreen() {
                     <Text
                       style={[
                         styles.pickBal,
-                        { color: bal > 0 ? colors.ok : bal < 0 ? colors.danger : colors.textDim },
+                        { color: primary > 0 ? colors.ok : primary < 0 ? colors.danger : colors.textDim },
                       ]}
                     >
-                      {fmtCurrency(Math.abs(bal), p.default_currency)}
+                      {fmtCurrency(Math.abs(primary), p.default_currency)}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -419,17 +490,24 @@ export default function LedgerScreen() {
 
 function MiniRow({
   p,
-  balance,
+  buckets,
   last,
   tint,
+  side,
   onPress,
 }: {
   p: Party;
-  balance: number;
+  buckets?: { inr: { balance: number }; thb: { balance: number } };
   last?: string;
   tint: string;
+  /** "get" → only positive balances shown; "give" → only negative shown */
+  side: "get" | "give";
   onPress: () => void;
 }) {
+  const inrBal = buckets?.inr.balance || 0;
+  const thbBal = buckets?.thb.balance || 0;
+  const inrMatches = side === "get" ? inrBal > 0.005 : inrBal < -0.005;
+  const thbMatches = side === "get" ? thbBal > 0.005 : thbBal < -0.005;
   return (
     <TouchableOpacity onPress={onPress} style={styles.miniRow} activeOpacity={0.85} testID={`mini-${p.id}`}>
       <View style={styles.miniAvatar}>
@@ -442,7 +520,23 @@ function MiniRow({
           {last ? ` · ${last}` : ""}
         </Text>
       </View>
-      <Text style={[styles.miniBal, { color: tint }]}>{fmtCurrency(Math.abs(balance), p.default_currency)}</Text>
+      <View style={{ alignItems: "flex-end" }}>
+        {inrMatches ? (
+          <Text style={[styles.miniBal, { color: tint }]}>
+            {fmtCurrency(Math.abs(inrBal), "INR")}
+          </Text>
+        ) : null}
+        {thbMatches ? (
+          <Text
+            style={[
+              styles.miniBal,
+              { color: tint, fontSize: inrMatches ? 12 : 14, marginTop: inrMatches ? 2 : 0 },
+            ]}
+          >
+            {fmtCurrency(Math.abs(thbBal), "THB")}
+          </Text>
+        ) : null}
+      </View>
     </TouchableOpacity>
   );
 }

@@ -300,6 +300,20 @@ export default function ShipmentDetail({
               <Text style={styles.modifyBtnBodyText}>Modify</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Generate Invoice — visible on every shipment so the operator can
+              raise a bill any time (draft, in-transit, delivered). The
+              invoice form is prefilled with consignment / route / bags /
+              freight and, on save, the backend auto-posts a debit entry to
+              the party's ledger in the shipment currency. */}
+          <TouchableOpacity
+            style={styles.invoiceBtn}
+            onPress={() => router.push(`/invoice/new?shipmentId=${s.id}` as never)}
+            testID="generate-invoice-btn"
+          >
+            <Ionicons name="document-text-outline" size={16} color={colors.bg} />
+            <Text style={styles.invoiceBtnText}>Generate Invoice</Text>
+          </TouchableOpacity>
         </LinearGradient>
 
         {/* Money card */}
@@ -697,6 +711,24 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   advanceText: { color: colors.bg, fontWeight: "800", fontSize: 14, textTransform: "capitalize", letterSpacing: 0.3 },
+
+  // Generate Invoice CTA
+  invoiceBtn: {
+    marginTop: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.lime,
+  },
+  invoiceBtnText: {
+    color: colors.bg,
+    fontWeight: "800",
+    fontSize: 14,
+    letterSpacing: 0.3,
+  },
 
   // Money
   moneyCard: {

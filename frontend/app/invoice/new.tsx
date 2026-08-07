@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -15,9 +15,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiPost } from "@/src/api/client";
+import { apiGet, apiPost } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
-import type { Currency, Invoice, Item, Party } from "@/src/api/types";
+import type { Currency, Invoice, Item, Party, Shipment, ShipmentBag } from "@/src/api/types";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
 
@@ -25,6 +25,8 @@ type Line = { description: string; quantity: string; rate: string; item_id?: str
 
 export default function NewInvoiceScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ shipmentId?: string }>();
+  const shipmentIdParam = params.shipmentId || null;
   const parties = useApi<Party[]>("/api/parties");
   const items = useApi<Item[]>("/api/items");
 
@@ -37,6 +39,86 @@ export default function NewInvoiceScreen() {
   const [pickParty, setPickParty] = useState(false);
   const [pickForLine, setPickForLine] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [shipmentId, setShipmentId] = useState<string | null>(shipmentIdParam);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Prefill from shipment. Fetches the shipment + its bags and materializes:
+  //  · Invoice #        → INV-{consignment_no}
+  //  · Party            → shipment.party_id (primary Bill-to)
+  //  · Currency         → shipment.freight_currency
+  //  · Line 1           → Freight for the consignment
+  //  · Notes            → Bag + item breakdown (informational)
+  useEffect(() => {
+    if (!shipmentIdParam || hydrated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [s, bags] = await Promise.all([
+          apiGet<Shipment>(`/api/shipments/${shipmentIdParam}`),
+          apiGet<ShipmentBag[]>(`/api/shipments/${shipmentIdParam}/bags`).catch(
+            () => [] as ShipmentBag[],
+          ),
+        ]);
+        if (cancelled) return;
+        const bagList = bags || [];
+        const totalWeight = bagList.reduce(
+          (sum, b) => sum + (Number(b.weight_kg) || 0),
+          0,
+        );
+        const route = `${s.origin || "?"} → ${s.destination || "?"}`;
+        setNumber(`INV-${s.consignment_no || shipmentIdParam.slice(0, 6)}`);
+        setPartyId(s.party_id || null);
+        setCurrency((s.freight_currency as Currency) || "THB");
+        setShipmentId(s.id);
+        setLines([
+          {
+            description: `Freight — ${s.consignment_no || "shipment"} · ${route} · ${bagList.length || s.bag_count || 0} bag${(bagList.length || s.bag_count) === 1 ? "" : "s"} · ${totalWeight || s.weight_kg || 0} kg`,
+            quantity: "1",
+            rate: String(Number(s.freight) || 0),
+          },
+        ]);
+        // Notes: full bag manifest so the printed invoice carries content
+        // + Bill-to details without polluting the line-item totals.
+        const partyById = new Map<string, Party>();
+        (parties.data || []).forEach((p) => partyById.set(p.id, p));
+        const manifestLines: string[] = [];
+        bagList.forEach((bag, i) => {
+          const wt = Number(bag.weight_kg) || 0;
+          const cust =
+            (bag.end_customer_id && partyById.get(bag.end_customer_id)?.name) || "—";
+          const items = (bag.items || [])
+            .map((it) => {
+              const q = Number(it.quantity) || 0;
+              const unit = it.unit || "pcs";
+              // The shipment form saves items with `name`; older/back-end
+              // records may use `description`. Accept either.
+              const label = (it as { name?: string; description?: string }).name
+                || it.description
+                || "item";
+              return `${label} ${q} ${unit}`;
+            })
+            .join(", ");
+          manifestLines.push(
+            `${bag.bag_no || `BAG-${String(i + 1).padStart(3, "0")}`} · ${wt} kg · ${cust}${items ? ` · ${items}` : ""}`,
+          );
+        });
+        setNotes(
+          [
+            `Auto-generated from shipment ${s.consignment_no}`,
+            manifestLines.length ? `\nBag manifest:\n${manifestLines.join("\n")}` : "",
+          ]
+            .filter(Boolean)
+            .join(""),
+        );
+        setHydrated(true);
+      } catch (e) {
+        Alert.alert("Prefill failed", (e as Error).message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shipmentIdParam, parties.data, hydrated]);
 
   const customers = useMemo(
     () => (parties.data || []).filter((p) => p.role === "customer"),
@@ -68,6 +150,7 @@ export default function NewInvoiceScreen() {
       const payload = {
         number: number.trim(),
         party_id: partyId,
+        shipment_id: shipmentId,
         date: new Date().toISOString().slice(0, 10),
         currency,
         items: lines
