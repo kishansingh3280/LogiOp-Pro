@@ -18,7 +18,15 @@ import { apiPost } from "@/src/api/client";
 import type { Currency, Party, PartyRole } from "@/src/api/types";
 import { colors, radii, spacing } from "@/src/theme";
 
-const ROLES: PartyRole[] = ["customer", "supplier", "carrier", "vendor", "other"];
+const ROLES: PartyRole[] = ["customer", "end_customer", "supplier", "carrier", "vendor", "other"];
+const ROLE_LABEL: Record<PartyRole, string> = {
+  customer: "Main Party",
+  end_customer: "End Customer",
+  supplier: "Supplier",
+  carrier: "Carrier",
+  vendor: "Vendor",
+  other: "Other",
+};
 
 export default function NewPartyScreen() {
   const router = useRouter();
@@ -86,7 +94,7 @@ export default function NewPartyScreen() {
                     onPress={() => setRole(r)}
                     style={[styles.seg, active && styles.segActive]}
                   >
-                    <Text style={[styles.segText, active && styles.segTextActive]}>{r}</Text>
+                    <Text style={[styles.segText, active && styles.segTextActive]}>{ROLE_LABEL[r]}</Text>
                   </TouchableOpacity>
                 );
               })}

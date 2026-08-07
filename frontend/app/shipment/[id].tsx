@@ -273,23 +273,33 @@ export default function ShipmentDetail({
             <HeroStat icon="swap-horizontal-outline" label="Route" value={(s.direction || "").replace("_TO_", "→")} />
           </View>
 
-          {nextLabel && (
+          <View style={styles.actionRow}>
+            {nextLabel && (
+              <TouchableOpacity
+                style={[styles.advanceBtn, { flex: 1 }]}
+                onPress={advance}
+                disabled={busy}
+                testID="advance-status-btn"
+              >
+                {busy ? (
+                  <ActivityIndicator color={colors.bg} size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="arrow-forward-circle" size={18} color={colors.bg} />
+                    <Text style={styles.advanceText}>Mark as {nextLabel.replace("_", " ")}</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
-              style={styles.advanceBtn}
-              onPress={advance}
-              disabled={busy}
-              testID="advance-status-btn"
+              style={styles.modifyBtnBody}
+              onPress={() => router.push(`/shipment/new?editId=${s.id}` as never)}
+              testID="modify-shipment-body-btn"
             >
-              {busy ? (
-                <ActivityIndicator color={colors.bg} size="small" />
-              ) : (
-                <>
-                  <Ionicons name="arrow-forward-circle" size={18} color={colors.bg} />
-                  <Text style={styles.advanceText}>Mark as {nextLabel.replace("_", " ")}</Text>
-                </>
-              )}
+              <Ionicons name="create-outline" size={16} color={colors.lime} />
+              <Text style={styles.modifyBtnBodyText}>Modify</Text>
             </TouchableOpacity>
-          )}
+          </View>
         </LinearGradient>
 
         {/* Money card */}

@@ -2,7 +2,7 @@
 export type Direction = "IN_TO_TH" | "TH_TO_IN";
 export type ShipmentMode = "air" | "sea" | "land" | "hand_carry";
 export type ShipmentStatus = "pending" | "in_transit" | "warehouse_arrived" | "delivered";
-export type PartyRole = "customer" | "supplier" | "carrier" | "vendor" | "other";
+export type PartyRole = "customer" | "end_customer" | "supplier" | "carrier" | "vendor" | "other";
 export type Currency = "INR" | "THB";
 
 export interface RateCardEntry {

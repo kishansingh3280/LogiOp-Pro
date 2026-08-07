@@ -60,13 +60,15 @@ export default function NewShipmentScreen() {
   interface BagRow {
     bag_no: string;         // display only (auto-numbered)
     weight_kg: string;
-    end_customer_id: string | null;
+    end_customer_id: string | null;   // Recipient — who physically receives the bag
+    bill_to_party_id: string | null;  // Bill-to — whose ledger is charged for freight
     items: BagItemRow[];
   }
   const [bags, setBags] = useState<BagRow[]>([
-    { bag_no: "BAG-001", weight_kg: "", end_customer_id: null, items: [] },
+    { bag_no: "BAG-001", weight_kg: "", end_customer_id: null, bill_to_party_id: null, items: [] },
   ]);
   const [pickBagIdx, setPickBagIdx] = useState<number | null>(null);
+  const [pickBillToIdx, setPickBillToIdx] = useState<number | null>(null);
   const [pickItemBagIdx, setPickItemBagIdx] = useState<number | null>(null);
 
   const customers = useMemo(
@@ -92,6 +94,7 @@ export default function NewShipmentScreen() {
         bag_no: `BAG-${String(prev.length + 1).padStart(3, "0")}`,
         weight_kg: "",
         end_customer_id: null,
+        bill_to_party_id: null,
         items: [],
       },
     ]);
@@ -146,7 +149,7 @@ export default function NewShipmentScreen() {
         setNotes(s.notes || "");
         // Load existing bags into the per-bag editor.
         try {
-          const rawBags = await apiGet<{ id: string; bag_no: string; weight_kg: number; end_customer_id: string | null; items?: { item_id: string; name: string; quantity: number; unit: string }[] }[]>(
+          const rawBags = await apiGet<{ id: string; bag_no: string; weight_kg: number; end_customer_id: string | null; bill_to_party_id?: string | null; items?: { item_id: string; name: string; quantity: number; unit: string }[] }[]>(
             `/api/shipments/${editId}/bags`,
           );
           if (!cancelled && Array.isArray(rawBags) && rawBags.length > 0) {
@@ -155,6 +158,7 @@ export default function NewShipmentScreen() {
                 bag_no: b.bag_no || `BAG-${String(i + 1).padStart(3, "0")}`,
                 weight_kg: String(b.weight_kg ?? ""),
                 end_customer_id: b.end_customer_id || null,
+                bill_to_party_id: b.bill_to_party_id || s.party_id || null,
                 items: (b.items || []).map((it) => ({
                   item_id: it.item_id,
                   name: it.name,
@@ -179,20 +183,19 @@ export default function NewShipmentScreen() {
       toast.warn("Consignment number is required");
       return;
     }
-    // At least one bag must be assigned to a customer — otherwise there's
-    // no ledger link to bill the shipment against.
-    const firstAssigned = bags.find((b) => !!b.end_customer_id);
-    if (!firstAssigned) {
-      toast.warn("Assign each bag to a party/customer");
+    // Every bag must be assigned to a Bill-to party (that's whose ledger
+    // is charged for freight + carrier fees). Recipient is optional (may
+    // be entered later).
+    const firstBillTo = bags.find((b) => !!b.bill_to_party_id);
+    if (!firstBillTo) {
+      toast.warn("Assign each bag a Party (Bill-to)");
       return;
     }
     setBusy(true);
     try {
-      // The backend still requires a `party_id` on the shipment (it treats
-      // it as the "primary client"). We use the first bag's customer so the
-      // record stays queryable in the parties view — but the real per-bag
-      // billing happens through each bag's `end_customer_id`.
-      const primaryPartyId = firstAssigned.end_customer_id!;
+      // Shipment's primary `party_id` = the first bag's Bill-to. This is
+      // whose ledger will be charged for freight & carrier fees.
+      const primaryPartyId = firstBillTo.bill_to_party_id!;
       const totalBags = bags.length;
       const totalWeightKg = bags.reduce((s, b) => s + (parseFloat(b.weight_kg) || 0), 0);
       const shipmentPayload = {
@@ -237,6 +240,7 @@ export default function NewShipmentScreen() {
         const row = bags[i];
         return apiPut(`/api/bags/${lb.id}`, {
           end_customer_id: row.end_customer_id,
+          bill_to_party_id: row.bill_to_party_id,
           weight_kg: parseFloat(row.weight_kg) || 0,
           items: row.items.map((it) => ({
             item_id: it.item_id,
@@ -322,6 +326,7 @@ export default function NewShipmentScreen() {
             <View style={{ gap: 10 }}>
               {bags.map((b, idx) => {
                 const cust = (parties.data || []).find((p) => p.id === b.end_customer_id);
+                const billTo = (parties.data || []).find((p) => p.id === b.bill_to_party_id);
                 return (
                   <View key={idx} style={styles.bagCard}>
                     <View style={styles.bagCardHead}>
@@ -345,20 +350,34 @@ export default function NewShipmentScreen() {
                           testID={`bag-weight-${idx}`}
                         />
                       </View>
-                      <View style={{ width: 10 }} />
-                      <View style={{ flex: 1.4 }}>
-                        <Text style={styles.bagFieldLbl}>Party / Customer</Text>
-                        <TouchableOpacity
-                          style={styles.selectBtn}
-                          onPress={() => setPickBagIdx(idx)}
-                          testID={`bag-party-${idx}`}
-                        >
-                          <Text style={[styles.selectText, !cust && styles.selectPh]} numberOfLines={1}>
-                            {cust?.name || "Choose"}
-                          </Text>
-                          <Ionicons name="chevron-down" size={14} color={colors.textDim} />
-                        </TouchableOpacity>
-                      </View>
+                    </View>
+
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={styles.bagFieldLbl}>Party (Bill-to)</Text>
+                      <TouchableOpacity
+                        style={styles.selectBtn}
+                        onPress={() => setPickBillToIdx(idx)}
+                        testID={`bag-billto-${idx}`}
+                      >
+                        <Text style={[styles.selectText, !billTo && styles.selectPh]} numberOfLines={1}>
+                          {billTo?.name || "Choose the bill-to party"}
+                        </Text>
+                        <Ionicons name="chevron-down" size={14} color={colors.textDim} />
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={styles.bagFieldLbl}>End Customer (Recipient)</Text>
+                      <TouchableOpacity
+                        style={styles.selectBtn}
+                        onPress={() => setPickBagIdx(idx)}
+                        testID={`bag-party-${idx}`}
+                      >
+                        <Text style={[styles.selectText, !cust && styles.selectPh]} numberOfLines={1}>
+                          {cust?.name || "Choose the recipient"}
+                        </Text>
+                        <Ionicons name="chevron-down" size={14} color={colors.textDim} />
+                      </TouchableOpacity>
                     </View>
 
                     {/* Item lines inside this bag */}
@@ -464,7 +483,19 @@ export default function NewShipmentScreen() {
             patchBag(pickBagIdx, { end_customer_id: p.id });
             setPickBagIdx(null);
           }}
-          title={`Bag ${(bags[pickBagIdx]?.bag_no) || ""} — choose customer`}
+          title={`Bag ${(bags[pickBagIdx]?.bag_no) || ""} — recipient`}
+        />
+      )}
+
+      {pickBillToIdx !== null && (
+        <PartyPicker
+          list={(parties.data || []).filter((p) => p.role === "customer" || p.role === "vendor" || p.role === "other")}
+          onClose={() => setPickBillToIdx(null)}
+          onPick={(p) => {
+            patchBag(pickBillToIdx, { bill_to_party_id: p.id });
+            setPickBillToIdx(null);
+          }}
+          title={`Bag ${(bags[pickBillToIdx]?.bag_no) || ""} — bill-to party`}
         />
       )}
 
