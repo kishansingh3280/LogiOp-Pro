@@ -1,0 +1,77 @@
+{
+  "summary": "Cache/refresh verification PASS. Fresh Metro build after cache purge is serving the ABSOLUTE LATEST UI. Ledger (Khatabook redesign), Shipment detail CN-1004 (redesigned hero + money card + parties + bags), backend routing (100% to logistics-hub-1349), and console health all confirmed via screenshots and network capture.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* styles", "issue": "Console warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Non-blocking, RN Web deprecation."},
+      {"component": "props.pointerEvents", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents.' Non-blocking, RN Web deprecation."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Optional, low priority) Migrate remaining `shadow*` style props to `boxShadow` and `props.pointerEvents` to `style.pointerEvents` to silence deprecation warnings on RN Web."
+  ],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Web preview at https://native-logistics-hub.preview.emergentagent.com is serving the latest bundle post cache purge. All API traffic (30/30 requests captured) routes to https://logistics-hub-1349.emergent.host/api/*, zero hits to preview/api. CN-1004 is currently in 'Pending' state; advance button label is 'Mark as in transit' (title-case in source, rendered uppercase in hero button via CSS). Ledger shows 6 parties, YOU WILL GET ₹6,705 / YOU WILL GIVE ₹1,500, Net position ₹5,205. When user reopens Expo Go and rescans QR on Samsung Tab S11 they will receive this bundle. No further action needed.",
+  "rca_of_issue": "N/A — verification only.",
+  "checkpoint_results": {
+    "ledger_redesign": {
+      "status": "PASS",
+      "markers_seen": [
+        "subtitle: '6 parties · tap to view or add entry'",
+        "YOU WILL GET ₹6,705 (rendered uppercase via textTransform)",
+        "YOU WILL GIVE ₹1,500",
+        "NET POSITION footer ₹5,205 · ฿0",
+        "TOP RECEIVABLES card (Lalit ₹5,305, Rahul HandCarrier ₹1,400)",
+        "TOP PAYABLES card (Raj Hand-Carrier ₹1,500)",
+        "ALL PARTIES header with search input and chips: All / Customer / Supplier / Carrier",
+        "Green FAB 'Add entry' with testID fab-add-entry (bottom-right)",
+        "Old marker 'Snapshot & entries' NOT present"
+      ]
+    },
+    "shipment_cn1004_redesign": {
+      "status": "PASS",
+      "current_state": "Pending",
+      "advance_button_label": "Mark as in transit",
+      "markers_seen": [
+        "Header CN-1004 with delete icon and back arrow",
+        "Hero card CONSIGNMENT CN-1004 (Pending badge)",
+        "FROM Kolkata → TO Bangkok",
+        "Chips: BAGS 3 · WEIGHT 30 Kg · MODE Hand Carry · ROUTE IN→TH",
+        "Lime 'Mark As In Transit' CTA (testID advance-status-btn)",
+        "Money card: CUSTOMER WILL PAY ฿145 (from Lalit) | YOU PAY CARRIER ₹6,000 (Rahul HandCarrier · ₹200/kg) | YOUR MARGIN ฿-1,960.26",
+        "PARTIES card: Customer Lalit (party-customer), Carrier Rahul HandCarrier (party-carrier)",
+        "BAGS (3) section, BAG-001 with End customer Somchai",
+        "GOODS INSIDE list (Cotton Bedsheets, Cotton Fabrics) — text found in DOM",
+        "All testIDs present: advance-status-btn, money-card, party-customer, party-carrier, bag-BAG-001, bag-BAG-002, bag-BAG-003"
+      ]
+    },
+    "api_routing": {
+      "status": "PASS",
+      "total_requests_captured": 30,
+      "to_live_backend_logistics-hub-1349": 30,
+      "to_preview_api": 0,
+      "sample_endpoints": [
+        "/api/dashboard/stats",
+        "/api/dashboard/warehouse",
+        "/api/dashboard/ledger-summary",
+        "/api/shipments",
+        "/api/shipments/d373f59d-a426-432c-992a-a28f7ce7d042 (and nested bag/party fetches)"
+      ]
+    },
+    "console_health": {
+      "status": "PASS",
+      "errors": 0,
+      "red_box": false,
+      "warnings": ["shadow* deprecation (RN Web)", "props.pointerEvents deprecation (RN Web)"]
+    }
+  }
+}
