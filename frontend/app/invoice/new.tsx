@@ -40,6 +40,9 @@ export default function NewInvoiceScreen() {
   const [notes, setNotes] = useState("");
   const [pickParty, setPickParty] = useState(false);
   const [pickForLine, setPickForLine] = useState<number | null>(null);
+  // Which line's description input currently has focus (drives the inline
+  // autocomplete dropdown). null = no dropdown visible.
+  const [focusedLine, setFocusedLine] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [shipmentId, setShipmentId] = useState<string | null>(shipmentIdParam);
   const [hydrated, setHydrated] = useState(false);
@@ -282,69 +285,163 @@ export default function NewInvoiceScreen() {
             </TouchableOpacity>
           </View>
 
-          {lines.map((l, i) => (
-            <View key={i} style={styles.lineBox}>
-              {/* Description input with an embedded "Pick item" chip on the
-                  left so the user doesn't have to hunt for a separate button.
-                  Selecting a catalog item fills the description + rate below. */}
-              <View style={styles.descRow}>
-                <TouchableOpacity
-                  style={styles.itemPickInline}
-                  onPress={() => setPickForLine(i)}
-                  testID={`line-item-pick-${i}`}
-                >
-                  <Ionicons name="pricetag-outline" size={14} color={colors.lime} />
-                  <Text style={styles.itemPickInlineText}>
-                    {l.item_id ? "Change" : "Item"}
-                  </Text>
-                </TouchableOpacity>
-                <TextInput
-                  style={styles.descInput}
-                  placeholder="Description"
-                  placeholderTextColor={colors.textDim}
-                  value={l.description}
-                  onChangeText={(t) => setLine(i, { description: t })}
-                  testID={`line-desc-${i}`}
-                />
-                {lines.length > 1 && (
-                  <TouchableOpacity
-                    onPress={() => removeLine(i)}
-                    style={styles.lineRemoveInline}
-                    testID={`line-remove-${i}`}
-                    hitSlop={8}
-                  >
-                    <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                  </TouchableOpacity>
+          {lines.map((l, i) => {
+            // Compute autocomplete suggestions for this line. When the input
+            // is focused with no text yet we show the top of the catalog;
+            // once the user starts typing we do a case-insensitive substring
+            // match against name + tags so multi-word searches still work.
+            const q = l.description.trim().toLowerCase();
+            const catalog = items.data || [];
+            const isFocused = focusedLine === i;
+            const suggestions = isFocused
+              ? (q
+                  ? catalog
+                      .filter((it) => {
+                        const hay = [it.name || "", ...(it.tags || [])]
+                          .join(" ")
+                          .toLowerCase();
+                        return hay.includes(q) && (it.name || "").toLowerCase() !== q;
+                      })
+                      .slice(0, 6)
+                  : catalog.slice(0, 6))
+              : [];
+            return (
+              <View key={i} style={styles.lineBox}>
+                {/* Description input doubles as an item search: as soon as
+                    it's focused (or the user starts typing) the catalog
+                    drops down below with matching items. Selecting one
+                    fills the description + rate + item_id. Typing more
+                    diverges from the catalog and clears the link. */}
+                <View style={styles.descRow}>
+                  <Ionicons
+                    name="search-outline"
+                    size={16}
+                    color={l.item_id ? colors.lime : colors.textDim}
+                    style={styles.descSearchIcon}
+                  />
+                  <TextInput
+                    style={styles.descInput}
+                    placeholder="Type to search catalog or write custom line"
+                    placeholderTextColor={colors.textDim}
+                    value={l.description}
+                    onChangeText={(t) =>
+                      setLine(i, {
+                        description: t,
+                        // If they diverge from the picked item's name, drop
+                        // the link so we don't misreport an item_id later.
+                        item_id:
+                          l.item_id &&
+                          catalog.find((c) => c.id === l.item_id)?.name !== t
+                            ? null
+                            : l.item_id,
+                      })
+                    }
+                    onFocus={() => setFocusedLine(i)}
+                    onBlur={() => {
+                      // Delay so a tap on a suggestion row still registers
+                      // before we unmount the dropdown.
+                      setTimeout(() => {
+                        setFocusedLine((prev) => (prev === i ? null : prev));
+                      }, 150);
+                    }}
+                    testID={`line-desc-${i}`}
+                  />
+                  {lines.length > 1 && (
+                    <TouchableOpacity
+                      onPress={() => removeLine(i)}
+                      style={styles.lineRemoveInline}
+                      testID={`line-remove-${i}`}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {/* Autocomplete dropdown */}
+                {suggestions.length > 0 && (
+                  <View style={styles.suggestBox} testID={`line-suggest-${i}`}>
+                    {suggestions.map((it) => (
+                      <TouchableOpacity
+                        key={it.id}
+                        style={styles.suggestRow}
+                        activeOpacity={0.7}
+                        onPress={() => {
+                          setLine(i, {
+                            description: it.name,
+                            rate: String(it.selling_price ?? l.rate),
+                            item_id: it.id,
+                          });
+                          setFocusedLine(null);
+                        }}
+                        testID={`line-suggest-${i}-${it.id}`}
+                      >
+                        {it.photo_url ? (
+                          <Image
+                            source={{ uri: it.photo_url }}
+                            style={styles.suggestThumb}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View style={[styles.suggestThumb, styles.suggestThumbPh]}>
+                            <Ionicons name="pricetag-outline" size={14} color={colors.textDim} />
+                          </View>
+                        )}
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.suggestName} numberOfLines={1}>
+                            {it.name}
+                          </Text>
+                          <Text style={styles.suggestMeta} numberOfLines={1}>
+                            {it.unit} · {fmtCurrency(it.selling_price, currency)}
+                            {(it.tags || []).length
+                              ? ` · ${(it.tags || []).slice(0, 2).join(", ")}`
+                              : ""}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                    {(items.data || []).length > 6 && (
+                      <TouchableOpacity
+                        style={styles.suggestMore}
+                        onPress={() => {
+                          setFocusedLine(null);
+                          setPickForLine(i);
+                        }}
+                      >
+                        <Ionicons name="apps-outline" size={14} color={colors.lime} />
+                        <Text style={styles.suggestMoreText}>Browse all items</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 )}
-              </View>
-              <View style={[styles.row2, { marginTop: 8 }]}>
-                <View style={{ flex: 1 }}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Qty"
-                    placeholderTextColor={colors.textDim}
-                    keyboardType="decimal-pad"
-                    value={l.quantity}
-                    onChangeText={(t) => setLine(i, { quantity: t })}
-                  />
+                <View style={[styles.row2, { marginTop: 8 }]}>
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Qty"
+                      placeholderTextColor={colors.textDim}
+                      keyboardType="decimal-pad"
+                      value={l.quantity}
+                      onChangeText={(t) => setLine(i, { quantity: t })}
+                    />
+                  </View>
+                  <View style={{ width: 12 }} />
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Rate"
+                      placeholderTextColor={colors.textDim}
+                      keyboardType="decimal-pad"
+                      value={l.rate}
+                      onChangeText={(t) => setLine(i, { rate: t })}
+                    />
+                  </View>
                 </View>
-                <View style={{ width: 12 }} />
-                <View style={{ flex: 1 }}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Rate"
-                    placeholderTextColor={colors.textDim}
-                    keyboardType="decimal-pad"
-                    value={l.rate}
-                    onChangeText={(t) => setLine(i, { rate: t })}
-                  />
-                </View>
+                <Text style={styles.lineTotal}>
+                  {fmtCurrency(Number(l.quantity || 0) * Number(l.rate || 0), currency)}
+                </Text>
               </View>
-              <Text style={styles.lineTotal}>
-                {fmtCurrency(Number(l.quantity || 0) * Number(l.rate || 0), currency)}
-              </Text>
-            </View>
-          ))}
+            );
+          })}
 
           <Field label="Tax %">
             <TextInput
@@ -578,8 +675,9 @@ const styles = StyleSheet.create({
   lineTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   itemPick: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: colors.limeGlow },
   itemPickText: { color: colors.lime, fontSize: 12, fontWeight: "700" },
-  // Embedded picker chip that lives inside the description row so the user
-  // doesn't have to scan for a floating "Pick item" button.
+  // Description row is a compound input: leading search icon + text input +
+  // trailing trash. The autocomplete dropdown renders directly below in the
+  // normal flow so the keyboard never covers it on mobile.
   descRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -587,22 +685,10 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
-    paddingLeft: 6,
+    paddingLeft: 10,
     paddingRight: 6,
   },
-  itemPickInline: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-    backgroundColor: colors.limeGlow,
-    borderColor: colors.lime,
-    borderWidth: StyleSheet.hairlineWidth,
-    marginRight: 8,
-  },
-  itemPickInlineText: { color: colors.lime, fontSize: 11, fontWeight: "800", letterSpacing: 0.3 },
+  descSearchIcon: { marginRight: 8 },
   descInput: {
     flex: 1,
     color: colors.text,
@@ -614,6 +700,46 @@ const styles = StyleSheet.create({
     padding: 6,
     marginLeft: 4,
   },
+  // Inline autocomplete dropdown — renders in normal flow (not absolute) so
+  // it plays nicely with ScrollView and the on-screen keyboard.
+  suggestBox: {
+    marginTop: 6,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radii.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    overflow: "hidden",
+  },
+  suggestRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  suggestThumb: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    backgroundColor: colors.chipBg,
+  },
+  suggestThumbPh: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  suggestName: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  suggestMeta: { color: colors.textDim, fontSize: 11, marginTop: 1 },
+  suggestMore: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    backgroundColor: colors.chipBg,
+  },
+  suggestMoreText: { color: colors.lime, fontSize: 12, fontWeight: "700" },
   lineTotal: { color: colors.lime, fontWeight: "800", textAlign: "right", marginTop: 8 },
   totalsBox: {
     backgroundColor: colors.surface,
