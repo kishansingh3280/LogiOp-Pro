@@ -11,7 +11,7 @@ import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
 
-import PartyDetail from "../party/[id]";
+import PartyDetail from "./party/[id]";
 
 const ROLES = ["all", "customer", "supplier", "carrier", "vendor"] as const;
 

@@ -1,13 +1,38 @@
 import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
 import { Tabs } from "expo-router";
-import { Platform, StyleSheet, View } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { Animated, Platform, Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { colors } from "@/src/theme";
+import { colors, radii } from "@/src/theme";
+
+// True-Black glassmorphism tab bar. Each active tab gets a lime-green
+// halo behind the icon and label; taps fire a spring-back pulse via
+// Animated.spring — no external libraries, keeps things at native 60fps
+// (and 120fps on ProMotion / high-refresh Android displays).
+
+type TabName = "index" | "shipments" | "invoices" | "ledger" | "bullion" | "more";
+
+interface TabDef {
+  name: TabName;
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}
+
+const TABS: TabDef[] = [
+  { name: "index", title: "Overview", icon: "grid-outline" },
+  { name: "shipments", title: "Shipments", icon: "cube-outline" },
+  { name: "invoices", title: "Invoices", icon: "document-text-outline" },
+  { name: "ledger", title: "Ledger", icon: "book-outline" },
+  { name: "bullion", title: "Bullion", icon: "diamond-outline" },
+  { name: "more", title: "More", icon: "ellipsis-horizontal" },
+];
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const bottomPad = Math.max(insets.bottom, Platform.OS === "android" ? 8 : 4);
+  const barHeight = 60 + bottomPad;
 
   return (
     <Tabs
@@ -15,80 +40,181 @@ export default function TabsLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.lime,
         tabBarInactiveTintColor: colors.textDim,
-        tabBarStyle: {
-          backgroundColor: "#050505",
-          borderTopColor: colors.border,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          height: 60 + bottomPad,
-          paddingBottom: bottomPad,
-          paddingTop: 8,
-        },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: "600",
-          letterSpacing: 0.2,
-        },
-        tabBarIcon: ({ color, size, focused }) => (
-          <TabIcon color={color} size={size} focused={focused} />
-        ),
+        tabBarStyle: { display: "none" }, // hide default bar; we render our own
+        // 120fps-friendly navigation animation.
+        animation: "shift",
       }}
+      tabBar={(props) => (
+        <View style={[styles.wrap, { height: barHeight, paddingBottom: bottomPad }]}>
+          <BlurView
+            tint="dark"
+            intensity={Platform.OS === "ios" ? 70 : 60}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.overlay} />
+          <View style={styles.row}>
+            {TABS.map((tab) => {
+              const route = props.state.routes.find((r) => r.name === tab.name);
+              if (!route) return null;
+              const focused = props.state.routes[props.state.index]?.name === tab.name;
+              return (
+                <TabButton
+                  key={tab.name}
+                  tab={tab}
+                  focused={focused}
+                  onPress={() => {
+                    const event = props.navigation.emit({
+                      type: "tabPress",
+                      target: route.key,
+                      canPreventDefault: true,
+                    });
+                    if (!focused && !event.defaultPrevented) {
+                      props.navigation.navigate(route.name, route.params);
+                    }
+                  }}
+                />
+              );
+            })}
+          </View>
+        </View>
+      )}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Overview",
-          tabBarIcon: ({ color, size }) => <Ionicons name="grid-outline" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="shipments"
-        options={{
-          title: "Shipments",
-          tabBarIcon: ({ color, size }) => <Ionicons name="cube-outline" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="ledger"
-        options={{
-          title: "Ledger",
-          tabBarIcon: ({ color, size }) => <Ionicons name="book-outline" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="bullion"
-        options={{
-          title: "Bullion",
-          tabBarIcon: ({ color, size }) => <Ionicons name="diamond-outline" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="parties"
-        options={{
-          title: "Parties",
-          tabBarIcon: ({ color, size }) => <Ionicons name="people-outline" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="more"
-        options={{
-          title: "More",
-          tabBarIcon: ({ color, size }) => <Ionicons name="ellipsis-horizontal" size={size} color={color} />,
-        }}
-      />
+      {TABS.map((t) => (
+        <Tabs.Screen key={t.name} name={t.name} options={{ title: t.title }} />
+      ))}
     </Tabs>
   );
 }
 
-function TabIcon({ color, focused }: { color: string; size: number; focused: boolean }) {
-  return <View style={[styles.dot, focused && { backgroundColor: color }]} />;
+function TabButton({
+  tab,
+  focused,
+  onPress,
+}: {
+  tab: TabDef;
+  focused: boolean;
+  onPress: () => void;
+}) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const glow = useRef(new Animated.Value(focused ? 1 : 0)).current;
+
+  // Focus glow — animated on every focus change so switching tabs by any
+  // means (deep link, back button, etc.) still lights up the pill.
+  useEffect(() => {
+    Animated.spring(glow, {
+      toValue: focused ? 1 : 0,
+      useNativeDriver: true,
+      stiffness: 200,
+      damping: 20,
+      mass: 0.4,
+    }).start();
+  }, [focused, glow]);
+
+  const pulse = () => {
+    // Deterministic 2-step spring — instant feedback, no fixed timeouts.
+    Animated.sequence([
+      Animated.spring(scale, {
+        toValue: 0.88,
+        useNativeDriver: true,
+        stiffness: 400,
+        damping: 15,
+        mass: 0.3,
+      }),
+      Animated.spring(scale, {
+        toValue: 1,
+        useNativeDriver: true,
+        stiffness: 300,
+        damping: 12,
+        mass: 0.3,
+      }),
+    ]).start();
+  };
+
+  const tint = focused ? colors.lime : colors.textDim;
+
+  return (
+    <Pressable
+      onPress={() => {
+        pulse();
+        onPress();
+      }}
+      style={styles.tab}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: focused }}
+      accessibilityLabel={tab.title}
+      testID={`tab-${tab.name}`}
+    >
+      <Animated.View style={[styles.tabInner, { transform: [{ scale }] }]}>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.glow,
+            {
+              opacity: glow,
+              transform: [{ scale: glow.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
+            },
+          ]}
+        />
+        <Ionicons name={tab.icon} size={20} color={tint} />
+        <Animated.Text
+          style={[
+            styles.label,
+            {
+              color: tint,
+              opacity: glow.interpolate({ inputRange: [0, 1], outputRange: [0.75, 1] }),
+            },
+          ]}
+        >
+          {tab.title}
+        </Animated.Text>
+      </Animated.View>
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
-  dot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "transparent",
-    marginTop: 4,
+  wrap: {
+    borderTopColor: "rgba(163, 230, 53, 0.10)",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(5, 5, 5, 0.55)",
+  },
+  row: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingTop: 6,
+  },
+  tab: { flex: 1, alignItems: "center", justifyContent: "center" },
+  tabInner: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  glow: {
+    position: "absolute",
+    top: -6,
+    bottom: -6,
+    left: -14,
+    right: -14,
+    borderRadius: radii.pill,
+    backgroundColor: "rgba(163, 230, 53, 0.14)",
+    borderColor: "rgba(163, 230, 53, 0.55)",
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: colors.lime,
+    shadowOpacity: 0.6,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
+  },
+  label: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+    marginTop: 2,
   },
 });

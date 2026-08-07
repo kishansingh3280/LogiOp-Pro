@@ -84,31 +84,55 @@ def _clean_mongo_id(doc: Dict[str, Any]) -> Dict[str, Any]:
 class BullionTrip(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     date: str
-    route: Optional[str] = None
+    route: Optional[str] = None              # "IN_TO_TH" | "TH_TO_IN"
     origin: Optional[str] = None
     destination: Optional[str] = None
-    weight_kg: float = 0.0
-    capacity_kg: Optional[float] = None
+    available_weight_kg: float = 0.0
+    available_slots: Optional[float] = None  # legacy
+    carrier_party_id: Optional[str] = None
     carrier_name: Optional[str] = None
+    airline_code: Optional[str] = None
     airline: Optional[str] = None
     flight_number: Optional[str] = None
     status: str = "planned"                  # planned / in_transit / completed / cancelled
     notes: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    # Allow the richer frontend schema to pass through without loss.
+    class Config:
+        extra = "allow"
 
 
 class BullionTransaction(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    txn_no: Optional[str] = None
     trip_id: Optional[str] = None
     type: str                                # "currency" | "gold"
-    weight_kg: float = 0.0
-    amount: float = 0.0                      # currency: USD/EUR/etc; gold: baht units
-    currency: Optional[str] = None           # for currency transactions
-    rate_inr_per_unit: Optional[float] = None
-    profit_inr: Optional[float] = 0.0
-    status: str = "pending"                  # pending / completed
+    status: str = "open"                     # open / in_transit / completed
+    weight_kg: Optional[float] = 0.0
     notes: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    # Ledger sync
+    ledger_entry_id: Optional[str] = None
+    ledger_posted_at: Optional[str] = None
+
+    # Currency carry
+    currency: Optional[str] = None
+    currency_amount: Optional[float] = None
+    purchase_rate_inr: Optional[float] = None
+    exchange_rate_thb: Optional[float] = None
+    transfer_rate_inr_per_thb: Optional[float] = None
+
+    # Gold carry
+    gold_amount: Optional[float] = None
+    gold_unit: Optional[str] = None          # "baht" | "grams"
+    gold_purchase_thb: Optional[float] = None
+    gold_cost_inr: Optional[float] = None
+    gold_sale_inr: Optional[float] = None
+
+    class Config:
+        extra = "allow"
 
 
 class BullionRates(BaseModel):
@@ -126,7 +150,12 @@ async def bullion_list_trips():
 
 @api_router.post("/bullion/trips")
 async def bullion_create_trip(trip: BullionTrip):
+    # Pydantic v1: use .dict() so `extra="allow"` fields are preserved.
     doc = trip.dict()
+    # If the client sent the older `available_slots` but not `available_weight_kg`,
+    # mirror the value so downstream aggregations keep working.
+    if not doc.get("available_weight_kg") and doc.get("available_slots"):
+        doc["available_weight_kg"] = float(doc["available_slots"])
     await db.bullion_trips.insert_one(doc.copy())
     return _clean_mongo_id(doc)
 
@@ -158,6 +187,18 @@ async def bullion_list_txns():
 @api_router.post("/bullion/transactions")
 async def bullion_create_txn(txn: BullionTransaction):
     doc = txn.dict()
+    # Auto-generate TXN-### if missing.
+    if not doc.get("txn_no"):
+        existing = await db.bullion_transactions.find({}, {"txn_no": 1}).to_list(5000)
+        max_n = 0
+        for e in existing:
+            tn = str(e.get("txn_no") or "")
+            if tn.startswith("TXN-"):
+                try:
+                    max_n = max(max_n, int(tn.split("-", 1)[1]))
+                except (ValueError, IndexError):
+                    pass
+        doc["txn_no"] = f"TXN-{str(max_n + 1).zfill(3)}"
     await db.bullion_transactions.insert_one(doc.copy())
     return _clean_mongo_id(doc)
 

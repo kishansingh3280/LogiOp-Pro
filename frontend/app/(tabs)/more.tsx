@@ -43,7 +43,7 @@ export default function MoreScreen() {
     {
       title: "Business",
       rows: [
-        { key: "invoices", label: "Invoices", icon: "document-text-outline", href: "/invoices" },
+        { key: "parties", label: "Parties", icon: "people-outline", href: "/parties" },
         { key: "items", label: "Items catalog", icon: "pricetags-outline", href: "/items" },
         { key: "warehouses", label: "Warehouses", icon: "business-outline", href: "/warehouses" },
       ],

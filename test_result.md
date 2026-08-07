@@ -101,3 +101,90 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Migrate the frontend Bullion module (Carrier trips, bullion transactions, and
+  global carrier rates) to use the new `/api/bullion/*` MongoDB-backed endpoints
+  exposed by the local FastAPI server. Previously the module wrote to
+  AsyncStorage only; now the Wingman AI gateway needs to see and mutate the
+  same data via REST. Also expand the backend Bullion Pydantic models so all
+  richer frontend fields (currency_amount, gold_amount, purchase_rate_inr,
+  exchange_rate_thb, gold_unit, gold_purchase_thb, gold_sale_inr, txn_no,
+  ledger_entry_id, airline_code, flight_number, available_weight_kg,
+  carrier_party_id, etc.) are preserved end-to-end.
+
+backend:
+  - task: "Bullion backend endpoints expanded to accept the full frontend schema"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Expanded BullionTrip and BullionTransaction Pydantic models with all
+          the fields the Expo frontend serializes (currency_amount, gold_amount,
+          purchase_rate_inr, exchange_rate_thb, transfer_rate_inr_per_thb,
+          gold_unit, gold_purchase_thb, gold_cost_inr, gold_sale_inr,
+          ledger_entry_id, ledger_posted_at, airline_code, flight_number,
+          available_weight_kg, carrier_party_id, txn_no) plus a Config with
+          extra="allow" so future fields pass through unchanged. Added auto
+          TXN-### number assignment when txn_no is absent, and legacy
+          available_slots → available_weight_kg fallback on trip create. Smoke
+          tested by curl (POST trip, POST txn, DELETE both) and by the UI
+          migration path (see below) — everything returned the expected fields
+          without loss.
+
+frontend:
+  - task: "Bullion store migrated from AsyncStorage to /api/bullion/* REST"
+    implemented: true
+    working: true
+    file: "frontend/src/bullion/store.ts, frontend/src/bullion/rates.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Rewrote src/bullion/store.ts and src/bullion/rates.ts to use apiGet/
+          apiPost/apiPut/apiDelete against /api/bullion/{trips,transactions,rates}
+          while keeping the exact same public API (useTrips, useTxns, useRates,
+          createTrip/updateTrip/deleteTrip, createTxn/updateTxn/deleteTxn,
+          setRates). Added a one-time migration step: when the backend list is
+          empty and legacy AsyncStorage data exists, we push it up on the first
+          load, then flip the MIGRATION_KEY so it never runs again. Verified
+          end-to-end by loading the Bullion tab — the pre-existing AsyncStorage
+          trip auto-migrated up ("Rahul HandCarrier · TG-317 · 20 kg free") and
+          a POST /api/bullion/transactions from the terminal appeared on the
+          UI as TXN-002 without a refresh gesture (proving Wingman-created
+          entries will now surface natively).
+
+metadata:
+  created_by: "main_agent"
+  version: "2.0"
+  test_sequence: 16
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Bullion backend endpoints expanded to accept the full frontend schema"
+    - "Bullion store migrated from AsyncStorage to /api/bullion/* REST"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Migrated the Bullion module frontend to use the backend REST endpoints
+      instead of AsyncStorage. Backend Pydantic models were expanded to accept
+      the full frontend field set and to auto-assign TXN numbers. Please
+      run the backend smoke tests for /api/bullion/{trips,transactions,rates}
+      (create, list, update, delete, round-trip field preservation, txn_no
+      auto-numbering when omitted) and verify Wingman-style POSTs also
+      succeed. Frontend UI already smoke-tested visually; testing agent should
+      focus on the REST layer only for this iteration.

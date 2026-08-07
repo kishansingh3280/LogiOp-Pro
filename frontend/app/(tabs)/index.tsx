@@ -117,37 +117,39 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Stat cards */}
-        <View style={[styles.statsGrid, tablet && styles.statsGridTablet]} testID="stat-grid">
-          <StatTile
-            title="Delivered"
-            value={String(s.delivered)}
-            sub={`${pct(s.delivered)}% of total`}
-            tint={colors.ok}
-            icon="checkmark-done-outline"
-          />
-          <StatTile
-            title="In Transit"
-            value={String(s.in_transit)}
-            sub={`${pct(s.in_transit)}% of total`}
-            tint={colors.info}
-            icon="airplane-outline"
-          />
-          <StatTile
-            title="Pending"
-            value={String(s.pending)}
-            sub={`${pct(s.pending)}% of total`}
-            tint={colors.warn}
-            icon="time-outline"
-          />
-          <StatTile
-            title="Warehouse"
-            value={String(s.warehouse_arrived)}
-            sub={`${pct(s.warehouse_arrived)}% of total`}
-            tint={colors.lime}
-            icon="business-outline"
-          />
-        </View>
+        {/* Stat cards — horizontal carousel so operators can flick through
+            KPIs one at a time on phones; falls back to a 2×2 grid on
+            tablets where horizontal space is abundant. */}
+        {tablet ? (
+          <View style={[styles.statsGrid, styles.statsGridTablet]} testID="stat-grid">
+            <StatTile title="Delivered" value={String(s.delivered)} sub={`${pct(s.delivered)}% of total`} tint={colors.ok} icon="checkmark-done-outline" />
+            <StatTile title="In Transit" value={String(s.in_transit)} sub={`${pct(s.in_transit)}% of total`} tint={colors.info} icon="airplane-outline" />
+            <StatTile title="Pending" value={String(s.pending)} sub={`${pct(s.pending)}% of total`} tint={colors.warn} icon="time-outline" />
+            <StatTile title="Warehouse" value={String(s.warehouse_arrived)} sub={`${pct(s.warehouse_arrived)}% of total`} tint={colors.lime} icon="business-outline" />
+          </View>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={168 + spacing.md}
+            decelerationRate="fast"
+            contentContainerStyle={styles.statsCarousel}
+            testID="stat-grid"
+          >
+            <View style={styles.statSnap}>
+              <StatTile title="Delivered" value={String(s.delivered)} sub={`${pct(s.delivered)}% of total`} tint={colors.ok} icon="checkmark-done-outline" />
+            </View>
+            <View style={styles.statSnap}>
+              <StatTile title="In Transit" value={String(s.in_transit)} sub={`${pct(s.in_transit)}% of total`} tint={colors.info} icon="airplane-outline" />
+            </View>
+            <View style={styles.statSnap}>
+              <StatTile title="Pending" value={String(s.pending)} sub={`${pct(s.pending)}% of total`} tint={colors.warn} icon="time-outline" />
+            </View>
+            <View style={styles.statSnap}>
+              <StatTile title="Warehouse" value={String(s.warehouse_arrived)} sub={`${pct(s.warehouse_arrived)}% of total`} tint={colors.lime} icon="business-outline" />
+            </View>
+          </ScrollView>
+        )}
 
         {/* Warehouse card */}
         <TouchableOpacity
@@ -481,6 +483,12 @@ const styles = StyleSheet.create({
   badgeText: { color: colors.lime, fontSize: 11, fontWeight: "700" },
   statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   statsGridTablet: { flexWrap: "nowrap" },
+  statsCarousel: {
+    paddingRight: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: 2,
+  },
+  statSnap: { width: 168 },
   stat: {
     flexGrow: 1,
     flexBasis: "47%",

@@ -1,0 +1,36 @@
+{
+  "summary": "Backend-only testing for the newly expanded Bullion REST endpoints. Created /app/backend/tests/test_bullion_endpoints.py with 13 pytest cases covering all 12 scenarios requested. All 13 tests PASSED against the public URL (https://native-logistics-hub.preview.emergentagent.com/api/bullion/*) under the repository's mandated pytest-xdist config (-n 2 --dist loadscope). Verified: (1) GET /api/bullion/rates returns defaults, strips _id/_singleton; (2) PUT rates round-trips 600/2700/250 and sets updated_at; (3) POST /trips full payload preserves date/route/carrier_party_id/carrier_name/airline_code/flight_number/available_weight_kg/notes with no field loss (extra='allow' works); (4) POST /trips with legacy available_slots=7 mirrors into available_weight_kg=7.0; (5) GET /trips lists the new trip; (6) PUT /trips/{id} patches notes+airline_code while preserving carrier_name/carrier_party_id/flight_number/route/available_weight_kg; (7) POST /transactions (currency) auto-assigns TXN-<n+1> and round-trips currency/currency_amount/purchase_rate_inr/exchange_rate_thb/weight_kg/trip_id/type/status='open'; (8) POST /transactions (gold) auto-increments and preserves all gold_* fields; (9) explicit txn_no='TXN-999' is honored (not overwritten); (10) PUT /transactions/{id} patches status='completed' and ledger_entry_id while preserving currency fields; (11) DELETE /transactions/{id} returns {ok:true}, list confirms absence, repeat DELETE returns 404; (12) DELETE /trips/{id} same behaviour. No backend issues found. Mongo _id is correctly stripped from every response. Note on spec: the request asked for TXN-001 initially; on a shared preview DB with existing rows the numbering starts from the current max+1 (auto-increment logic is correct), so the test captures the initial max first and asserts +1 / +2 relative to it.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bullion_endpoints.py",
+    "/app/test_reports/pytest/bullion_iter16_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py line 157: `if not doc.get('available_weight_kg')` treats 0.0 the same as missing, which is intentional for the legacy-slots fallback but means a trip explicitly created with 0 kg and a non-null available_slots will be overwritten. Low priority — flag if you ever need to support genuine 0-weight trips alongside legacy data.",
+    "server.py line 191-201: auto txn_no generation loads ALL prior transactions into memory each call (find({}, {'txn_no': 1}).to_list(5000)). Fine for hundreds of rows; consider a Mongo counter doc or an index-backed max query if the collection grows past a few thousand.",
+    "server.py line 164 & 207: PUT endpoints accept `Dict[str, Any]` with no Pydantic validation, so callers can inject arbitrary keys. That is by design for Wingman flexibility but worth noting — combined with `extra='allow'` on the models, malformed keys will persist silently."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bullion_endpoints.py (new)",
+    "/app/test_reports/pytest/bullion_iter16_results.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13)",
+    "frontend": "not tested (backend-only iteration per request)"
+  },
+  "seed_data_creation": "Tests self-clean: every TEST_-prefixed trip and transaction created during the run is deleted before the suite exits. No residual data in bullion_trips or bullion_transactions collections.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bullion REST layer is green as of iteration 16. Reuse /app/backend/tests/test_bullion_endpoints.py for regression. All 13 tests must live in TestBullionFlow (single class) because pytest.ini enforces `-n 2 --dist loadscope`, which pins one class to one xdist worker. Splitting into multiple classes will race on the shared STATE dict — do NOT refactor into separate classes without switching to loadgroup or file-based state. BASE_URL is resolved from EXPO_PUBLIC_BACKEND_URL (or EXPO_BACKEND_URL fallback). No auth needed. Wingman + FY/ledger flows were NOT re-tested this iteration — see iteration_13-15 reports for those. Frontend not touched.",
+  "rca_of_issue": "N/A — no failures. During initial run the tests were split across four classes and pytest-xdist's loadscope config assigned them to different workers, breaking the shared STATE dict (trip_id_full was set on gw1 but read as None on gw0). Consolidating all tests into a single TestBullionFlow class fixed the racing, since loadscope groups by class."
+}
