@@ -8,7 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { subscribeQueue, getQueue, flushQueue } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { DashboardStats, LedgerSummary, Shipment, WarehouseSummary } from "@/src/api/types";
-import { useBatches, useTrips, usedSlotsFor } from "@/src/bullion/store";
+import { useTrips, useTxns, usedSlotsFor } from "@/src/bullion/store";
 import { Card } from "@/src/components/ui";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
@@ -22,7 +22,7 @@ export default function DashboardScreen() {
   const ledger = useApi<LedgerSummary>("/api/dashboard/ledger-summary");
   const shipments = useApi<Shipment[]>("/api/shipments");
   const trips = useTrips();
-  const batches = useBatches();
+  const batches = useTxns();
 
   const [pending, setPending] = useState(0);
   useEffect(() => {

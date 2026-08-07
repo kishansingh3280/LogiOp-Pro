@@ -15,20 +15,26 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApi } from "@/src/api/hooks";
 import type { Party } from "@/src/api/types";
-import { usedSlotsFor, useBatches, useTrips } from "@/src/bullion/store";
-import type { BullionBatch, BullionStatus, CarrierTrip } from "@/src/bullion/types";
-import { STATUS_LABEL, STATUS_PHASE } from "@/src/bullion/types";
+import { usedSlotsFor, useTrips, useTxns } from "@/src/bullion/store";
+import {
+  computeTxn,
+  STATUS_COLOR,
+  STATUS_LABEL,
+  type BullionTxn,
+} from "@/src/bullion/types";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
 
-type View_ = "batches" | "trips";
+type View_ = "trades" | "trips";
+type Filter = "all" | "currency" | "gold" | "open" | "completed";
 
 export default function BullionScreen() {
   const router = useRouter();
   const trips = useTrips();
-  const batches = useBatches();
+  const txns = useTxns();
   const parties = useApi<Party[]>("/api/parties");
-  const [view, setView] = useState<View_>("batches");
+  const [view, setView] = useState<View_>("trades");
+  const [filter, setFilter] = useState<Filter>("all");
   const [fabOpen, setFabOpen] = useState(false);
 
   const partyMap = useMemo(() => {
@@ -37,19 +43,33 @@ export default function BullionScreen() {
     return m;
   }, [parties.data]);
 
+  const tradesSorted = useMemo(
+    () => txns.data.slice().sort((a, b) => (a.created_at > b.created_at ? -1 : 1)),
+    [txns.data],
+  );
+
+  const filtered = useMemo(() => {
+    if (filter === "all") return tradesSorted;
+    if (filter === "currency" || filter === "gold") return tradesSorted.filter((t) => t.type === filter);
+    if (filter === "open") return tradesSorted.filter((t) => t.status !== "completed");
+    return tradesSorted.filter((t) => t.status === "completed");
+  }, [tradesSorted, filter]);
+
   const tripsSorted = useMemo(
     () => trips.data.slice().sort((a, b) => (a.date > b.date ? -1 : 1)),
     [trips.data],
   );
-  const batchesSorted = useMemo(
-    () => batches.data.slice().sort((a, b) => (a.created_at > b.created_at ? -1 : 1)),
-    [batches.data],
-  );
 
-  const phase1 = batchesSorted.filter((b) => STATUS_PHASE[b.status] === 1);
-  const phase2 = batchesSorted.filter((b) => STATUS_PHASE[b.status] === 2);
-  const phase3 = batchesSorted.filter((b) => STATUS_PHASE[b.status] === 3 && b.status !== "sold");
-  const sold = batchesSorted.filter((b) => b.status === "sold");
+  // Aggregate stats
+  const stats = useMemo(() => {
+    let openCnt = 0, completedCnt = 0, totalProfit = 0;
+    txns.data.forEach((t) => {
+      const calc = computeTxn(t);
+      if (t.status === "completed") completedCnt++; else openCnt++;
+      if (calc.profit_inr !== null) totalProfit += calc.profit_inr;
+    });
+    return { openCnt, completedCnt, totalProfit };
+  }, [txns.data]);
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
@@ -57,54 +77,139 @@ export default function BullionScreen() {
         <View>
           <Text style={styles.title}>Bullion Work</Text>
           <Text style={styles.subtitle}>
-            {batches.data.length} batch{batches.data.length === 1 ? "" : "es"} · {trips.data.length} trip{trips.data.length === 1 ? "" : "s"}
+            {txns.data.length} trade{txns.data.length === 1 ? "" : "s"} · {trips.data.length} trip{trips.data.length === 1 ? "" : "s"}
           </Text>
         </View>
       </View>
 
-      {/* Segmented control */}
       <View style={styles.segRow}>
-        <SegBtn label="Batches" active={view === "batches"} onPress={() => setView("batches")} testID="bullion-tab-batches" />
+        <SegBtn label="Trading history" active={view === "trades"} onPress={() => setView("trades")} testID="bullion-tab-trades" />
         <SegBtn label="Carrier trips" active={view === "trips"} onPress={() => setView("trips")} testID="bullion-tab-trips" />
       </View>
 
-      {view === "batches" ? (
-        <ScrollView
+      {view === "trades" ? (
+        <FlatList
+          data={filtered}
+          keyExtractor={(t) => t.id}
           contentContainerStyle={styles.scroll}
-          refreshControl={<RefreshControl refreshing={batches.loading} onRefresh={batches.refresh} tintColor={colors.lime} />}
-        >
-          {/* Summary strip */}
-          <View style={styles.summaryStrip}>
-            <SummaryTile label="Phase 1" value={phase1.length} tint={colors.warn} sub="India" />
-            <SummaryTile label="Phase 2" value={phase2.length} tint={colors.info} sub="BKK" />
-            <SummaryTile label="Phase 3" value={phase3.length} tint={colors.lime} sub="Return" />
-            <SummaryTile label="Sold" value={sold.length} tint={colors.ok} sub="Done" />
-          </View>
+          ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+          refreshControl={<RefreshControl refreshing={txns.loading} onRefresh={txns.refresh} tintColor={colors.lime} />}
+          ListHeaderComponent={
+            <View>
+              {/* Summary */}
+              <View style={styles.statsStrip}>
+                <StatTile label="Open" value={String(stats.openCnt)} tint={colors.warn} />
+                <StatTile label="Completed" value={String(stats.completedCnt)} tint={colors.ok} />
+                <StatTile
+                  label="Net profit"
+                  value={fmtCurrency(stats.totalProfit, "INR")}
+                  tint={stats.totalProfit >= 0 ? colors.lime : colors.danger}
+                  wide
+                />
+              </View>
 
-          <PhaseSection
-            title="Phase 1 · Currency purchase (India)"
-            items={phase1}
-            trips={trips.data}
-            router={router}
-            emptyHint="No active batches. Tap + to start."
-          />
-          <PhaseSection
-            title="Phase 2 · Bangkok deposit & gold"
-            items={phase2}
-            trips={trips.data}
-            router={router}
-          />
-          <PhaseSection
-            title="Phase 3 · Return & final sale"
-            items={phase3}
-            trips={trips.data}
-            router={router}
-          />
-          {sold.length > 0 && (
-            <PhaseSection title="Sold" items={sold} trips={trips.data} router={router} muted />
-          )}
-          <View style={{ height: 80 }} />
-        </ScrollView>
+              {/* Filter chips */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow} style={{ flexGrow: 0 }}>
+                {(["all", "currency", "gold", "open", "completed"] as Filter[]).map((f) => {
+                  const active = filter === f;
+                  return (
+                    <TouchableOpacity
+                      key={f}
+                      onPress={() => setFilter(f)}
+                      style={[styles.chip, active && styles.chipActive]}
+                      testID={`filter-${f}`}
+                    >
+                      <Text style={[styles.chipText, active && styles.chipTextActive]}>{f}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyBox}>
+              <Ionicons name="diamond-outline" size={40} color={colors.textDim} />
+              <Text style={styles.emptyTitle}>No trades yet</Text>
+              <Text style={styles.emptySub}>Tap + to start a currency or gold carry</Text>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const calc = computeTxn(item);
+            const trip = trips.data.find((t) => t.id === item.trip_id);
+            const isGold = item.type === "gold";
+            const tint = STATUS_COLOR[item.status];
+            const tintColor = tint === "warn" ? colors.warn : tint === "info" ? colors.info : colors.ok;
+            return (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => router.push(`/bullion/txn/${item.id}` as never)}
+                style={styles.txnCard}
+                testID={`txn-${item.txn_no}`}
+              >
+                <View style={styles.txnHead}>
+                  <View style={styles.txnHeadLeft}>
+                    <View style={[styles.typeIcon, isGold && styles.typeIconGold]}>
+                      <Ionicons
+                        name={isGold ? "diamond" : "cash-outline"}
+                        size={14}
+                        color={isGold ? "#F5C518" : colors.lime}
+                      />
+                    </View>
+                    <View>
+                      <Text style={styles.txnNo}>{item.txn_no}</Text>
+                      <Text style={styles.txnKind}>
+                        {isGold
+                          ? `Gold · ${item.gold_amount || 0} ${item.gold_unit || "baht"}`
+                          : `Currency · ${item.currency_amount || 0} ${item.currency || "USD"}`}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={[styles.statusPill, { backgroundColor: tintColor + "22", borderColor: tintColor }]}>
+                    <Text style={[styles.statusPillText, { color: tintColor }]}>{STATUS_LABEL[item.status]}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.txnBody}>
+                  {!isGold ? (
+                    <>
+                      <Row label="INR spent" value={calc.inr_spent ? fmtCurrency(calc.inr_spent, "INR") : "—"} />
+                      <Row label="THB received" value={calc.thb_received ? fmtCurrency(calc.thb_received, "THB") : "—"} />
+                      {calc.inr_returned ? (
+                        <Row label="INR returned" value={fmtCurrency(calc.inr_returned, "INR")} tint={colors.ok} />
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <Row label="THB paid" value={item.gold_purchase_thb ? fmtCurrency(item.gold_purchase_thb, "THB") : "—"} />
+                      {calc.inr_cost ? <Row label="INR cost" value={fmtCurrency(calc.inr_cost, "INR")} /> : null}
+                      {item.gold_sale_inr ? (
+                        <Row label="INR sold" value={fmtCurrency(item.gold_sale_inr, "INR")} tint={colors.ok} />
+                      ) : null}
+                    </>
+                  )}
+                  <Row label="Carrier charge" value={fmtCurrency(calc.carrier_charge_inr, "INR")} tint={colors.danger} />
+                  {calc.profit_inr !== null ? (
+                    <Row
+                      label="Net profit"
+                      value={fmtCurrency(calc.profit_inr, "INR")}
+                      tint={calc.profit_inr >= 0 ? colors.lime : colors.danger}
+                      bold
+                    />
+                  ) : null}
+                </View>
+
+                <View style={styles.txnFoot}>
+                  <Ionicons name="airplane-outline" size={11} color={colors.textDim} />
+                  <Text style={styles.txnFootText}>
+                    {trip
+                      ? `${shortDate(trip.date)} · ${partyMap[trip.carrier_party_id || ""]?.name || trip.carrier_name || "Carrier"}`
+                      : "No trip assigned"}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          }}
+        />
       ) : (
         <FlatList
           data={tripsSorted}
@@ -120,7 +225,7 @@ export default function BullionScreen() {
             </View>
           }
           renderItem={({ item }) => {
-            const used = usedSlotsFor(item.id, batches.data);
+            const used = usedSlotsFor(item.id, txns.data);
             const free = Math.max(0, item.available_slots - used);
             const pct = item.available_slots > 0 ? Math.round((used / item.available_slots) * 100) : 0;
             const carrier = item.carrier_party_id ? partyMap[item.carrier_party_id] : undefined;
@@ -128,9 +233,7 @@ export default function BullionScreen() {
               <View style={styles.tripCard} testID={`trip-${item.id}`}>
                 <View style={styles.tripHead}>
                   <View style={styles.routeChip}>
-                    <Text style={styles.routeChipText}>
-                      {item.route === "IN_TO_TH" ? "IN → BKK" : "BKK → IN"}
-                    </Text>
+                    <Text style={styles.routeChipText}>{item.route === "IN_TO_TH" ? "IN → BKK" : "BKK → IN"}</Text>
                   </View>
                   <Text style={styles.tripDate}>{shortDate(item.date)}</Text>
                 </View>
@@ -139,9 +242,7 @@ export default function BullionScreen() {
                   <View style={styles.slotsTrack}>
                     <View style={[styles.slotsFill, { width: `${Math.min(100, pct)}%` }]} />
                   </View>
-                  <Text style={styles.slotsText}>
-                    {free}/{item.available_slots} free
-                  </Text>
+                  <Text style={styles.slotsText}>{free}/{item.available_slots} free</Text>
                 </View>
                 {item.notes ? <Text style={styles.tripNotes}>{item.notes}</Text> : null}
               </View>
@@ -150,13 +251,7 @@ export default function BullionScreen() {
         />
       )}
 
-      {/* FAB */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => setFabOpen(true)}
-        activeOpacity={0.9}
-        testID="bullion-fab"
-      >
+      <TouchableOpacity style={styles.fab} onPress={() => setFabOpen(true)} activeOpacity={0.9} testID="bullion-fab">
         <Ionicons name="add" size={26} color={colors.bg} />
       </TouchableOpacity>
 
@@ -165,40 +260,27 @@ export default function BullionScreen() {
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Create</Text>
-            <TouchableOpacity
-              style={styles.sheetItem}
-              onPress={() => {
-                setFabOpen(false);
-                router.push("/bullion/batch/new");
-              }}
-              testID="fab-new-batch"
-            >
-              <View style={styles.sheetIcon}>
-                <Ionicons name="diamond-outline" size={20} color={colors.lime} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sheetItemTitle}>New bullion batch</Text>
-                <Text style={styles.sheetItemSub}>Start a Phase 1 currency purchase</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.sheetItem}
-              onPress={() => {
-                setFabOpen(false);
-                router.push("/bullion/trip/new");
-              }}
+            <SheetItem
+              icon="cash-outline"
+              title="Currency carry"
+              sub="Buy foreign currency, carry to BKK"
+              onPress={() => { setFabOpen(false); router.push("/bullion/txn/new?type=currency"); }}
+              testID="fab-new-currency"
+            />
+            <SheetItem
+              icon="diamond-outline"
+              title="Gold carry"
+              sub="Buy gold in BKK, sell in India"
+              onPress={() => { setFabOpen(false); router.push("/bullion/txn/new?type=gold"); }}
+              testID="fab-new-gold"
+            />
+            <SheetItem
+              icon="airplane-outline"
+              title="Carrier trip"
+              sub="Log an upcoming India ⇄ BKK trip"
+              onPress={() => { setFabOpen(false); router.push("/bullion/trip/new"); }}
               testID="fab-new-trip"
-            >
-              <View style={styles.sheetIcon}>
-                <Ionicons name="airplane-outline" size={20} color={colors.lime} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sheetItemTitle}>New carrier trip</Text>
-                <Text style={styles.sheetItemSub}>Log an upcoming India ⇄ BKK trip</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
-            </TouchableOpacity>
+            />
             <TouchableOpacity style={styles.sheetCancel} onPress={() => setFabOpen(false)}>
               <Text style={styles.sheetCancelText}>Cancel</Text>
             </TouchableOpacity>
@@ -211,110 +293,42 @@ export default function BullionScreen() {
 
 function SegBtn({ label, active, onPress, testID }: { label: string; active: boolean; onPress: () => void; testID?: string }) {
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[styles.seg, active && styles.segActive]}
-      testID={testID}
-    >
+    <TouchableOpacity onPress={onPress} style={[styles.seg, active && styles.segActive]} testID={testID}>
       <Text style={[styles.segText, active && styles.segTextActive]}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-function SummaryTile({ label, value, tint, sub }: { label: string; value: number; tint: string; sub: string }) {
+function StatTile({ label, value, tint, wide }: { label: string; value: string; tint: string; wide?: boolean }) {
   return (
-    <View style={styles.sumTile}>
-      <Text style={styles.sumLbl}>{label}</Text>
-      <Text style={[styles.sumVal, { color: tint }]}>{value}</Text>
-      <Text style={styles.sumSub}>{sub}</Text>
+    <View style={[styles.stat, wide && { flex: 2 }]}>
+      <Text style={styles.statLbl}>{label}</Text>
+      <Text style={[styles.statVal, { color: tint }]}>{value}</Text>
     </View>
   );
 }
 
-function PhaseSection({
-  title,
-  items,
-  trips,
-  router,
-  emptyHint,
-  muted,
-}: {
-  title: string;
-  items: BullionBatch[];
-  trips: CarrierTrip[];
-  router: ReturnType<typeof useRouter>;
-  emptyHint?: string;
-  muted?: boolean;
-}) {
+function Row({ label, value, tint, bold }: { label: string; value: string; tint?: string; bold?: boolean }) {
   return (
-    <View style={styles.section}>
-      <Text style={[styles.sectionTitle, muted && { color: colors.textMuted }]}>{title}</Text>
-      {items.length === 0 ? (
-        emptyHint ? <Text style={styles.sectionEmpty}>{emptyHint}</Text> : null
-      ) : (
-        items.map((b) => (
-          <TouchableOpacity
-            key={b.id}
-            style={styles.batchCard}
-            activeOpacity={0.85}
-            onPress={() => router.push(`/bullion/batch/${b.id}` as never)}
-            testID={`batch-${b.batch_no}`}
-          >
-            <View style={styles.batchHead}>
-              <View style={styles.batchChip}>
-                <Ionicons name="diamond" size={12} color={colors.lime} />
-                <Text style={styles.batchChipText}>{b.batch_no}</Text>
-              </View>
-              <View style={styles.statusPill}>
-                <Text style={styles.statusPillText}>{STATUS_LABEL[b.status as BullionStatus]}</Text>
-              </View>
-            </View>
-            <View style={styles.batchRow}>
-              <Text style={styles.batchLbl}>Bought</Text>
-              <Text style={styles.batchVal}>
-                {fmtCurrency(b.purchase_amount_inr, "INR")} · {shortDate(b.purchase_date)}
-              </Text>
-            </View>
-            {b.bkk_deposit_amount_thb ? (
-              <View style={styles.batchRow}>
-                <Text style={styles.batchLbl}>Deposited</Text>
-                <Text style={styles.batchVal}>{fmtCurrency(b.bkk_deposit_amount_thb, "THB")}</Text>
-              </View>
-            ) : null}
-            {b.gold_weight_g ? (
-              <View style={styles.batchRow}>
-                <Text style={styles.batchLbl}>Gold</Text>
-                <Text style={[styles.batchVal, { color: colors.lime }]}>
-                  {b.gold_weight_g} g
-                  {b.gold_price_thb_per_g ? ` @ ${fmtCurrency(b.gold_price_thb_per_g, "THB")}/g` : ""}
-                </Text>
-              </View>
-            ) : null}
-            {b.final_sale_amount_inr ? (
-              <View style={styles.batchRow}>
-                <Text style={styles.batchLbl}>Sold for</Text>
-                <Text style={[styles.batchVal, { color: colors.ok }]}>{fmtCurrency(b.final_sale_amount_inr, "INR")}</Text>
-              </View>
-            ) : null}
-
-            {/* Trip assignments */}
-            <TripHint tripId={b.trip_id_to_bkk} trips={trips} label="→ BKK on" />
-            <TripHint tripId={b.trip_id_to_in} trips={trips} label="→ India on" />
-          </TouchableOpacity>
-        ))
-      )}
+    <View style={styles.row}>
+      <Text style={styles.rowLbl}>{label}</Text>
+      <Text style={[styles.rowVal, tint ? { color: tint } : null, bold && { fontWeight: "800" }]}>{value}</Text>
     </View>
   );
 }
 
-function TripHint({ tripId, trips, label }: { tripId?: string | null; trips: CarrierTrip[]; label: string }) {
-  if (!tripId) return null;
-  const t = trips.find((x) => x.id === tripId);
-  if (!t) return null;
+function SheetItem({ icon, title, sub, onPress, testID }: { icon: keyof typeof Ionicons.glyphMap; title: string; sub: string; onPress: () => void; testID: string }) {
   return (
-    <Text style={styles.tripHint}>
-      <Ionicons name="airplane-outline" size={11} color={colors.lime} /> {label} {shortDate(t.date)}
-    </Text>
+    <TouchableOpacity style={styles.sheetItem} onPress={onPress} testID={testID}>
+      <View style={styles.sheetIcon}>
+        <Ionicons name={icon} size={20} color={colors.lime} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sheetItemTitle}>{title}</Text>
+        <Text style={styles.sheetItemSub}>{sub}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+    </TouchableOpacity>
   );
 }
 
@@ -323,7 +337,6 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.md },
   title: { color: colors.text, fontSize: 26, fontWeight: "800" },
   subtitle: { color: colors.textDim, fontSize: 12, marginTop: 2 },
-
   segRow: {
     flexDirection: "row",
     marginHorizontal: spacing.lg,
@@ -338,86 +351,62 @@ const styles = StyleSheet.create({
   segActive: { backgroundColor: colors.lime },
   segText: { color: colors.textMuted, fontWeight: "700", fontSize: 13 },
   segTextActive: { color: colors.bg },
-
-  scroll: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
-
-  summaryStrip: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.lg },
-  sumTile: {
+  scroll: { paddingHorizontal: spacing.lg, paddingBottom: 100 },
+  statsStrip: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
+  stat: {
     flex: 1,
+    padding: 12,
     backgroundColor: colors.surface,
     borderRadius: radii.md,
     borderColor: colors.border,
     borderWidth: StyleSheet.hairlineWidth,
-    padding: 10,
-    alignItems: "center",
   },
-  sumLbl: { color: colors.textDim, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 },
-  sumVal: { fontSize: 22, fontWeight: "800", marginTop: 4 },
-  sumSub: { color: colors.textDim, fontSize: 10, marginTop: 2 },
-
-  section: { marginBottom: spacing.lg },
-  sectionTitle: {
-    color: colors.text,
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: spacing.sm,
+  statLbl: { color: colors.textDim, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 },
+  statVal: { fontSize: 20, fontWeight: "800", marginTop: 4 },
+  chipRow: { gap: 8, paddingBottom: spacing.md },
+  chip: {
+    height: 34, paddingHorizontal: 14, borderRadius: radii.pill,
+    backgroundColor: colors.chipBg, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center", justifyContent: "center", flexShrink: 0,
   },
-  sectionEmpty: { color: colors.textDim, fontSize: 12, paddingVertical: 8 },
-
-  batchCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    borderColor: colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    gap: 4,
+  chipActive: { backgroundColor: colors.lime, borderColor: colors.lime },
+  chipText: { color: colors.textMuted, fontSize: 12, fontWeight: "700", textTransform: "capitalize" },
+  chipTextActive: { color: colors.bg },
+  txnCard: {
+    backgroundColor: colors.surface, borderRadius: radii.lg,
+    borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.md, gap: 6,
   },
-  batchHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
-  batchChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radii.pill,
-    backgroundColor: colors.limeGlow,
-    borderColor: colors.lime,
-    borderWidth: 1,
+  txnHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  txnHeadLeft: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flex: 1 },
+  typeIcon: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: colors.limeGlow, borderColor: colors.lime, borderWidth: 1,
+    alignItems: "center", justifyContent: "center",
   },
-  batchChipText: { color: colors.lime, fontWeight: "800", fontSize: 11, letterSpacing: 0.3 },
-  statusPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: radii.pill,
-    backgroundColor: colors.chipBg,
-    borderColor: colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
+  typeIconGold: { backgroundColor: "#3a2f0033", borderColor: "#F5C518" },
+  txnNo: { color: colors.text, fontSize: 15, fontWeight: "800", letterSpacing: 0.3 },
+  txnKind: { color: colors.textDim, fontSize: 12, marginTop: 2 },
+  statusPill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: radii.pill, borderWidth: 1 },
+  statusPillText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.4 },
+  txnBody: { gap: 4, marginTop: spacing.sm, paddingTop: spacing.sm, borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth },
+  row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 },
+  rowLbl: { color: colors.textDim, fontSize: 12 },
+  rowVal: { color: colors.text, fontSize: 13, fontWeight: "600" },
+  txnFoot: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    marginTop: 6, paddingTop: 6, borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth,
   },
-  statusPillText: { color: colors.text, fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
-  batchRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 2 },
-  batchLbl: { color: colors.textDim, fontSize: 12 },
-  batchVal: { color: colors.text, fontSize: 13, fontWeight: "600" },
-  tripHint: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-
-  // Trips
+  txnFootText: { color: colors.textDim, fontSize: 11 },
   tripCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    borderColor: colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.surface, borderRadius: radii.lg,
+    borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
     padding: spacing.md,
   },
   tripHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
   routeChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: radii.pill,
-    backgroundColor: colors.limeGlow,
-    borderColor: colors.lime,
-    borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: radii.pill,
+    backgroundColor: colors.limeGlow, borderColor: colors.lime, borderWidth: 1,
   },
   routeChipText: { color: colors.lime, fontWeight: "800", fontSize: 12 },
   tripDate: { color: colors.text, fontSize: 13, fontWeight: "700" },
@@ -427,65 +416,39 @@ const styles = StyleSheet.create({
   slotsFill: { height: "100%", backgroundColor: colors.lime, borderRadius: 4 },
   slotsText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
   tripNotes: { color: colors.textDim, fontSize: 12, marginTop: 8 },
-
   emptyBox: { padding: spacing.xxl, alignItems: "center", gap: 8 },
   emptyTitle: { color: colors.text, fontSize: 15, fontWeight: "700", marginTop: 8 },
   emptySub: { color: colors.textDim, fontSize: 13, textAlign: "center" },
-
   fab: {
-    position: "absolute",
-    right: spacing.lg,
-    bottom: spacing.lg + 60,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.lime,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: colors.lime,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
+    position: "absolute", right: spacing.lg, bottom: spacing.lg + 60,
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: colors.lime, alignItems: "center", justifyContent: "center",
     elevation: 10,
   },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
   sheet: {
-    backgroundColor: colors.surfaceAlt,
-    padding: spacing.lg,
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-    borderColor: colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.surfaceAlt, padding: spacing.lg,
+    borderTopLeftRadius: radii.xl, borderTopRightRadius: radii.xl,
+    borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,
   },
-  sheetHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: "center",
-    marginBottom: spacing.md,
-  },
+  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: spacing.md },
   sheetTitle: { color: colors.text, fontSize: 16, fontWeight: "800", marginBottom: spacing.md },
   sheetItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    paddingVertical: 12,
-    borderTopColor: colors.border,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    paddingVertical: 12, borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth,
   },
   sheetIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.limeGlow,
-    borderColor: colors.lime,
-    borderWidth: 1,
+    width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.limeGlow, borderColor: colors.lime, borderWidth: 1,
   },
   sheetItemTitle: { color: colors.text, fontSize: 15, fontWeight: "700" },
   sheetItemSub: { color: colors.textDim, fontSize: 12, marginTop: 2 },
-  sheetCancel: { marginTop: spacing.md, paddingVertical: 12, alignItems: "center", borderRadius: radii.pill, backgroundColor: colors.chipBg },
+  sheetCancel: {
+    marginTop: spacing.md, paddingVertical: 12, alignItems: "center",
+    borderRadius: radii.pill, backgroundColor: colors.chipBg,
+  },
   sheetCancelText: { color: colors.text, fontWeight: "700" },
 });
+
+// Types re-export for other components (BullionTxn imported at top).
+export type { BullionTxn };
