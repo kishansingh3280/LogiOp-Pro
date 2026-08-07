@@ -170,7 +170,20 @@ export default function NewInvoiceScreen() {
       if ((res as { queued?: boolean }).queued) {
         Alert.alert("Queued", "Invoice saved locally — syncing later.");
       }
-      router.back();
+      // Prefer going back to the previous screen, but if the invoice form was
+      // opened deep-linked (no back stack) `router.back()` becomes a no-op and
+      // the user sees the button appear to "do nothing" even though the invoice
+      // did save. Fall through to a hard navigation so the flow always ends.
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        const savedId = (res as { id?: string }).id;
+        if (savedId) {
+          router.replace(`/invoice/${savedId}` as never);
+        } else {
+          router.replace("/invoices" as never);
+        }
+      }
     } catch (e) {
       Alert.alert("Failed", (e as Error).message);
     } finally {
@@ -245,25 +258,39 @@ export default function NewInvoiceScreen() {
 
           {lines.map((l, i) => (
             <View key={i} style={styles.lineBox}>
-              <View style={styles.lineTop}>
-                <TouchableOpacity style={styles.itemPick} onPress={() => setPickForLine(i)} testID={`line-item-pick-${i}`}>
+              {/* Description input with an embedded "Pick item" chip on the
+                  left so the user doesn't have to hunt for a separate button.
+                  Selecting a catalog item fills the description + rate below. */}
+              <View style={styles.descRow}>
+                <TouchableOpacity
+                  style={styles.itemPickInline}
+                  onPress={() => setPickForLine(i)}
+                  testID={`line-item-pick-${i}`}
+                >
                   <Ionicons name="pricetag-outline" size={14} color={colors.lime} />
-                  <Text style={styles.itemPickText}>Pick item</Text>
+                  <Text style={styles.itemPickInlineText}>
+                    {l.item_id ? "Change" : "Item"}
+                  </Text>
                 </TouchableOpacity>
+                <TextInput
+                  style={styles.descInput}
+                  placeholder="Description"
+                  placeholderTextColor={colors.textDim}
+                  value={l.description}
+                  onChangeText={(t) => setLine(i, { description: t })}
+                  testID={`line-desc-${i}`}
+                />
                 {lines.length > 1 && (
-                  <TouchableOpacity onPress={() => removeLine(i)} testID={`line-remove-${i}`}>
+                  <TouchableOpacity
+                    onPress={() => removeLine(i)}
+                    style={styles.lineRemoveInline}
+                    testID={`line-remove-${i}`}
+                    hitSlop={8}
+                  >
                     <Ionicons name="trash-outline" size={18} color={colors.danger} />
                   </TouchableOpacity>
                 )}
               </View>
-              <TextInput
-                style={styles.input}
-                placeholder="Description"
-                placeholderTextColor={colors.textDim}
-                value={l.description}
-                onChangeText={(t) => setLine(i, { description: t })}
-                testID={`line-desc-${i}`}
-              />
               <View style={[styles.row2, { marginTop: 8 }]}>
                 <View style={{ flex: 1 }}>
                   <TextInput
@@ -525,6 +552,42 @@ const styles = StyleSheet.create({
   lineTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   itemPick: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: colors.limeGlow },
   itemPickText: { color: colors.lime, fontSize: 12, fontWeight: "700" },
+  // Embedded picker chip that lives inside the description row so the user
+  // doesn't have to scan for a floating "Pick item" button.
+  descRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderRadius: radii.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    paddingLeft: 6,
+    paddingRight: 6,
+  },
+  itemPickInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.limeGlow,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginRight: 8,
+  },
+  itemPickInlineText: { color: colors.lime, fontSize: 11, fontWeight: "800", letterSpacing: 0.3 },
+  descInput: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 15,
+    paddingVertical: 12,
+    paddingRight: 6,
+  },
+  lineRemoveInline: {
+    padding: 6,
+    marginLeft: 4,
+  },
   lineTotal: { color: colors.lime, fontWeight: "800", textAlign: "right", marginTop: 8 },
   totalsBox: {
     backgroundColor: colors.surface,
