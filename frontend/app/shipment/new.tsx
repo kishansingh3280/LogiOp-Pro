@@ -20,6 +20,7 @@ import type { Currency, Direction, Party, Shipment, ShipmentMode } from "@/src/a
 import { ItemPicker } from "@/src/components/item-picker";
 import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
+import { syncShipmentLedger } from "@/src/utils/shipment-ledger-sync";
 
 const DIRECTIONS: { key: Direction; label: string }[] = [
   { key: "IN_TO_TH", label: "IN → TH" },
@@ -253,6 +254,43 @@ export default function NewShipmentScreen() {
         });
       });
       await Promise.all(bagUpdates);
+
+      // Freight + carrier ledger re-sync: the backend only creates ledger
+      // entries on shipment POST (once) and against a single global
+      // `party_id`. It never re-syncs on PUT and can't split freight per
+      // bill-to. Do the fan-out client-side using the *fresh* shipment
+      // record from the backend (so carrier_charge / type / currency /
+      // dispatch_date / forex_rate stay accurate).
+      const savedShipment = saved as Shipment & { id?: string };
+      const shipmentIdForSync = savedShipment.id || editId || "";
+      if (shipmentIdForSync) {
+        try {
+          await syncShipmentLedger(
+            {
+              id: shipmentIdForSync,
+              consignment_no: savedShipment.consignment_no || consignmentNo.trim(),
+              origin: savedShipment.origin || origin,
+              destination: savedShipment.destination || destination,
+              freight: Number(savedShipment.freight ?? freight) || 0,
+              freight_currency: (savedShipment.freight_currency || freightCcy) as string,
+              carrier_party_id: savedShipment.carrier_party_id ?? carrierId,
+              carrier_charge: Number(savedShipment.carrier_charge) || 0,
+              carrier_charge_type: (savedShipment.carrier_charge_type || "flat") as string,
+              carrier_currency: (savedShipment.carrier_currency || "INR") as string,
+              dispatch_date: savedShipment.dispatch_date || shipmentPayload.dispatch_date,
+              weight_kg: Number(savedShipment.weight_kg) || totalWeightKg,
+            },
+            bags.map((b) => ({
+              bag_no: b.bag_no,
+              bill_to_party_id: b.bill_to_party_id,
+              weight_kg: parseFloat(b.weight_kg) || 0,
+            })),
+          );
+        } catch (e) {
+          console.warn("Ledger fan-out failed:", (e as Error).message);
+        }
+      }
+
       toast.success(
         isEdit
           ? `Shipment ${consignmentNo.trim()} updated · ${totalBags} bag${totalBags === 1 ? "" : "s"}`
