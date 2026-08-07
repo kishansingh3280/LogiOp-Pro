@@ -1,0 +1,32 @@
+{
+  "summary": "Final Business Stress Test PASSED end-to-end. Ran /app/tests/stress_test.py: 100/100 cycles completed in 31.0s with zero errors. FIFO monotonic-by-date=True (range 2026-03-01 → 2026-05-30). Dual-currency ledger balanced: INR_debit 326849.4 (== expected), INR_credit 345580.0 (== carrier pay), THB_debit 251224.0 (== expected). All 256 bags persisted bill_to_party_id + end_customer_id + weight_kg (0 mismatches). Verdict printed: ✅ PASS. Also ran 9 smoke tests (test_smoke_endpoints.py) — all passed: wingman /health returns 200 with capabilities incl. carrier-update; POST /api/wingman/carrier-update appended 'Verified by testing_agent' to a real shipment's notes and was reverted via PUT; /api/bullion/rates + trips + transactions round-tripped cleanly with create→get→delete; zero leftover STRESS-* records in shipments, ledger, or bullion/trips after cleanup.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/tests/stress_test.py",
+    "/app/backend/tests/test_smoke_endpoints.py",
+    "/app/test_reports/pytest/smoke_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_smoke_endpoints.py (new — regression smoke suite for wingman/bullion/leftover audit)"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "not tested (backend-only per request)"
+  },
+  "seed_data_creation": "Stress test creates/reuses reference parties + items (INR customers, THB end-customers, suppliers, carriers, item catalog). Then creates 100 shipments + 256 bags + ledger entries + bullion trips/transactions, all tagged STRESS-{RUN_ID}-*. Full cleanup verified — 0 leftover records after run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Stress test is idempotent + self-cleaning. Re-run with `cd /app && python3 tests/stress_test.py` (takes ~35s). Smoke regression suite: `pytest /app/backend/tests/test_smoke_endpoints.py -v`. Local backend at localhost:8001 hosts /api/wingman/* + /api/bullion/*; other /api/* is proxied to remote EXPO_BACKEND_URL. carrier-update POST correctly appends (not replaces) notes and is reversible via PUT /api/shipments/{id}. Ledger THB_credit is always 0 by design — carrier pay is INR-only.",
+  "rca_of_issue": "N/A — no issues found. All invariants held under 100-tx parallel load (6 workers)."
+}
