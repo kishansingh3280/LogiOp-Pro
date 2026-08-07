@@ -5,7 +5,9 @@ export type GoldUnit = "baht" | "grams";
 
 // 1 Thai baht of gold = 15.244 g (industry standard).
 export const GRAMS_PER_BAHT = 15.244;
+/** @deprecated Legacy defaults — real values now come from `src/bullion/rates.ts`. */
 export const CARRIER_RATE_CURRENCY = 500;   // INR per $1000 foreign
+/** @deprecated Legacy defaults — real values now come from `src/bullion/rates.ts`. */
 export const CARRIER_RATE_GOLD = 2500;      // INR per baht of gold
 
 export interface CarrierTrip {
@@ -14,6 +16,8 @@ export interface CarrierTrip {
   route: BullionRoute;
   carrier_party_id?: string | null;
   carrier_name?: string;
+  airline_code?: string | null;       // IATA 2-letter code (e.g. "TG")
+  flight_number?: string | null;      // free-text, e.g. "TG-317"
   available_weight_kg: number;        // Total capacity in kilograms
   /** @deprecated Legacy field – kept for backward compat with older stored trips. */
   available_slots?: number;
@@ -33,6 +37,12 @@ export interface BullionTxn {
   // Physical weight this txn consumes from a carrier trip's capacity (kg).
   // Optional — currency carries usually leave this blank / 0.
   weight_kg?: number;
+
+  // ---- Ledger sync tracking ----
+  /** ID of the ledger entry we auto-posted for the carrier fee (once). */
+  ledger_entry_id?: string | null;
+  /** ISO date the carrier fee was posted to the ledger. */
+  ledger_posted_at?: string | null;
 
   // ---- Currency carry ----
   currency?: string;                  // USD, AED, SGD, OTHER — free text allowed
@@ -65,19 +75,27 @@ export interface TxnCalc {
   can_settle: boolean;                // enough fields present to close
 }
 
-export function computeCarrierCharge(t: BullionTxn): number {
+export function computeCarrierCharge(
+  t: BullionTxn,
+  rates?: { currency_rate_per_1000: number; gold_rate_per_baht: number },
+): number {
+  const currencyRate = rates?.currency_rate_per_1000 ?? CARRIER_RATE_CURRENCY;
+  const goldRate = rates?.gold_rate_per_baht ?? CARRIER_RATE_GOLD;
   if (t.type === "currency") {
     const amt = t.currency_amount || 0;
-    return Math.round(CARRIER_RATE_CURRENCY * (amt / 1000));
+    return Math.round(currencyRate * (amt / 1000));
   }
   // gold
   const amt = t.gold_amount || 0;
   const baht = t.gold_unit === "grams" ? amt / GRAMS_PER_BAHT : amt;
-  return Math.round(CARRIER_RATE_GOLD * baht);
+  return Math.round(goldRate * baht);
 }
 
-export function computeTxn(t: BullionTxn): TxnCalc {
-  const carrier_charge_inr = computeCarrierCharge(t);
+export function computeTxn(
+  t: BullionTxn,
+  rates?: { currency_rate_per_1000: number; gold_rate_per_baht: number },
+): TxnCalc {
+  const carrier_charge_inr = computeCarrierCharge(t, rates);
 
   if (t.type === "currency") {
     const amt = t.currency_amount || 0;

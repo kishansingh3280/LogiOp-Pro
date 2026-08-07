@@ -18,6 +18,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApi } from "@/src/api/hooks";
 import type { Party } from "@/src/api/types";
+import { AIRLINES, findAirline } from "@/src/bullion/airlines";
+import { AirlineBadge } from "@/src/bullion/AirlineBadge";
 import { createTrip } from "@/src/bullion/store";
 import type { BullionRoute } from "@/src/bullion/types";
 import { colors, radii, spacing } from "@/src/theme";
@@ -57,9 +59,12 @@ export default function NewTripScreen() {
   const [route, setRoute] = useState<BullionRoute>("IN_TO_TH");
   const [carrierId, setCarrierId] = useState<string | null>(null);
   const [carrierName, setCarrierName] = useState("");
+  const [airlineCode, setAirlineCode] = useState<string | null>(null);
+  const [flightNumber, setFlightNumber] = useState("");
   const [availableWeight, setAvailableWeight] = useState("20");
   const [notes, setNotes] = useState("");
   const [pickOpen, setPickOpen] = useState(false);
+  const [pickAirline, setPickAirline] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const carriers = useMemo(
@@ -67,6 +72,7 @@ export default function NewTripScreen() {
     [parties.data],
   );
   const currentCarrier = (parties.data || []).find((p) => p.id === carrierId);
+  const currentAirline = useMemo(() => findAirline(airlineCode), [airlineCode]);
 
   const save = async () => {
     const weight = parseFloat(availableWeight);
@@ -80,6 +86,8 @@ export default function NewTripScreen() {
         route,
         carrier_party_id: carrierId,
         carrier_name: currentCarrier?.name || carrierName || undefined,
+        airline_code: airlineCode,
+        flight_number: flightNumber.trim() || undefined,
         available_weight_kg: weight,
         notes,
       });
@@ -197,6 +205,35 @@ export default function NewTripScreen() {
             />
           </Field>
 
+          <Field label="Airline">
+            <TouchableOpacity
+              style={styles.selectBtn}
+              onPress={() => setPickAirline(true)}
+              testID="trip-airline-pick"
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1, gap: 10 }}>
+                <AirlineBadge airline={currentAirline} size="sm" />
+                <Text style={[styles.selectText, !currentAirline && styles.selectPh]}>
+                  {currentAirline ? currentAirline.name : "Choose airline"}
+                </Text>
+              </View>
+              <Ionicons name="chevron-down" size={16} color={colors.textDim} />
+            </TouchableOpacity>
+          </Field>
+
+          <Field label="Flight number (optional)">
+            <TextInput
+              style={styles.input}
+              value={flightNumber}
+              onChangeText={(t) => setFlightNumber(t.toUpperCase())}
+              placeholder="e.g. TG-317"
+              placeholderTextColor={colors.textDim}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              testID="trip-flight-no"
+            />
+          </Field>
+
           <Field label="Available weight (kg)">
             <TextInput
               style={styles.input}
@@ -249,6 +286,47 @@ export default function NewTripScreen() {
               ))}
             </ScrollView>
             <TouchableOpacity style={styles.sheetCancel} onPress={() => setPickOpen(false)}>
+              <Text style={styles.sheetCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      )}
+
+      {pickAirline && (
+        <Pressable style={styles.backdrop} onPress={() => setPickAirline(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Choose airline</Text>
+            <ScrollView style={{ maxHeight: 440 }}>
+              <TouchableOpacity
+                style={styles.airlineRow}
+                onPress={() => { setAirlineCode(null); setPickAirline(false); }}
+              >
+                <AirlineBadge size="sm" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pickName}>No airline / TBD</Text>
+                  <Text style={styles.pickMeta}>Clear selection</Text>
+                </View>
+              </TouchableOpacity>
+              {AIRLINES.map((a) => (
+                <TouchableOpacity
+                  key={a.code}
+                  style={styles.airlineRow}
+                  onPress={() => { setAirlineCode(a.code); setPickAirline(false); }}
+                  testID={`pick-airline-${a.code}`}
+                >
+                  <AirlineBadge airline={a} size="sm" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pickName}>{a.name}</Text>
+                    <Text style={styles.pickMeta}>{a.code}</Text>
+                  </View>
+                  {airlineCode === a.code ? (
+                    <Ionicons name="checkmark-circle" size={18} color={colors.lime} />
+                  ) : null}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.sheetCancel} onPress={() => setPickAirline(false)}>
               <Text style={styles.sheetCancelText}>Cancel</Text>
             </TouchableOpacity>
           </Pressable>
@@ -333,6 +411,15 @@ const styles = StyleSheet.create({
   sheetTitle: { color: colors.text, fontSize: 16, fontWeight: "800", marginBottom: spacing.md },
   pickRow: {
     paddingVertical: 12,
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  airlineRow: {
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
     borderTopColor: colors.border,
     borderTopWidth: StyleSheet.hairlineWidth,
   },

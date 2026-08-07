@@ -15,6 +15,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { maybePostCarrierFee } from "@/src/bullion/ledger-sync";
+import { useRates } from "@/src/bullion/rates";
 import { createTxn, deleteTxn, updateTxn, usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import {
   computeTxn,
@@ -38,6 +40,7 @@ export default function TxnScreen() {
   const isNew = params.id === "new";
   const trips = useTrips();
   const txns = useTxns();
+  const rates = useRates();
 
   const existing = !isNew ? txns.data.find((t) => t.id === params.id) : null;
 
@@ -105,7 +108,7 @@ export default function TxnScreen() {
       transferRate, goldUnit, goldAmount, goldPurchaseThb, goldCostInr, goldSaleInr],
   );
 
-  const calc = computeTxn(draft);
+  const calc = computeTxn(draft, rates.data);
   const trip = trips.data.find((t) => t.id === tripId);
 
   const tripOptions = useMemo(
@@ -139,10 +142,23 @@ export default function TxnScreen() {
         gold_cost_inr: draft.gold_cost_inr,
         gold_sale_inr: draft.gold_sale_inr,
       };
+      let savedTxn;
       if (isNew) {
-        await createTxn(payload);
+        savedTxn = await createTxn(payload);
       } else {
-        await updateTxn(existing!.id, { ...payload, status });
+        savedTxn = await updateTxn(existing!.id, { ...payload, status });
+      }
+      // Auto-sync the carrier fee to the party ledger the first time a
+      // txn is saved as "completed" with a carrier assigned.
+      if (savedTxn && savedTxn.status === "completed") {
+        const linkedTrip = trips.data.find((t) => t.id === savedTxn!.trip_id);
+        const posted = await maybePostCarrierFee(savedTxn, linkedTrip);
+        if (posted) {
+          Alert.alert(
+            "Carrier fee posted",
+            `Expense recorded in ${linkedTrip?.carrier_name || "carrier"}'s ledger.`,
+          );
+        }
       }
       router.back();
     } catch (e) {
@@ -157,7 +173,17 @@ export default function TxnScreen() {
     const next: TxnStatus =
       status === "open" ? "in_transit" : status === "in_transit" ? "completed" : "open";
     setStatus(next);
-    await updateTxn(existing!.id, { status: next });
+    const updated = await updateTxn(existing!.id, { status: next });
+    if (updated && next === "completed") {
+      const linkedTrip = trips.data.find((t) => t.id === updated.trip_id);
+      const posted = await maybePostCarrierFee(updated, linkedTrip);
+      if (posted) {
+        Alert.alert(
+          "Carrier fee posted",
+          `Expense recorded in ${linkedTrip?.carrier_name || "carrier"}'s ledger.`,
+        );
+      }
+    }
   };
 
   const remove = () => {
