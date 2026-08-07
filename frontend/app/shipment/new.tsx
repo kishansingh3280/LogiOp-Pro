@@ -87,6 +87,74 @@ export default function NewShipmentScreen() {
     [bags],
   );
 
+  // ---- Auto freight calculation ----------------------------------------
+  // For each bag: convert the Bill-to party's `default_charge` (per-kg)
+  // into the shipment's freight currency (using forex_rate when needed),
+  // multiply by bag weight, and sum. `freightManuallyEdited` lets the user
+  // override the auto value; a subtle "Use auto" chip below the input
+  // lets them get back on the rails.
+  const [freightManuallyEdited, setFreightManuallyEdited] = useState(false);
+  const partyMap = useMemo(() => {
+    const map = new Map<string, Party>();
+    (parties.data || []).forEach((p) => map.set(p.id, p));
+    return map;
+  }, [parties.data]);
+
+  const convertRateToFreightCcy = (
+    rate: number,
+    rateCcy: Currency,
+    fx: number,
+  ): number => {
+    if (!rate || rate <= 0) return 0;
+    if (rateCcy === freightCcy) return rate;
+    // forex rate is INR per THB (as labelled in the form).
+    if (!fx || fx <= 0) return 0;
+    if (rateCcy === "INR" && freightCcy === "THB") return rate / fx;
+    if (rateCcy === "THB" && freightCcy === "INR") return rate * fx;
+    return 0;
+  };
+
+  // Per-bag freight breakdown (kept as an array so the UI can show
+  // "12 kg × 145 THB/kg = 1,740 THB" beside each bag row).
+  const bagFreightBreakdown = useMemo(() => {
+    const fx = parseFloat(forexRate) || 0;
+    return bags.map((b) => {
+      const weight = parseFloat(b.weight_kg) || 0;
+      const party = b.bill_to_party_id ? partyMap.get(b.bill_to_party_id) : undefined;
+      const rawRate = party?.default_charge || 0;
+      const rateCcy = (party?.default_charge_currency as Currency) || "INR";
+      const rateInFreightCcy = convertRateToFreightCcy(rawRate, rateCcy, fx);
+      const amount = Math.round(weight * rateInFreightCcy * 100) / 100;
+      return {
+        weight,
+        rawRate,
+        rateCcy,
+        rateInFreightCcy,
+        amount,
+        hasRate: rawRate > 0 && (rateCcy === freightCcy || (fx > 0)),
+        partyName: party?.name || null,
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bags, partyMap, freightCcy, forexRate]);
+
+  const autoFreight = useMemo(
+    () => bagFreightBreakdown.reduce((s, b) => s + (b.amount || 0), 0),
+    [bagFreightBreakdown],
+  );
+  const autoFreightStr = autoFreight > 0
+    ? String(Math.round(autoFreight * 100) / 100)
+    : "";
+
+  // Sync `freight` input to the auto value whenever the user hasn't
+  // explicitly overridden it. Also runs on freightCcy / bag changes.
+  useEffect(() => {
+    if (freightManuallyEdited) return;
+    if (autoFreightStr === freight) return;
+    setFreight(autoFreightStr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFreightStr, freightManuallyEdited]);
+
   // Bag-row mutators
   const addBag = () => {
     setBags((prev) => [
@@ -144,6 +212,9 @@ export default function NewShipmentScreen() {
         setOrigin(s.origin || "");
         setDestination(s.destination || "");
         setFreight(String(s.freight ?? ""));
+        // Preserve the saved freight verbatim on edit. Users can hit
+        // "Use auto" if they want to recompute from bag rates.
+        setFreightManuallyEdited(true);
         setFreightCcy((s.freight_currency as Currency) || "THB");
         setForexRate(String(s.forex_rate ?? ""));
         setCarrierId(s.carrier_party_id || null);
@@ -365,6 +436,7 @@ export default function NewShipmentScreen() {
               {bags.map((b, idx) => {
                 const cust = (parties.data || []).find((p) => p.id === b.end_customer_id);
                 const billTo = (parties.data || []).find((p) => p.id === b.bill_to_party_id);
+                const bagCalc = bagFreightBreakdown[idx];
                 return (
                   <View key={idx} style={styles.bagCard}>
                     <View style={styles.bagCardHead}>
@@ -397,12 +469,41 @@ export default function NewShipmentScreen() {
                         onPress={() => setPickBillToIdx(idx)}
                         testID={`bag-billto-${idx}`}
                       >
-                        <Text style={[styles.selectText, !billTo && styles.selectPh]} numberOfLines={1}>
-                          {billTo?.name || "Choose the bill-to party"}
-                        </Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.selectText, !billTo && styles.selectPh]} numberOfLines={1}>
+                            {billTo?.name || "Choose the bill-to party"}
+                          </Text>
+                          {billTo ? (
+                            (billTo.default_charge || 0) > 0 ? (
+                              <Text style={styles.rateChip}>
+                                {billTo.default_charge}{" "}
+                                {billTo.default_charge_currency || billTo.default_currency}/kg
+                              </Text>
+                            ) : (
+                              <Text style={styles.rateChipMissing}>No default rate set</Text>
+                            )
+                          ) : null}
+                        </View>
                         <Ionicons name="chevron-down" size={14} color={colors.textDim} />
                       </TouchableOpacity>
                     </View>
+
+                    {bagCalc && bagCalc.amount > 0 ? (
+                      <View style={styles.bagCalcRow}>
+                        <Ionicons name="calculator-outline" size={12} color={colors.lime} />
+                        <Text style={styles.bagCalcText}>
+                          {bagCalc.weight} kg × {Math.round(bagCalc.rateInFreightCcy * 100) / 100}{" "}
+                          {freightCcy}/kg = {bagCalc.amount} {freightCcy}
+                        </Text>
+                      </View>
+                    ) : bagCalc && bagCalc.weight > 0 && bagCalc.rawRate > 0 && !bagCalc.hasRate ? (
+                      <View style={styles.bagCalcRow}>
+                        <Ionicons name="warning-outline" size={12} color={colors.warn || colors.danger} />
+                        <Text style={styles.bagCalcWarn}>
+                          Set a forex rate to auto-calc across currencies
+                        </Text>
+                      </View>
+                    ) : null}
 
                     <View style={{ marginTop: 8 }}>
                       <Text style={styles.bagFieldLbl}>End Customer (Recipient)</Text>
@@ -467,7 +568,42 @@ export default function NewShipmentScreen() {
           <View style={styles.row2}>
             <View style={{ flex: 1 }}>
               <Field label="Freight">
-                <TextInput style={styles.input} keyboardType="decimal-pad" value={freight} onChangeText={setFreight} />
+                <TextInput
+                  style={styles.input}
+                  keyboardType="decimal-pad"
+                  value={freight}
+                  onChangeText={(t) => {
+                    setFreight(t);
+                    setFreightManuallyEdited(true);
+                  }}
+                  placeholder="0"
+                  placeholderTextColor={colors.textDim}
+                  testID="input-freight"
+                />
+                {autoFreight > 0 ? (
+                  freightManuallyEdited ? (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setFreightManuallyEdited(false);
+                        setFreight(autoFreightStr);
+                      }}
+                      style={styles.autoResetBtn}
+                      testID="reset-auto-freight"
+                    >
+                      <Ionicons name="refresh" size={12} color={colors.lime} />
+                      <Text style={styles.autoResetText}>
+                        Use auto: {autoFreightStr} {freightCcy}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.autoOkRow}>
+                      <Ionicons name="flash" size={11} color={colors.lime} />
+                      <Text style={styles.autoOkText}>
+                        Auto · from {bags.length} bag{bags.length === 1 ? "" : "s"}
+                      </Text>
+                    </View>
+                  )
+                ) : null}
               </Field>
             </View>
             <View style={{ width: 12 }} />
@@ -815,4 +951,65 @@ const styles = StyleSheet.create({
     backgroundColor: colors.chipBg,
   },
   sheetCancelText: { color: colors.text, fontWeight: "700" },
+  // ---- Auto-freight helpers ----
+  rateChip: {
+    color: colors.lime,
+    fontSize: 11,
+    fontWeight: "800",
+    marginTop: 2,
+    letterSpacing: 0.3,
+  },
+  rateChipMissing: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontStyle: "italic",
+    marginTop: 2,
+  },
+  bagCalcRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 4,
+    paddingTop: 2,
+  },
+  bagCalcText: {
+    color: colors.lime,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  bagCalcWarn: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontStyle: "italic",
+  },
+  autoResetBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginTop: 6,
+    borderRadius: radii.pill,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.chipBg,
+  },
+  autoResetText: {
+    color: colors.lime,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  autoOkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 6,
+  },
+  autoOkText: {
+    color: colors.lime,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+  },
 });

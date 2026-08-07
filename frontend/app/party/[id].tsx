@@ -106,7 +106,13 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
           <Text style={styles.headTitle} numberOfLines={1}>
             {p.name}
           </Text>
-          <View style={styles.iconBtn} />
+          <TouchableOpacity
+            onPress={() => router.push(`/party/new?editId=${p.id}` as never)}
+            style={styles.iconBtn}
+            testID="party-edit-btn"
+          >
+            <Ionicons name="create-outline" size={22} color={colors.lime} />
+          </TouchableOpacity>
         </View>
       )}
 
@@ -164,6 +170,12 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
           <Text style={styles.sectionTitle}>Contact</Text>
           <KV label="Country" value={p.country} />
           <KV label="Currency" value={p.default_currency} />
+          {typeof p.default_charge === "number" && p.default_charge > 0 ? (
+            <KV
+              label="Default rate"
+              value={`${p.default_charge} ${p.default_charge_currency || p.default_currency}/kg`}
+            />
+          ) : null}
           {p.gstin ? <KV label="GSTIN" value={p.gstin} /> : null}
           {p.email ? <KV label="Email" value={p.email} /> : null}
           {p.address ? <KV label="Address" value={p.address} /> : null}
