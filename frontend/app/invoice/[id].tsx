@@ -100,7 +100,38 @@ export default function InvoiceDetail() {
           {i.due_date ? <KV label="Due" value={shortDate(i.due_date)} /> : null}
           {i.tax_percent ? <KV label="Tax %" value={`${i.tax_percent}%`} /> : null}
           {i.notes ? <KV label="Notes" value={i.notes} /> : null}
+          <KV
+            label="Linked shipment"
+            value={i.shipment_id ? "Yes — see shipment" : "None — invoice-only"}
+          />
         </Card>
+
+        {/* Unlinked invoices get a shortcut to create the missing
+            shipment. Freight amount + party + currency pre-fill via the
+            invoice's own values so the operator only fills in bags. */}
+        {!i.shipment_id ? (
+          <TouchableOpacity
+            style={styles.createShipmentBtn}
+            onPress={() => router.push(
+              `/shipment/new?fromInvoice=${i.id}` as never,
+            )}
+            testID="create-shipment-from-invoice"
+          >
+            <Ionicons name="cube-outline" size={16} color={colors.bg} />
+            <Text style={styles.createShipmentText}>
+              Create shipment from this invoice
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.openShipmentBtn}
+            onPress={() => router.push(`/shipment/${i.shipment_id}` as never)}
+            testID="open-linked-shipment"
+          >
+            <Ionicons name="link" size={14} color={colors.lime} />
+            <Text style={styles.openShipmentText}>Open linked shipment</Text>
+          </TouchableOpacity>
+        )}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -156,4 +187,33 @@ const styles = StyleSheet.create({
   itemDesc: { color: colors.text, fontSize: 14, fontWeight: "600" },
   itemMeta: { color: colors.textDim, fontSize: 12, marginTop: 2 },
   itemTotal: { color: colors.lime, fontSize: 14, fontWeight: "800" },
+  createShipmentBtn: {
+    marginTop: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.lime,
+  },
+  createShipmentText: {
+    color: colors.bg,
+    fontWeight: "800",
+    fontSize: 14,
+    letterSpacing: 0.3,
+  },
+  openShipmentBtn: {
+    marginTop: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: radii.pill,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.chipBg,
+  },
+  openShipmentText: { color: colors.lime, fontSize: 12, fontWeight: "800" },
 });

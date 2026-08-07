@@ -1,12 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useMemo, useState } from "react";
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Invoice, LedgerEntry, Party, Shipment } from "@/src/api/types";
 import { FYPicker } from "@/src/components/fy-picker";
+import { toast } from "@/src/components/toast";
 import { Card, KV, StatusPill } from "@/src/components/ui";
 import { useFY } from "@/src/context/fy-context";
 import { colors, radii, spacing } from "@/src/theme";
@@ -53,6 +55,26 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
   // Reverse for display so newest is on top (matches operator's mental
   // model on mobile); the running balance already reflects the same day.
   const displayRows = useMemo(() => [...statementRows].reverse(), [statementRows]);
+
+  // "Mark as Verified" — bumps the party's `verified_up_to` to the newest
+  // entry date in the current statement. Every row on or before that date
+  // gains a small ✅ badge, and the header shows the reconciled cut-off.
+  // Idempotent: subsequent taps just refresh the bookmark.
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const onVerify = async () => {
+    if (statementRows.length === 0 || !party.data) return;
+    const upTo = statementRows[statementRows.length - 1].entry.date;
+    setVerifyBusy(true);
+    try {
+      await apiPut(`/api/parties/${party.data.id}`, { verified_up_to: upTo });
+      toast.success(`Verified through ${upTo}`);
+      party.refresh();
+    } catch (e) {
+      Alert.alert("Failed", (e as Error).message);
+    } finally {
+      setVerifyBusy(false);
+    }
+  };
 
   const partyShipments = useMemo(
     () => (shipments.data || []).filter((s) => s.party_id === id || s.carrier_party_id === id).slice(0, 6),
@@ -211,7 +233,10 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
           <View style={styles.stmtHead}>
             <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Statement</Text>
-              <Text style={styles.stmtSub}>{fyLabel(fy)} · running balance</Text>
+              <Text style={styles.stmtSub}>
+                {fyLabel(fy)} · running balance
+                {p.verified_up_to ? ` · ✅ verified up to ${shortDate(p.verified_up_to)}` : ""}
+              </Text>
             </View>
             <FYPicker compact />
           </View>
@@ -230,9 +255,18 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
           ) : (
             displayRows.map(({ entry: e, ccy, balanceInr, balanceThb }) => {
               const balForRow = ccy === "THB" ? balanceThb : balanceInr;
+              const isVerified = !!p.verified_up_to && e.date <= p.verified_up_to;
               return (
                 <View key={e.id} style={styles.stmtRow}>
-                  <Text style={[styles.stmtCell, { width: 62 }]}>{shortDate(e.date)}</Text>
+                  <View style={{ width: 62 }}>
+                    <Text style={styles.stmtCell}>{shortDate(e.date)}</Text>
+                    {isVerified ? (
+                      <View style={styles.verifiedBadge}>
+                        <Ionicons name="shield-checkmark" size={9} color={colors.lime} />
+                        <Text style={styles.verifiedText}>Verified</Text>
+                      </View>
+                    ) : null}
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.stmtDesc} numberOfLines={2}>
                       {e.description || "—"}
@@ -308,6 +342,31 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
                 })()}
               </View>
             </View>
+          ) : null}
+
+          {/* Mark-as-Verified action — stamps the newest entry date as the
+              new "verified up to" bookmark, so any reconciliation email
+              you send today locks the ledger up to this point. */}
+          {statementRows.length > 0 ? (
+            <TouchableOpacity
+              style={[styles.verifyBtn, verifyBusy && { opacity: 0.55 }]}
+              onPress={onVerify}
+              disabled={verifyBusy}
+              testID="mark-verified-btn"
+            >
+              <Ionicons
+                name={p.verified_up_to ? "refresh" : "shield-checkmark-outline"}
+                size={14}
+                color={colors.bg}
+              />
+              <Text style={styles.verifyBtnText}>
+                {verifyBusy
+                  ? "Saving…"
+                  : p.verified_up_to
+                    ? `Update verified date (through ${shortDate(statementRows[statementRows.length - 1].entry.date)})`
+                    : `Mark verified through ${shortDate(statementRows[statementRows.length - 1].entry.date)}`}
+              </Text>
+            </TouchableOpacity>
           ) : null}
         </Card>
 
@@ -528,6 +587,31 @@ const styles = StyleSheet.create({
   stmtFooterCcys: { alignItems: "flex-end", gap: 4 },
   stmtFooterVal: { fontSize: 14, fontWeight: "900" },
   stmtFooterTag: { color: colors.textDim, fontSize: 10, fontWeight: "600" },
+
+  // ---- Verification affordances ----
+  verifiedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    marginTop: 3,
+  },
+  verifiedText: {
+    color: colors.lime,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  verifyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: spacing.md,
+    paddingVertical: 11,
+    borderRadius: radii.pill,
+    backgroundColor: colors.lime,
+  },
+  verifyBtnText: { color: colors.bg, fontWeight: "800", fontSize: 13 },
   linkRow: {
     flexDirection: "row",
     alignItems: "center",

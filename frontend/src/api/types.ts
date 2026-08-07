@@ -30,6 +30,11 @@ export interface Party {
   default_charge?: number;
   default_charge_type?: string;
   default_charge_currency?: Currency;
+  /**
+   * ISO date. Every ledger entry with `date <= verified_up_to` is treated
+   * as reconciled — the statement stamps a ✅ badge next to those rows.
+   */
+  verified_up_to?: string | null;
   created_at: string;
 }
 

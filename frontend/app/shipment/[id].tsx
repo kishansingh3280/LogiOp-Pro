@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiDelete, apiPost, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type {
+  Invoice,
   Item,
   LedgerEntry,
   Party,
@@ -64,6 +65,11 @@ export default function ShipmentDetail({
   const parties = useApi<Party[]>("/api/parties");
   const items = useApi<Item[]>("/api/items");
   const ledger = useApi<LedgerEntry[]>("/api/ledger/entries");
+  const invoices = useApi<Invoice[]>("/api/invoices");
+  const linkedInvoice = useMemo(
+    () => (invoices.data || []).find((inv) => inv.shipment_id === id),
+    [invoices.data, id],
+  );
 
   const [busy, setBusy] = useState(false);
   const [bookResult, setBookResult] = useState<BookResult[] | null>(null);
@@ -339,19 +345,32 @@ export default function ShipmentDetail({
             </TouchableOpacity>
           </View>
 
-          {/* Generate Invoice — visible on every shipment so the operator can
-              raise a bill any time (draft, in-transit, delivered). The
-              invoice form is prefilled with consignment / route / bags /
-              freight and, on save, the backend auto-posts a debit entry to
-              the party's ledger in the shipment currency. */}
-          <TouchableOpacity
-            style={styles.invoiceBtn}
-            onPress={() => router.push(`/invoice/new?shipmentId=${s.id}` as never)}
-            testID="generate-invoice-btn"
-          >
-            <Ionicons name="document-text-outline" size={16} color={colors.bg} />
-            <Text style={styles.invoiceBtnText}>Generate Invoice</Text>
-          </TouchableOpacity>
+          {/* Generate Invoice — hidden once a linked invoice exists for
+              this consignment. When linked, we surface an "Open invoice"
+              CTA instead so the operator can view the existing bill in
+              one tap. Prevents duplicate billing entries against the
+              party's ledger. */}
+          {linkedInvoice ? (
+            <TouchableOpacity
+              style={styles.invoiceBtnLinked}
+              onPress={() => router.push(`/invoice/${linkedInvoice.id}` as never)}
+              testID="open-linked-invoice-btn"
+            >
+              <Ionicons name="document-text" size={16} color={colors.lime} />
+              <Text style={styles.invoiceBtnLinkedText}>
+                Open invoice {linkedInvoice.number}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.invoiceBtn}
+              onPress={() => router.push(`/invoice/new?shipmentId=${s.id}` as never)}
+              testID="generate-invoice-btn"
+            >
+              <Ionicons name="document-text-outline" size={16} color={colors.bg} />
+              <Text style={styles.invoiceBtnText}>Generate Invoice</Text>
+            </TouchableOpacity>
+          )}
         </LinearGradient>
 
         {/* Money card */}
@@ -774,6 +793,24 @@ const styles = StyleSheet.create({
   },
   invoiceBtnText: {
     color: colors.bg,
+    fontWeight: "800",
+    fontSize: 14,
+    letterSpacing: 0.3,
+  },
+  invoiceBtnLinked: {
+    marginTop: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    backgroundColor: "transparent",
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  invoiceBtnLinkedText: {
+    color: colors.lime,
     fontWeight: "800",
     fontSize: 14,
     letterSpacing: 0.3,

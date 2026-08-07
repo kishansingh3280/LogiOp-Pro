@@ -35,8 +35,9 @@ const MODES: ShipmentMode[] = ["air", "sea", "land", "hand_carry"];
 
 export default function NewShipmentScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ editId?: string }>();
+  const params = useLocalSearchParams<{ editId?: string; fromInvoice?: string }>();
   const editId = params.editId || null;
+  const fromInvoiceId = params.fromInvoice || null;
   const isEdit = !!editId;
   const parties = useApi<Party[]>("/api/parties");
 
@@ -309,6 +310,45 @@ export default function NewShipmentScreen() {
         : b,
     ));
   };
+
+  // Prefill fields when in edit mode. Loads once when the screen mounts.
+  useEffect(() => {
+    if (editId) return; // handled by dedicated edit effect below
+    if (!fromInvoiceId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // No single-invoice GET on the remote backend, so pull the list
+        // and pluck the one we need.
+        const list = await apiGet<{
+          id: string;
+          number: string;
+          party_id?: string | null;
+          currency?: string;
+          total?: number;
+          notes?: string;
+        }[]>("/api/invoices");
+        const inv = list.find((x) => x.id === fromInvoiceId);
+        if (!inv || cancelled) return;
+        setConsignmentNo(inv.number || "");
+        setFreight(String(inv.total ?? ""));
+        setFreightManuallyEdited(true);
+        setFreightCcy(((inv.currency as Currency) || "THB"));
+        if (inv.notes) setNotes(inv.notes);
+        // Seed a single bag pre-filled with the invoice's party as the
+        // primary bill-to so per-bag ledger fan-out works out of the box.
+        if (inv.party_id) {
+          setBags((prev) => prev.map((b, i) => (i === 0 ? { ...b, bill_to_party_id: inv.party_id || null } : b)));
+        }
+        toast.info(`Prefilled from invoice ${inv.number}`);
+      } catch (e) {
+        console.warn("Invoice prefill failed:", (e as Error).message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fromInvoiceId, editId]);
 
   // Prefill fields when in edit mode. Loads once when the screen mounts.
   useEffect(() => {

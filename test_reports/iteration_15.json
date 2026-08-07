@@ -1,0 +1,35 @@
+{
+  "summary": "Backend-only testing for iteration 15 (Ledger Verification + Invoice↔Shipment link + FY carry-forward). Wrote /app/backend/tests/test_verify_and_invoice_link.py — 6 passed, 1 skipped (expected: no invoice currently carries a non-null shipment_id, allowed per the request). PUT /api/parties/{Lalit} with verified_up_to='2026-08-07' round-trips correctly through both /api/parties/{id} and the list /api/parties, then reverts to null cleanly. All 2 invoices from GET /api/invoices expose a `shipment_id` field (both currently null). Regression: Lalit closing balance FY 2026-27 = INR +5000, THB +13703.8 (unchanged). /api/wingman/health and /api/bullion/rates on localhost:8001 respond 200. Stress test /app/tests/stress_test.py completed 100/100 success in 26.9s, FIFO monotonic, ledger balanced across INR+THB, 256 bags persisted correctly, cleanup ran with no leftovers. Final line: '✅ PASS'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_verify_and_invoice_link.py",
+    "/app/test_reports/pytest/iter15_results.xml",
+    "/app/tests/stress_test.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Currently 0/2 invoices in the DB have a non-null shipment_id, so the 'Create shipment from this invoice' CTA path is only observable in code, not against live data. Main agent may want to seed at least one linked invoice + one unlinked invoice so the two-branch UI (hide Generate Invoice CTA when linked / show Create Shipment CTA when unlinked) is demonstrable end-to-end.",
+    "PUT /api/parties/{id} accepted verified_up_to as an ISO date string and echoed back the same string. The endpoint also accepted `null` on revert. No serialization issues observed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_verify_and_invoice_link.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 executed, 1 skipped by design)",
+    "frontend": "not tested (backend-only per request; frontend was pre-verified by main agent via Playwright)"
+  },
+  "seed_data_creation": "None — PUT verified_up_to on Lalit was reverted to its pre-test value (null). Stress test's own cleanup removed all STRESS-* artefacts.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run: `EXPO_BACKEND_URL=https://native-logistics-hub.preview.emergentagent.com pytest /app/backend/tests/test_verify_and_invoice_link.py -v` and `cd /app && python3 tests/stress_test.py`. The verified_up_to test is idempotent — it snapshots the current value, PUTs 2026-08-07, verifies, then restores whatever was there. Invoice-link test skips gracefully when no invoice has shipment_id set; if the seed changes to include a linked invoice, the test will additionally assert the referenced shipment resolves via /api/shipments/{sid}.",
+  "rca_of_issue": "N/A"
+}
