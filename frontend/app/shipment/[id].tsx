@@ -230,6 +230,14 @@ export default function ShipmentDetail({
           <Text style={styles.headTitle} numberOfLines={1}>
             {s.consignment_no}
           </Text>
+          <TouchableOpacity
+            onPress={() => router.push(`/shipment/new?editId=${s.id}` as never)}
+            style={styles.modifyBtn}
+            testID="modify-shipment-btn"
+          >
+            <Ionicons name="create-outline" size={14} color={colors.lime} />
+            <Text style={styles.modifyText}>Modify</Text>
+          </TouchableOpacity>
           <TouchableOpacity onPress={remove} style={styles.iconBtn} testID="delete-btn">
             <Ionicons name="trash-outline" size={20} color={colors.danger} />
           </TouchableOpacity>
@@ -625,6 +633,13 @@ const styles = StyleSheet.create({
   },
   iconBtn: { padding: 8 },
   headTitle: { flex: 1, color: colors.text, fontSize: 17, fontWeight: "800", textAlign: "center" },
+  modifyBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.pill,
+    borderColor: colors.lime, borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.chipBg,
+  },
+  modifyText: { color: colors.lime, fontSize: 12, fontWeight: "800" },
   content: { padding: spacing.lg, gap: spacing.md },
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   dim: { color: colors.textDim, fontSize: 13, padding: spacing.sm },

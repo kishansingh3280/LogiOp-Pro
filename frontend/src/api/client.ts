@@ -75,11 +75,27 @@ async function isOnline(): Promise<boolean> {
 
 async function rawRequest<T>(method: Method, path: string, body?: unknown): Promise<T> {
   const url = BASE + path;
-  const res = await fetch(url, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  // Hard timeout so the UI never gets stuck on a hanging socket — the
+  // fetch spec has no default timeout and a mobile network can silently
+  // stall.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      throw new Error(`Request timed out after 20s: ${method} ${path}`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status} ${res.statusText}: ${text}`);

@@ -1,8 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -15,9 +14,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiPost } from "@/src/api/client";
+import { apiGet, apiPost, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Direction, Party, Shipment, ShipmentMode } from "@/src/api/types";
+import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
 
 const DIRECTIONS: { key: Direction; label: string }[] = [
@@ -28,6 +28,9 @@ const MODES: ShipmentMode[] = ["air", "sea", "land", "hand_carry"];
 
 export default function NewShipmentScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ editId?: string }>();
+  const editId = params.editId || null;
+  const isEdit = !!editId;
   const parties = useApi<Party[]>("/api/parties");
 
   const [consignmentNo, setConsignmentNo] = useState("");
@@ -59,9 +62,43 @@ export default function NewShipmentScreen() {
   const currentParty = (parties.data || []).find((p) => p.id === partyId);
   const currentCarrier = (parties.data || []).find((p) => p.id === carrierId);
 
+  // Prefill fields when in edit mode. Loads once when the screen mounts.
+  useEffect(() => {
+    if (!editId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await apiGet<Shipment>(`/api/shipments/${editId}`);
+        if (cancelled) return;
+        setConsignmentNo(s.consignment_no || "");
+        setDirection((s.direction as Direction) || "IN_TO_TH");
+        setMode((s.mode as ShipmentMode) || "air");
+        setOrigin(s.origin || "");
+        setDestination(s.destination || "");
+        setBagCount(String(s.bag_count ?? 0));
+        setWeight(String(s.weight_kg ?? ""));
+        setFreight(String(s.freight ?? ""));
+        setFreightCcy((s.freight_currency as Currency) || "THB");
+        setForexRate(String(s.forex_rate ?? ""));
+        setPartyId(s.party_id || null);
+        setCarrierId(s.carrier_party_id || null);
+        setNotes(s.notes || "");
+      } catch (e) {
+        toast.error(`Failed to load: ${(e as Error).message}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [editId]);
+
   const submit = async () => {
-    if (!consignmentNo.trim()) return Alert.alert("Missing", "Consignment number is required");
-    if (!partyId) return Alert.alert("Missing", "Choose a party");
+    if (!consignmentNo.trim()) {
+      toast.warn("Consignment number is required");
+      return;
+    }
+    if (!partyId) {
+      toast.warn("Choose a party");
+      return;
+    }
     setBusy(true);
     try {
       const payload = {
@@ -81,13 +118,17 @@ export default function NewShipmentScreen() {
         dispatch_date: new Date().toISOString().slice(0, 10),
         notes,
       };
-      const res = await apiPost<Shipment>("/api/shipments", payload);
+      const res = isEdit
+        ? await apiPut<Shipment>(`/api/shipments/${editId}`, payload)
+        : await apiPost<Shipment>("/api/shipments", payload);
       if ((res as { queued?: boolean }).queued) {
-        Alert.alert("Queued", "Shipment saved locally and will sync when back online.");
+        toast.info(`Queued • ${consignmentNo.trim()} will sync when online`);
+      } else {
+        toast.success(isEdit ? `Shipment ${consignmentNo.trim()} updated` : `Shipment ${consignmentNo.trim()} saved`);
       }
       router.back();
     } catch (e) {
-      Alert.alert("Failed", (e as Error).message);
+      toast.error(`Save failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -99,7 +140,7 @@ export default function NewShipmentScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
           <Ionicons name="close" size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headTitle}>New shipment</Text>
+        <Text style={styles.headTitle}>{isEdit ? "Edit shipment" : "New shipment"}</Text>
         <TouchableOpacity onPress={submit} disabled={busy} style={styles.saveBtn} testID="save-shipment-btn">
           <Text style={styles.saveText}>{busy ? "Saving…" : "Save"}</Text>
         </TouchableOpacity>

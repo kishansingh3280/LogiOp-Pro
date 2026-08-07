@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
+import { ToastHost } from "@/src/components/toast";
 import { colors } from "@/src/theme";
 
 LogBox.ignoreAllLogs(true);
@@ -35,6 +36,7 @@ export default function RootLayout() {
             animation: "slide_from_right",
           }}
         />
+        <ToastHost />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

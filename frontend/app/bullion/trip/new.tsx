@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
-import { useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -20,8 +20,9 @@ import { useApi } from "@/src/api/hooks";
 import type { Party } from "@/src/api/types";
 import { AIRLINES, findAirline } from "@/src/bullion/airlines";
 import { AirlineBadge } from "@/src/bullion/AirlineBadge";
-import { createTrip } from "@/src/bullion/store";
+import { createTrip, updateTrip, useTrips } from "@/src/bullion/store";
 import type { BullionRoute } from "@/src/bullion/types";
+import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
 
 const MONTHS_LONG = [
@@ -52,7 +53,12 @@ function formatLongDate(s: string): string {
 
 export default function NewTripScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ editId?: string }>();
+  const editId = params.editId || null;
+  const isEdit = !!editId;
   const parties = useApi<Party[]>("/api/parties");
+  const trips = useTrips();
+  const existing = editId ? trips.data.find((t) => t.id === editId) : null;
 
   const [date, setDate] = useState(() => toISODate(new Date()));
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -63,6 +69,7 @@ export default function NewTripScreen() {
   const [flightNumber, setFlightNumber] = useState("");
   const [availableWeight, setAvailableWeight] = useState("20");
   const [notes, setNotes] = useState("");
+  const [hydrated, setHydrated] = useState(false);
   const [pickOpen, setPickOpen] = useState(false);
   const [pickAirline, setPickAirline] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -74,26 +81,56 @@ export default function NewTripScreen() {
   const currentCarrier = (parties.data || []).find((p) => p.id === carrierId);
   const currentAirline = useMemo(() => findAirline(airlineCode), [airlineCode]);
 
+  // Hydrate the form once when editing.
+  useEffect(() => {
+    if (!isEdit || !existing || hydrated) return;
+    setDate(existing.date || toISODate(new Date()));
+    setRoute(existing.route || "IN_TO_TH");
+    setCarrierId(existing.carrier_party_id || null);
+    setCarrierName(existing.carrier_name || "");
+    setAirlineCode(existing.airline_code || null);
+    setFlightNumber(existing.flight_number || "");
+    setAvailableWeight(String(existing.available_weight_kg ?? existing.available_slots ?? 20));
+    setNotes(existing.notes || "");
+    setHydrated(true);
+  }, [isEdit, existing, hydrated]);
+
   const save = async () => {
     const weight = parseFloat(availableWeight);
     if (!Number.isFinite(weight) || weight < 0) {
-      return Alert.alert("Invalid", "Available weight must be 0 or more (kg)");
+      toast.warn("Available weight must be 0 or more (kg)");
+      return;
     }
     setBusy(true);
     try {
-      await createTrip({
-        date,
-        route,
-        carrier_party_id: carrierId,
-        carrier_name: currentCarrier?.name || carrierName || undefined,
-        airline_code: airlineCode,
-        flight_number: flightNumber.trim() || undefined,
-        available_weight_kg: weight,
-        notes,
-      });
+      if (isEdit && existing) {
+        await updateTrip(existing.id, {
+          date,
+          route,
+          carrier_party_id: carrierId,
+          carrier_name: currentCarrier?.name || carrierName || undefined,
+          airline_code: airlineCode,
+          flight_number: flightNumber.trim() || undefined,
+          available_weight_kg: weight,
+          notes,
+        });
+        toast.success("Trip updated");
+      } else {
+        await createTrip({
+          date,
+          route,
+          carrier_party_id: carrierId,
+          carrier_name: currentCarrier?.name || carrierName || undefined,
+          airline_code: airlineCode,
+          flight_number: flightNumber.trim() || undefined,
+          available_weight_kg: weight,
+          notes,
+        });
+        toast.success("Trip saved");
+      }
       router.back();
     } catch (e) {
-      Alert.alert("Failed", (e as Error).message);
+      toast.error(`Save failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -105,7 +142,7 @@ export default function NewTripScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
           <Ionicons name="close" size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headTitle}>New carrier trip</Text>
+        <Text style={styles.headTitle}>{isEdit ? "Edit carrier trip" : "New carrier trip"}</Text>
         <TouchableOpacity onPress={save} disabled={busy} style={styles.saveBtn} testID="save-trip-btn">
           <Text style={styles.saveText}>{busy ? "Saving…" : "Save"}</Text>
         </TouchableOpacity>

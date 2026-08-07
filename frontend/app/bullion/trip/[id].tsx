@@ -89,7 +89,11 @@ export default function TripDetailScreen() {
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
-      <Header title="Trip" onBack={() => router.back()} />
+      <Header
+        title="Trip"
+        onBack={() => router.back()}
+        onModify={() => router.push(`/bullion/trip/new?editId=${trip.id}` as never)}
+      />
       <ScrollView
         contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}
         refreshControl={
@@ -168,14 +172,21 @@ export default function TripDetailScreen() {
   );
 }
 
-function Header({ title, onBack }: { title: string; onBack: () => void }) {
+function Header({ title, onBack, onModify }: { title: string; onBack: () => void; onModify?: () => void }) {
   return (
     <View style={styles.headBar}>
       <TouchableOpacity onPress={onBack} style={styles.iconBtn}>
         <Ionicons name="chevron-back" size={24} color={colors.text} />
       </TouchableOpacity>
       <Text style={styles.headTitle}>{title}</Text>
-      <View style={{ width: 32 }} />
+      {onModify ? (
+        <TouchableOpacity onPress={onModify} style={styles.modifyBtn} testID="modify-trip-btn">
+          <Ionicons name="create-outline" size={14} color={colors.lime} />
+          <Text style={styles.modifyText}>Modify</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={{ width: 32 }} />
+      )}
     </View>
   );
 }
@@ -194,6 +205,13 @@ const styles = StyleSheet.create({
   },
   iconBtn: { padding: 6 },
   headTitle: { flex: 1, color: colors.text, fontSize: 16, fontWeight: "800", textAlign: "center" },
+  modifyBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.pill,
+    borderColor: colors.lime, borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: colors.chipBg, marginRight: 4,
+  },
+  modifyText: { color: colors.lime, fontSize: 12, fontWeight: "800" },
 
   hero: {
     flexDirection: "row", alignItems: "center",

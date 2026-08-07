@@ -23,7 +23,7 @@ import { findAirline } from "@/src/bullion/airlines";
 import { AirlineBadge } from "@/src/bullion/AirlineBadge";
 import { defaultAirports } from "@/src/bullion/airports";
 import { FlightMap } from "@/src/bullion/FlightMap";
-import { MarketTicker } from "@/src/bullion/MarketTicker";
+import { MarketTickerSlim } from "@/src/bullion/MarketTickerSlim";
 import { setRates, useRates } from "@/src/bullion/rates";
 import { usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import {
@@ -104,7 +104,7 @@ export default function BullionScreen() {
       </View>
 
       <View style={styles.tickerWrap}>
-        <MarketTicker />
+        <MarketTickerSlim />
       </View>
 
       <View style={styles.segRow}>
