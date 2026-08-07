@@ -290,6 +290,7 @@ export default function BatchDetailScreen() {
                       disabled={disabled}
                       style={[styles.pickRow, disabled && { opacity: 0.4 }]}
                       onPress={() => assignTrip(t.id)}
+                      testID={`pick-trip-${t.id}`}
                     >
                       <View style={{ flex: 1 }}>
                         <Text style={styles.pickName}>{shortDate(t.date)} · {t.carrier_name || "TBD"}</Text>
