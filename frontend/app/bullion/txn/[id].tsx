@@ -58,12 +58,24 @@ export default function TxnScreen() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    // Sync from store when data arrives (for edit mode reload)
+    // Sync all form fields from the loaded transaction when it arrives async.
     if (!isNew && existing) {
       setType(existing.type);
       setStatus(existing.status);
+      setCurrency(existing.currency || "USD");
+      setCurrencyAmount(existing.currency_amount?.toString() || "");
+      setPurchaseRate(existing.purchase_rate_inr?.toString() || "");
+      setExchangeRate(existing.exchange_rate_thb?.toString() || "");
+      setTransferRate(existing.transfer_rate_inr_per_thb?.toString() || "");
+      setGoldUnit(existing.gold_unit || "baht");
+      setGoldAmount(existing.gold_amount?.toString() || "");
+      setGoldPurchaseThb(existing.gold_purchase_thb?.toString() || "");
+      setGoldCostInr(existing.gold_cost_inr?.toString() || "");
+      setGoldSaleInr(existing.gold_sale_inr?.toString() || "");
+      setTripId(existing.trip_id || null);
+      setNotes(existing.notes || "");
     }
-  }, [isNew, existing]);
+  }, [isNew, existing?.id]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const draft: BullionTxn = useMemo(
     () => ({

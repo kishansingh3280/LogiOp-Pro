@@ -1,0 +1,33 @@
+{
+  "summary": "RETEST PASS (ALL 6 scenarios pass, blocker from iteration 11 is fully fixed). Verified on tablet 1280x800 against https://native-logistics-hub.preview.emergentagent.com. Seed re-created (trip 2026-08-15 Test Carrier A IN->BKK 5 slots, TXN-001 currency 10000 USD/83/34.5/2.5, TXN-002 gold 10 baht/345k/830k/900k). S6 (previously CRITICAL FAIL) now PASS: tapping TXN-001 loads editor with ALL fields hydrated — currency=USD, amount=10000, purchase-rate=83, exchange-rate=34.5, transfer-rate=2.5; trip picker reads '15 Aug 2026 · Test Carrier A · IN -> BKK'; profit-card shows exact ₹27,500 net profit (not '—'). cycle-status advances Open -> In transit -> Completed as expected; save persists — TXN-001 in list now shows 'Completed' pill and full profit breakdown intact (nothing wiped). S7 PASS: filter-currency=[TXN-001], filter-gold=[TXN-002], filter-completed=[TXN-001], filter-open=[TXN-002], filter-all=[TXN-002,TXN-001]. S8 PASS: TXN-003 created with gold-unit-grams + amount 30.488 + purchase_thb 5000 + cost_inr 10000 + sale_inr 15000 — profit card renders '2.00 baht equivalent', Carrier charge ₹5,000 (matches spec 30.488/15.244*2500=5000 exactly). S9 PASS: Carrier trips tab shows the single trip at '2/5 free' with 3-txn usage bar at 60%. S10 PASS: Overview -> Active carrier slots section shows 'Test Carrier A · India -> BKK · 15 Aug 2026 · 2/5 slots free'. Regression PASS: Ledger, Shipments, Overview all render without error-screen or red-screen. Zero business-logic console errors; only pre-existing benign RN-web deprecation warnings ('shadow*' and 'props.pointerEvents') plus favicon/static 404s. The useEffect broadening at /app/frontend/app/bullion/txn/[id].tsx:60-77 is the correct and complete fix.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "React Native Web styles", "issue": "Minor: console warns '\"shadow*\" style props are deprecated. Use \"boxShadow\"' and 'props.pointerEvents is deprecated. Use style.pointerEvents' — non-blocking but should be migrated for RN 0.75+/web compatibility. Reference: various StyleSheet.create usages across screens (not in the fixed file)."}
+    ]
+  },
+  "test_report_links": [
+    "/tmp/rt2_s6_edit.png",
+    "/tmp/rt2_s8_profit.png",
+    "/tmp/rt2_s9.png",
+    "/tmp/rt2_s10.png"
+  ],
+  "action_items": [
+    "None required — bullion edit-mode hydration bug is fully resolved. Optional cleanup: migrate 'shadow*' style props to 'boxShadow' and 'props.pointerEvents' to 'style.pointerEvents' across the codebase to silence RN-web deprecation warnings (cosmetic)."
+  ],
+  "critical_code_review_comments": [
+    "The useEffect at /app/frontend/app/bullion/txn/[id].tsx:60-77 is correctly guarded on `existing?.id` so it re-syncs exactly once when the async-loaded transaction arrives (or when the user opens a different txn from the same mounted screen). All 14 form fields (type, status, currency, currencyAmount, purchaseRate, exchangeRate, transferRate, goldUnit, goldAmount, goldPurchaseThb, goldCostInr, goldSaleInr, tripId, notes) are covered.",
+    "computeTxn arithmetic remains exact for both currency (₹27,500 net) and gold-grams (2.00 baht equivalent, ₹5,000 carrier charge) — no regressions in /app/frontend/src/bullion/types.ts.",
+    "usedSlotsFor + trip counting propagate correctly to both the Carrier trips tab (bullion.tsx) and the Overview 'Active carrier slots' widget — both show 2/5 free after 3 txns."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only test)", "frontend": "100% (6/6 targeted scenarios PASS: S6 edit hydration, S7 filter chips, S8 grams carrier charge, S9 trip slot counting, S10 Overview widget, regression across Ledger/Shipments/Overview)"},
+  "seed_data_creation": "Client-side localStorage only: 1 CarrierTrip (Test Carrier A, 2026-08-15, IN->BKK, 5 slots) + 3 BullionTxn (TXN-001 currency 10000 USD Completed after S6, TXN-002 gold 10 baht Open, TXN-003 gold 30.488 grams Open). No backend calls made.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fix is verified end-to-end. If revisiting the bullion flow, re-seed with the same 3-transaction pattern above and confirm the profit-card matches spec to the rupee (currency ₹27,500 net, gold baht ₹45,000 net, gold grams ₹5,000 carrier charge exact). testIDs to remember: txn cards render as `txn-TXN-001` (NOT `txn-card-...`), trip cards as `trip-{id}`, bullion sub-tabs are `bullion-tab-trades`/`bullion-tab-trips`, trip form uses `trip-carrier-name` (not `trip-carrier`).",
+  "rca_of_issue": "Original bug (iter 11): useState initialisers in txn/[id].tsx read `existing?.field` synchronously at mount, but useTxns() loads AsyncStorage async so `existing` was undefined at first render — the fields never re-populated because useState only runs its initialiser once. The prior useEffect only re-synced `type`/`status`. Iter 12 fix: expanded that useEffect to setCurrency/setCurrencyAmount/setPurchaseRate/setExchangeRate/setTransferRate/setGoldUnit/setGoldAmount/setGoldPurchaseThb/setGoldCostInr/setGoldSaleInr/setTripId/setNotes as well, keyed on `existing?.id`. Verified visually and via input_value assertions on the actual preview URL — all 5 currency fields, trip picker, notes, and profit card render correctly on TXN-001 edit; status cycler + save now persist without wiping the record."
+}
