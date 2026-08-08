@@ -1172,3 +1172,67 @@ agent_communication:
 
           Credentials: kishan/Kishan@Boss2026 (Admin), staff/Staff@2026,
           carrier/Carrier@2026. See /app/memory/test_credentials.md.
+
+  - task: "Iter22 · Users Admin + Bullion Split + Ghost-User + Lalamove"
+    implemented: true
+    working: true
+    file: "backend/lalamove.py, backend/server.py (auth.role validation + bullion split), frontend/app/admin/{index,users}.tsx, frontend/src/bullion/SplitSheet.tsx, frontend/src/ghost/ghost-user.tsx, frontend/app/lalamove.tsx"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Iter22 shipped 4 phases in one session:
+          
+          Phase A - Users Admin (/admin console + /admin/users):
+          - Admin-only routes (Redirect for non-Admin).
+          - Full user CRUD: list, add (bottom-sheet form), edit
+            (display_name/role/honorific/password reset), toggle-disabled,
+            delete (self-delete blocked). PATCH now validates role against
+            the Role enum server-side.
+          
+          Phase B - Bullion partial split:
+          - Backend POST /api/bullion/transactions/{id}/split creates child
+            (parent_id + trip_id + inherited rate snapshot) and reduces
+            parent.remaining_weight_kg. Rejects: over-split, split on
+            child, split when fully allocated.
+          - Frontend: SplitSheet bottom-sheet with weight input + MAX + 
+            25/50/75% chips + trip picker. Inline "Split" chip on trade
+            row (visible when parent has remaining > 0). "SPLIT CHILD"
+            badge on child rows. Full split history + progress bar on
+            txn detail page.
+          
+          Phase C - Ghost-User confirmation + form-fill:
+          - New GhostUserProvider mounted in root layout with API:
+            parseAndRun(reply), run(action), hintCursor(x,y).
+          - Actions: navigate (auto-exec), create_party, create_item,
+            update_ledger, carrier_update, add_bag. Writes ALL show a
+            confirmation modal with details + Cancel/Confirm.
+          - Ghost cursor overlay: floating lime dot + halo, animated to
+            path via Reanimated. Fires on confirm + on navigate.
+          - Toast system for success/error feedback.
+          - Sanitizer strips CR/LF/TAB outside string literals so
+            multi-line pretty-printed Claude JSON parses cleanly.
+          - Role vocabulary translator: buyer→customer, seller→supplier.
+          
+          Phase D - Lalamove:
+          - Backend module (backend/lalamove.py) with /config, /cities,
+            /quote, /order, /order/{id}, /orders, /order/{id}/cancel,
+            /webhook — HMAC-SHA256 signed per Lalamove v3 spec.
+          - Graceful 503 when API keys are blank (current state).
+          - Frontend screen (/lalamove) with status banner, orders list,
+            "Book" bottom-sheet: service picker (Motorcycle/Car/Van),
+            pickup/drop with Google Maps coord paste OR party picker,
+            sender/recipient contacts, quote → confirm booking flow.
+          - AWAITING: Kishan Sir to paste LALAMOVE_API_KEY + SECRET into
+            backend/.env for live sandbox testing.
+          
+          Testing: iteration 22 — 27/27 backend tests passed
+          (/app/test_reports/iteration_22.json). E2E browser test also
+          confirmed the Ghost-User flow creates a real party ("Kabir
+          Sharma") via AI voice command with confirmation dialog.
+          
+          Post-test fixes: PATCH role enum validation (400 on bad value)
+          and frontend Ghost-User JSON sanitizer both applied and
+          verified via curl.

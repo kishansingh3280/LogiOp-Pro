@@ -418,8 +418,12 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
       // Extract every ```json``` fenced block; process only the first one for now.
       const match = aiReply.match(/```json\s*([\s\S]*?)```/);
       if (!match) return false;
+      // Claude occasionally streams multi-line JSON (pretty-printed across
+      // chunks). Squash structural whitespace outside string literals so
+      // stray CR/LF/TAB never trips JSON.parse.
+      const raw = _sanitizeJsonBlock(match[1].trim());
       try {
-        const obj = JSON.parse(match[1].trim());
+        const obj = JSON.parse(raw);
         if (!obj || typeof obj !== "object" || !("action" in obj)) return false;
         await run(obj as GhostAction);
         return true;
@@ -551,6 +555,35 @@ export function useGhostUser(): GhostUserApi {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error("useGhostUser must be used inside <GhostUserProvider>");
   return ctx;
+}
+
+/** Replace CR/LF/TAB that sit BETWEEN structural JSON tokens with a single
+ * space. Skips characters inside "double-quoted" strings so intentional
+ * escaped whitespace inside string values is preserved. */
+function _sanitizeJsonBlock(raw: string): string {
+  let out = "";
+  let inString = false;
+  let escape = false;
+  for (const ch of raw) {
+    if (inString) {
+      out += ch;
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "\n" || ch === "\r" || ch === "\t") {
+      out += " ";
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 const styles = StyleSheet.create({

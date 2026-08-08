@@ -189,6 +189,16 @@ async def auth_update_user(
         raise HTTPException(status_code=400, detail="Invalid user id")
     allowed = {"display_name", "role", "honorific", "disabled"}
     updates: Dict[str, Any] = {k: v for k, v in patch.items() if k in allowed}
+    # Validate role against the enum so a client cannot smuggle in a bad
+    # value that would then be silently accepted by Mongo.
+    if "role" in updates:
+        try:
+            updates["role"] = Role(updates["role"]).value
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid role — must be one of {[r.value for r in Role]}",
+            )
     if "password" in patch and patch["password"]:
         updates["password_hash"] = hash_password(str(patch["password"]))
     if not updates:
