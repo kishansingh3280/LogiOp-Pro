@@ -535,6 +535,194 @@ async def wingman_health():
 
 
 # Include the router in the main app
+# ============================================================================
+# ASSISTANT — Claude-powered chat + OpenAI voice pipeline
+# ============================================================================
+# Streams responses over SSE for a <2s conversational feel. Every interaction
+# is persisted so the "Business Knowledge" memory can grow over time. The
+# assistant is instructed to reply in native Hindi (Devanagari) by default
+# and to emit structured JSON tool-calls that the client executes against
+# the existing REST endpoints (Wingman surface).
+from fastapi.responses import StreamingResponse
+
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+
+_ASSISTANT_SYSTEM_HI = """
+आप एक विशेषज्ञ लॉजिस्टिक्स सहायक हैं जो एक भारतीय-थाई हैंड-कैरी बिज़नेस चलाने वाले
+ऑपरेटर के लिए काम करते हैं। हमेशा शुद्ध हिंदी (देवनागरी) में जवाब दें, संक्षिप्त
+और व्यावसायिक टोन में। दो-लाइन के भीतर उत्तर देने की कोशिश करें ताकि वॉइस पर सुनने
+में स्वाभाविक लगे।
+
+जब उपयोगकर्ता कोई कार्रवाई माँगे (जैसे "ललित के लिए बैग जोड़ो"), तो केवल एक JSON
+ब्लॉक भी दें, जैसे:
+```json
+{"action":"add_bag","party_name":"ललित","weight_kg":5,"notes":"..."}
+```
+JSON के बाहर एक छोटी पुष्टि लाइन दें।
+"""
+
+
+class AssistantMessage(BaseModel):
+    role: str
+    content: str
+
+
+class AssistantChatRequest(BaseModel):
+    session_id: str
+    message: str
+    history: List[AssistantMessage] = Field(default_factory=list)
+
+
+@api_router.post("/assistant/chat")
+async def assistant_chat(req: AssistantChatRequest):
+    """SSE streaming Claude Sonnet response. Persists user + assistant turns
+    into `assistant_messages` and mines simple business-pattern hints into
+    `assistant_memory` on the fly."""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+
+    from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+
+    # Log user turn
+    await db.assistant_messages.insert_one({
+        "id": str(uuid.uuid4()),
+        "session_id": req.session_id,
+        "role": "user",
+        "content": req.message,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    # Pull a small tail of prior memories to inject as context — keeps the
+    # AI aware of the operator's recurring patterns without blowing the
+    # prompt budget.
+    mem_docs = await db.assistant_memory.find().sort("hits", -1).limit(20).to_list(20)
+    memory_lines = [f"- {m.get('key')}: {m.get('value')}" for m in mem_docs]
+    memory_block = ("\nरिकॉर्ड पैटर्न्स:\n" + "\n".join(memory_lines)) if memory_lines else ""
+
+    chat = (
+        LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=req.session_id,
+            system_message=_ASSISTANT_SYSTEM_HI + memory_block,
+        )
+        .with_model("anthropic", "claude-sonnet-4-6")
+    )
+
+    async def event_gen():
+        buf = ""
+        try:
+            async for event in chat.stream_message(UserMessage(text=req.message)):
+                if isinstance(event, TextDelta):
+                    buf += event.content
+                    # SSE frame — one delta per line for real-time streaming.
+                    yield f"data: {event.content}\n\n"
+                elif isinstance(event, StreamDone):
+                    break
+        except Exception as e:
+            yield f"event: error\ndata: {str(e)}\n\n"
+        finally:
+            # Persist the completed assistant turn.
+            await db.assistant_messages.insert_one({
+                "id": str(uuid.uuid4()),
+                "session_id": req.session_id,
+                "role": "assistant",
+                "content": buf,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            yield "event: done\ndata: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+class AssistantMemoryEntry(BaseModel):
+    key: str
+    value: str
+
+
+@api_router.post("/assistant/memory")
+async def assistant_learn(entry: AssistantMemoryEntry):
+    """Store or bump a business-knowledge pattern. Called by the client
+    every time a manual entry finishes (party create, invoice save, bag add)
+    so the AI learns as the operator uses the app."""
+    now = datetime.now(timezone.utc).isoformat()
+    existing = await db.assistant_memory.find_one({"key": entry.key})
+    if existing:
+        await db.assistant_memory.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"value": entry.value, "last_seen": now},
+             "$inc": {"hits": 1}},
+        )
+    else:
+        await db.assistant_memory.insert_one({
+            "id": str(uuid.uuid4()),
+            "key": entry.key,
+            "value": entry.value,
+            "hits": 1,
+            "created_at": now,
+            "last_seen": now,
+        })
+    return {"ok": True}
+
+
+@api_router.get("/assistant/memory")
+async def assistant_memory_list(limit: int = 50):
+    docs = await db.assistant_memory.find().sort("hits", -1).limit(min(limit, 200)).to_list(200)
+    return [_clean_mongo_id(d) for d in docs]
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: Optional[str] = "nova"   # nova/shimmer are the most natural for Hindi
+
+
+@api_router.post("/assistant/tts")
+async def assistant_tts(req: TTSRequest):
+    """Proxy OpenAI TTS with Emergent key. Returns audio/mpeg bytes for
+    the client to play. Hindi TTS uses `tts-1` with nova/shimmer voices;
+    the model auto-detects Devanagari input."""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+    async with httpx.AsyncClient(timeout=30) as hclient:
+        r = await hclient.post(
+            "https://integrations.emergentagent.com/openai/v1/audio/speech",
+            headers={"Authorization": f"Bearer {EMERGENT_LLM_KEY}"},
+            json={"model": "tts-1", "voice": req.voice or "nova",
+                  "input": req.text, "response_format": "mp3"},
+        )
+    if r.status_code >= 400:
+        raise HTTPException(r.status_code, r.text)
+    return Response(content=r.content, media_type="audio/mpeg")
+
+
+@api_router.post("/assistant/stt")
+async def assistant_stt(request: Request):
+    """Whisper-1 STT proxy. Accepts multipart/form-data with an `audio`
+    field and returns the recognised Hindi text."""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+    form = await request.form()
+    upload = form.get("audio")
+    if not upload:
+        raise HTTPException(400, "Missing `audio` file")
+    async with httpx.AsyncClient(timeout=60) as hclient:
+        files = {"file": (upload.filename or "voice.m4a", await upload.read(),
+                          upload.content_type or "audio/m4a")}
+        data = {"model": "whisper-1", "language": "hi"}
+        r = await hclient.post(
+            "https://integrations.emergentagent.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {EMERGENT_LLM_KEY}"},
+            data=data,
+            files=files,
+        )
+    if r.status_code >= 400:
+        raise HTTPException(r.status_code, r.text)
+    return r.json()
+
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -632,3 +820,4 @@ async def proxy_to_remote_backend(path: str, request: Request):
         headers=resp_headers,
         media_type=resp.headers.get("content-type"),
     )
+

@@ -46,6 +46,8 @@ export default function MoreScreen() {
         { key: "parties", label: "Parties", icon: "people-outline", href: "/parties" },
         { key: "items", label: "Items catalog", icon: "pricetags-outline", href: "/items" },
         { key: "warehouses", label: "Warehouses", icon: "business-outline", href: "/warehouses" },
+        { key: "ledger", label: "Ledger", icon: "book-outline", href: "/ledger" },
+        { key: "reports", label: "Reports console", icon: "document-text-outline", href: "/reports", hint: "PDFs · invoices · packing · bullion" },
       ],
     },
     {
@@ -126,7 +128,7 @@ const styles = StyleSheet.create({
   },
   title: { color: colors.text, fontSize: 26, fontWeight: "800" },
   subtitle: { color: colors.textDim, fontSize: 12, marginTop: 2 },
-  content: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  content: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: 120 },
   sectionTitle: {
     color: colors.textDim,
     fontSize: 12,

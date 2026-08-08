@@ -270,7 +270,7 @@ const styles = StyleSheet.create({
     borderRightColor: colors.border,
     borderRightWidth: StyleSheet.hairlineWidth,
   },
-  listContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
+  listContent: { paddingHorizontal: spacing.lg, paddingBottom: 120 },
   detailCol: { flex: 1, minWidth: 0, backgroundColor: colors.bg },
   rowCard: { padding: spacing.lg },
   rowCardActive: { borderColor: colors.lime, backgroundColor: colors.limeGlow },

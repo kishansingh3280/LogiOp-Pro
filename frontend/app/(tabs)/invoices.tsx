@@ -101,7 +101,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   newBtnText: { color: colors.bg, fontWeight: "800", fontSize: 13 },
-  listContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
+  listContent: { paddingHorizontal: spacing.lg, paddingBottom: 120 },
   rowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   number: { color: colors.text, fontSize: 16, fontWeight: "800", letterSpacing: 0.4 },
   party: { color: colors.textMuted, fontSize: 13, marginTop: 6 },

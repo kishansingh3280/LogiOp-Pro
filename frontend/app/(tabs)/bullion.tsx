@@ -48,7 +48,7 @@ export default function BullionScreen() {
   const trips = useTrips();
   const txns = useTxns();
   const parties = useApi<Party[]>("/api/parties");
-  const [view, setView] = useState<View_>("trades");
+  const [view, setView] = useState<View_>("trips");
   const [filter, setFilter] = useState<Filter>("all");
   const [fabOpen, setFabOpen] = useState(false);
   const [editRates, setEditRates] = useState(false);
@@ -128,13 +128,13 @@ export default function BullionScreen() {
       </View>
 
       <View style={styles.segRow}>
-        <SegBtn label="Trades" active={view === "trades"} onPress={() => setView("trades")} testID="bullion-tab-trades" />
         <SegBtn label="Trips" active={view === "trips"} onPress={() => setView("trips")} testID="bullion-tab-trips" />
-        <SegBtn label="Asset map" active={view === "map"} onPress={() => setView("map")} testID="bullion-tab-map" />
+        <SegBtn label="Vault" active={view === "map"} onPress={() => setView("map")} testID="bullion-tab-map" />
+        <SegBtn label="Trades" active={view === "trades"} onPress={() => setView("trades")} testID="bullion-tab-trades" />
       </View>
 
       {view === "map" ? (
-        <AssetMap txns={txns.data} />
+        <AssetMap txns={fyTxns} />
       ) : view === "trades" ? (
         <FlatList
           data={filtered}
@@ -709,7 +709,7 @@ const styles = StyleSheet.create({
   segActive: { backgroundColor: colors.lime },
   segText: { color: colors.textMuted, fontWeight: "700", fontSize: 13 },
   segTextActive: { color: colors.bg },
-  scroll: { paddingHorizontal: spacing.lg, paddingBottom: 100 },
+  scroll: { paddingHorizontal: spacing.lg, paddingBottom: 120 },
   statsStrip: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
   stat: {
     flex: 1,

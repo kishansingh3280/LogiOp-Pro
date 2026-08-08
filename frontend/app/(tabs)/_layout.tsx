@@ -12,7 +12,12 @@ import { colors, radii } from "@/src/theme";
 // Animated.spring — no external libraries, keeps things at native 60fps
 // (and 120fps on ProMotion / high-refresh Android displays).
 
-type TabName = "index" | "shipments" | "invoices" | "ledger" | "bullion" | "more";
+// Bottom-safe padding constant — every scrollable screen should apply this
+// (or a value >= this) as `paddingBottom` so content never disappears
+// under the sticky glassmorphic tab bar.
+export const TAB_BAR_BOTTOM_PAD = 96;
+
+type TabName = "index" | "shipments" | "invoices" | "assistant" | "bullion" | "more";
 
 interface TabDef {
   name: TabName;
@@ -23,8 +28,8 @@ interface TabDef {
 const TABS: TabDef[] = [
   { name: "index", title: "Overview", icon: "grid-outline" },
   { name: "shipments", title: "Shipments", icon: "cube-outline" },
+  { name: "assistant", title: "Assistant", icon: "hardware-chip-outline" }, // centre brain
   { name: "invoices", title: "Invoices", icon: "document-text-outline" },
-  { name: "ledger", title: "Ledger", icon: "book-outline" },
   { name: "bullion", title: "Bullion", icon: "diamond-outline" },
   { name: "more", title: "More", icon: "ellipsis-horizontal" },
 ];
@@ -40,18 +45,23 @@ export default function TabsLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.lime,
         tabBarInactiveTintColor: colors.textDim,
-        tabBarStyle: { display: "none" }, // hide default bar; we render our own
+        // Overlay the tab bar so it NEVER scrolls with content; screens
+        // are responsible for adding their own bottom padding (see
+        // TAB_BAR_BOTTOM_PAD constant). display:none suppresses the
+        // default bar since we render our own via `tabBar` below.
+        tabBarStyle: { display: "none", position: "absolute" },
         // 120fps-friendly navigation animation.
         animation: "shift",
       }}
       tabBar={(props) => (
-        <View style={[styles.wrap, { height: barHeight, paddingBottom: bottomPad }]}>
+        <View style={[styles.wrap, { height: barHeight, paddingBottom: bottomPad }]} pointerEvents="box-none">
           <BlurView
             tint="dark"
             intensity={Platform.OS === "ios" ? 70 : 60}
             style={StyleSheet.absoluteFill}
+            pointerEvents="none"
           />
-          <View style={styles.overlay} />
+          <View style={styles.overlay} pointerEvents="none" />
           <View style={styles.row}>
             {TABS.map((tab) => {
               const route = props.state.routes.find((r) => r.name === tab.name);
@@ -174,6 +184,10 @@ function TabButton({
 
 const styles = StyleSheet.create({
   wrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     borderTopColor: "rgba(163, 230, 53, 0.10)",
     borderTopWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
