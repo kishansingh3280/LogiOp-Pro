@@ -1824,7 +1824,7 @@ async def _stream_elevenlabs_tts(text: str, voice_id: Optional[str] = None) -> A
 
     Env vars required:
         ELEVENLABS_API_KEY   — from elevenlabs.io Profile → API Key
-        ELEVENLABS_VOICE_ID  — default voice (Ryan = wViXBPUzp2ZZixB1xQuM)
+        ELEVENLABS_VOICE_ID  — default voice (Liam premade = TX3LPaxmHKxFdv7VOQHJ)
     """
     api_key = os.getenv("ELEVENLABS_API_KEY")
     default_voice = os.getenv("ELEVENLABS_VOICE_ID") or "TX3LPaxmHKxFdv7VOQHJ"

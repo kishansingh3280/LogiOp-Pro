@@ -106,7 +106,7 @@ export default function SignInScreen() {
                 is unmissable regardless of viewport height. Duplicate of
                 the main submit button so tapping either logs in. */}
             <Pressable
-              onPress={onSubmit}
+              onPress={() => onSubmit()}
               disabled={busy || !username || !password}
               style={({ pressed }) => [
                 styles.buttonTop,
@@ -158,7 +158,7 @@ export default function SignInScreen() {
                   style={[styles.input, { flex: 1 }]}
                   testID="signin-password"
                   returnKeyType="go"
-                  onSubmitEditing={onSubmit}
+                  onSubmitEditing={() => onSubmit()}
                 />
                 <Pressable onPress={() => setShowPw((v) => !v)} style={styles.eye} hitSlop={8}>
                   <Ionicons name={showPw ? "eye-off" : "eye"} size={18} color={colors.textDim} />
@@ -174,7 +174,7 @@ export default function SignInScreen() {
             )}
 
             <Pressable
-              onPress={onSubmit}
+              onPress={() => onSubmit()}
               disabled={busy}
               style={({ pressed }) => [
                 styles.button,

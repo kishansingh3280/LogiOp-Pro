@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 24 (frontend-only re-verification): Confirmed the iter23 fix in /app/frontend/app/sign-in.tsx. All three login paths — top CTA (testID='signin-top-cta'), bottom submit (testID='signin-submit'), and password onSubmitEditing (Enter key) — now correctly invoke onSubmit() without leaking the GestureResponderEvent. Logged in as kishan / Kishan@Boss2026 across all three paths and landed on the dashboard (overview-header, stat-grid, active-trips-card, bullion, ledger cards all rendered). No red-screen and no '.trim is not a function' TypeError observed in any path. Regression check: the floating-jarvis sidebar opens correctly after login and shows the Wingman assistant chat history intact (previous messages visible, composer active).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "sign-in.tsx (and multiple screens)", "issue": "Console warning: 'shadow*' style props are deprecated. Use 'boxShadow'. Non-blocking on web but should be migrated for RN 0.76+/expo-52+. Reference: /app/frontend/app/sign-in.tsx:255-259, 330-336, 355-358."},
+      {"component": "AmbientBackground / animated views", "issue": "Console warning: props.pointerEvents is deprecated. Use style.pointerEvents. Non-blocking, cosmetic."},
+      {"component": "Animated (pulse loop in sign-in.tsx)", "issue": "Console warning: useNativeDriver not supported on web preview — falling back to JS animation. Expected on web; native builds will use RCTAnimation. No action required unless targeting web perf."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "No functional action required for the reported bug — the fix is verified working across all 3 login paths.",
+    "(Optional / low priority) Migrate deprecated 'shadow*' style props to 'boxShadow' and 'props.pointerEvents' to 'style.pointerEvents' across the app to silence RN Web deprecation warnings."
+  ],
+  "critical_code_review_comments": [
+    "sign-in.tsx onSubmit now correctly wrapped with arrow fn at all three call-sites (109, 161, 177) — GestureResponderEvent no longer leaks into overrideUsername.",
+    "onSubmit's default parameters (overrideUsername/overridePassword) use `??` fall-through to state, which is safe once the event-leak is removed."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (per request)", "frontend": "100% (3/3 login paths + sidebar regression)"},
+  "seed_data_creation": "None — used existing seeded user kishan/Kishan@Boss2026.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Sign-in event-leak bug is closed. Primary username+password login is fully functional via all 3 UI entry points. Floating Jarvis sidebar opens post-login and Wingman chat history renders correctly. Deprecation warnings in console are cosmetic only.",
+  "rca_of_issue": "Original bug (iter23): onPress={onSubmit} passed the RN GestureResponderEvent as the first arg (overrideUsername), then `.trim()` on the event object threw a TypeError red-screen. Fix (iter24): wrapping with `() => onSubmit()` at all 3 sites (Pressable onPress lines 109 & 177, TextInput onSubmitEditing line 161) prevents the event from being passed. Verified end-to-end in the web preview at https://logistics-ai-hub-18.preview.emergentagent.com."
+}
