@@ -67,10 +67,10 @@ import { speakStreaming, type StreamingTtsHandle } from "@/src/utils/tts-stream"
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
 // Popup dimensions — right-side vertical sidebar layout. Docked to the
-// right edge, full-height (safe-area aware), 340px wide on phones and
-// widens gracefully on tablets. Background remains fully visible to the
-// left of the panel so the operator sees their app data while chatting.
-const SIDEBAR_W = Math.min(360, Math.max(300, SCREEN_W - 24));
+// right edge, full-height (safe-area aware). Kept narrower than the full
+// screen so the operator can still see the underlying page peeking on the
+// left while chatting. On tablets/wide viewports it widens gracefully.
+const SIDEBAR_W = Math.min(360, Math.max(280, Math.round(SCREEN_W * 0.82)));
 const SIDEBAR_MAX_H = SCREEN_H;
 
 // Bubble geometry — kept in sync with styles.bubbleBtn below.
@@ -148,9 +148,10 @@ export function FloatingJarvis() {
   const ringScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.15] });
   const ringOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0.9] });
 
-  // Sidebar slide-in animation. `expanded` drives a 0→1 value; we
-  // translate from off-screen (+SIDEBAR_W) into place at 0. Opacity
-  // fades in from 0 → 1 in parallel for a soft entry.
+  // Sidebar slide-in animation. `expanded` drives a 0→1 value; we use
+  // it for opacity + a subtle scale so it never renders off-screen (a
+  // translate-X approach was fighting RN Web's clip-box for absolutely
+  // positioned parents with `right: 0`).
   const popup = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.spring(popup, {
@@ -167,12 +168,8 @@ export function FloatingJarvis() {
 
   const bubbleBottom = insets.bottom + 96; // above the tab bar
 
-  // Sidebar slides in from the right edge. translateX: SIDEBAR_W → 0.
   const popupOpacity = popup.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-  const sidebarTX = popup.interpolate({
-    inputRange: [0, 1],
-    outputRange: [SIDEBAR_W, 0],
-  });
+  const popupScale = popup.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
 
   return (
     <>
@@ -204,7 +201,7 @@ export function FloatingJarvis() {
                 opacity: popupOpacity,
                 paddingTop: insets.top + 8,
                 paddingBottom: Math.max(insets.bottom, 12) + BUBBLE_SIZE + 16,
-                transform: [{ translateX: sidebarTX }],
+                transform: [{ scale: popupScale }],
               },
             ]}
             pointerEvents="auto"
@@ -341,19 +338,64 @@ function JarvisPopup({ onClose, onGoLive }: { onClose: () => void; onGoLive: () 
     return () => clearTimeout(t);
   }, []);
 
-  // Proactive greeting — if blockers exist, greet with the summary line.
+  // ---------------------------------------------------------------------
+  // Brain Connection — pull the shared conversation history from the
+  // server. This includes messages that originated from WhatsApp so the
+  // in-app Wingman and the external WhatsApp bot share ONE memory.
+  // Sourced from the `assistant_messages` MongoDB collection via
+  // `GET /api/assistant/history`.
+  // ---------------------------------------------------------------------
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = getAuthTokenSync();
+        const resp = await fetch(`${API_BASE}/api/assistant/history?limit=40`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const rows = (await resp.json()) as {
+          id?: string;
+          role: "user" | "assistant";
+          content: string;
+          created_at?: string;
+        }[];
+        if (cancelled) return;
+        const loaded: Msg[] = rows
+          .filter((r) => r && r.role && r.content)
+          .map((r) => ({
+            role: r.role,
+            text: r.content,
+            at: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+          }));
+        setMessages(loaded);
+        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 60);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[jarvis] history load failed:", (e as Error).message);
+      } finally {
+        if (!cancelled) setHistoryLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Proactive greeting — if blockers exist AND we have no prior
+  // conversation loaded, greet with the summary line.
+  useEffect(() => {
+    if (!historyLoaded) return;
     const b = getCachedBlockers();
     if (!b || b.total === 0) return;
-    const t = setTimeout(() => {
-      setMessages((prev) =>
-        prev.length ? prev : [{ role: "assistant", text: b.summary_hi, at: Date.now() }],
-      );
+    setMessages((prev) => {
+      if (prev.length > 0) return prev; // don't clobber loaded history
       speak(b.summary_hi).catch(() => undefined);
-    }, 400);
-    return () => clearTimeout(t);
+      return [{ role: "assistant", text: b.summary_hi, at: Date.now() }];
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [historyLoaded]);
 
   // Cleanup on unmount — cancel in-flight TTS + release mic.
   useEffect(() => {
@@ -514,9 +556,17 @@ function JarvisPopup({ onClose, onGoLive }: { onClose: () => void; onGoLive: () 
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.popupTitle}>Wingman</Text>
-            <Text style={styles.popupSub} numberOfLines={1}>
-              {user ? `${user.display_name} ${user.honorific}` : "Kishan Sir"} · {modeLabel}
-            </Text>
+            <View style={styles.popupSubRow}>
+              <Text style={styles.popupSub} numberOfLines={1}>
+                {user ? `${user.display_name} ${user.honorific}` : "Kishan Sir"} · {modeLabel}
+              </Text>
+              {historyLoaded && messages.length > 0 ? (
+                <View style={styles.brainBadge} testID="jarvis-brain-synced">
+                  <Ionicons name="logo-whatsapp" size={9} color="#34D399" />
+                  <Text style={styles.brainBadgeText}>brain synced</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
         <Pressable
@@ -1075,6 +1125,25 @@ const styles = StyleSheet.create({
   },
   popupTitle: { color: colors.text, fontSize: 14, fontWeight: "800" },
   popupSub: { color: colors.textMuted, fontSize: 10, marginTop: 1, letterSpacing: 0.3 },
+  popupSubRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 1 },
+  brainBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: "rgba(52, 211, 153, 0.10)",
+    borderColor: "rgba(52, 211, 153, 0.35)",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  brainBadgeText: {
+    color: "#34D399",
+    fontSize: 8,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
   popupClose: {
     width: 26,
     height: 26,
