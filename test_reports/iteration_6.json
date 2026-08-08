@@ -20,7 +20,7 @@
   "seed_data_creation": "None",
   "retest_needed": false,
   "should_main_agent_self_test": false,
-  "context_for_next_testing_agent": "Web preview at https://native-logistics-hub.preview.emergentagent.com is serving the latest bundle post cache purge. All API traffic (30/30 requests captured) routes to https://logistics-hub-1349.emergent.host/api/*, zero hits to preview/api. CN-1004 is currently in 'Pending' state; advance button label is 'Mark as in transit' (title-case in source, rendered uppercase in hero button via CSS). Ledger shows 6 parties, YOU WILL GET ₹6,705 / YOU WILL GIVE ₹1,500, Net position ₹5,205. When user reopens Expo Go and rescans QR on Samsung Tab S11 they will receive this bundle. No further action needed.",
+  "context_for_next_testing_agent": "Web preview at https://logistics-ai-hub-18.preview.emergentagent.com is serving the latest bundle post cache purge. All API traffic (30/30 requests captured) routes to https://logistics-hub-1349.emergent.host/api/*, zero hits to preview/api. CN-1004 is currently in 'Pending' state; advance button label is 'Mark as in transit' (title-case in source, rendered uppercase in hero button via CSS). Ledger shows 6 parties, YOU WILL GET ₹6,705 / YOU WILL GIVE ₹1,500, Net position ₹5,205. When user reopens Expo Go and rescans QR on Samsung Tab S11 they will receive this bundle. No further action needed.",
   "rca_of_issue": "N/A — verification only.",
   "checkpoint_results": {
     "ledger_redesign": {

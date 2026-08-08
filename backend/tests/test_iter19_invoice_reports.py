@@ -16,7 +16,7 @@ import requests
 
 BASE_URL = os.environ.get(
     "EXPO_PUBLIC_BACKEND_URL",
-    "https://native-logistics-hub.preview.emergentagent.com",
+    "https://logistics-ai-hub-18.preview.emergentagent.com",
 ).rstrip("/")
 
 

@@ -1827,7 +1827,7 @@ async def _stream_elevenlabs_tts(text: str, voice_id: Optional[str] = None) -> A
         ELEVENLABS_VOICE_ID  — default voice (Ryan = wViXBPUzp2ZZixB1xQuM)
     """
     api_key = os.getenv("ELEVENLABS_API_KEY")
-    default_voice = os.getenv("ELEVENLABS_VOICE_ID") or "wViXBPUzp2ZZixB1xQuM"
+    default_voice = os.getenv("ELEVENLABS_VOICE_ID") or "TX3LPaxmHKxFdv7VOQHJ"
     voice = voice_id or default_voice
     if not api_key:
         raise HTTPException(500, "ELEVENLABS_API_KEY not configured")
@@ -1929,6 +1929,8 @@ async def _stream_tts_with_fallback(
                 first = chunk
                 break
             if first is not None:
+                import logging
+                logging.info(f"[TTS] ElevenLabs streaming ({len(first)}B first chunk)")
                 yield first
                 async for chunk in gen:
                     yield chunk
@@ -1938,6 +1940,8 @@ async def _stream_tts_with_fallback(
             import logging
             logging.warning(f"[TTS] ElevenLabs failed ({e.detail}) — falling back to OpenAI")
     # Fallback path
+    import logging
+    logging.info("[TTS] Using OpenAI shimmer fallback")
     async for chunk in _stream_openai_tts(text, openai_voice, speed):
         yield chunk
 

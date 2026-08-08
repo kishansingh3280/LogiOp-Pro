@@ -4,7 +4,7 @@ import time
 import pytest
 import requests
 
-BASE = os.environ.get("EXPO_BACKEND_URL", "https://native-logistics-hub.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("EXPO_BACKEND_URL", "https://logistics-ai-hub-18.preview.emergentagent.com").rstrip("/")
 API = f"{BASE}/api"
 
 

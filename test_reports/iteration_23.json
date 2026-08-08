@@ -1,0 +1,59 @@
+{
+  "summary": "iter23 — ElevenLabs TTS primary-path verification (Liam voice TX3LPaxmHKxFdv7VOQHJ) + floating-jarvis sidebar wire-up regression. Created /app/backend/tests/test_iter23_elevenlabs_tts.py with 7 tests across 4 classes. Result: 7/7 pass (100%). Confirmed: (1) POST /api/assistant/tts/stream returns HTTP 200 with Content-Type: audio/mpeg AND real MP3 bytes (ID3 header + MPEG frame sync) — backend log emits '[TTS] ElevenLabs streaming (4096B first chunk)' immediately after the call, NEVER '[TTS] Using OpenAI shimmer fallback'. (2) GET /api/assistant/tts/stream?text=... — same result, works from expo-audio player. (3) GET /api/assistant/history returns [] for unauth (by design, uses optional_current_user), returns a JSON list of {id, role, content, created_at} messages for kishan (200 OK, list-shape, existing history preserved). (4) POST /api/assistant/chat with session_id + message + honorific returns 200 SSE with a Hinglish reply. (5) POST /api/auth/login for kishan/Kishan@Boss2026 → access_token OK. (6) FRONTEND: floating-jarvis sidebar wire-up verified end-to-end on the deployed EXPO_PUBLIC_BACKEND_URL — quick-login → dashboard, [data-testid=floating-jarvis] tappable, sidebar opens with existing message history rendered (multi-turn Hinglish conversation shows correctly with the 'BRAIN SYNCED' badge), jarvis-input + jarvis-send work, sending 'Boss, ek line mein hello bolo.' returned 'Namaste Kishan Sir, sab set hai — bolo kya kaam hai! 😊', and the 2 additional log entries at 14:57:15 & 14:57:17 confirm ElevenLabs TTS was triggered by the UI action. NO React Native red screens on the dashboard/sidebar. HOWEVER — found a NEW critical UI bug on /sign-in.tsx: three call sites (line 109 `onPress={onSubmit}`, line 161 `onSubmitEditing={onSubmit}`, line 177 `onPress={onSubmit}`) pass the GestureResponderEvent as the first arg to `onSubmit(overrideUsername?, overridePassword?)` — the very first line does `(overrideUsername ?? username).trim()`, which throws 'trim is not a function' when overrideUsername is the event object. Red-screen reproduced when clicking the top 'LOGIN' icon-button. The 'LOG IN & OPEN DASHBOARD' primary button (line 177) has the same bug. Only the 'Quick login as Kishan Sir (demo)' button (line 207) works because it passes real strings. Deprecated packages check: none of expo-av / expo-barcode-scanner / expo-background-fetch present — clean.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "app/sign-in.tsx",
+        "issue": "onPress/onSubmitEditing pass the React Native GestureResponderEvent directly to onSubmit(overrideUsername?, overridePassword?). Line 59 immediately calls (overrideUsername ?? username).trim() → red-screen 'trim is not a function'. Affects lines 109 (top LOGIN icon button), 161 (password onSubmitEditing), 177 (LOG IN & OPEN DASHBOARD primary button). Only line 207 (quick-login demo) escapes because it passes real strings.",
+        "testID": "n/a (Pressable wraps `login-primary` region)",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "Animated (multiple screens)",
+        "issue": "Warning: `useNativeDriver` is not supported on web because the native animated module is missing. Falls back to JS-driven animation. On web preview this is harmless but on native builds it means every animation using useNativeDriver:true will silently run on the JS thread. Reference: /app/frontend/app/sign-in.tsx pulse animation + likely floating-jarvis pulse. Consider gating useNativeDriver by Platform.OS !== 'web'."
+      },
+      {
+        "component": "shadow* style props (multiple screens)",
+        "issue": "Console warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' — React Native Web 0.19+ deprecates shadowColor/shadowOffset/shadowOpacity/shadowRadius for web. Not a blocker but will start throwing in RN Web 0.20. Reference: any styles.card / GlassCard shadow definitions."
+      },
+      {
+        "component": "props.pointerEvents",
+        "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' — deprecated in RN 0.75+. Move any pointerEvents=\"none\" prop into style={{pointerEvents: 'none'}}."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_elevenlabs_tts.py",
+    "/app/test_reports/pytest/iter23_results.xml"
+  ],
+  "action_items": [
+    "URGENT: /app/frontend/app/sign-in.tsx — wrap onSubmit call sites so they don't leak the event as the username: change `onPress={onSubmit}` (lines 109, 177) to `onPress={() => onSubmit()}` and `onSubmitEditing={onSubmit}` (line 161) to `onSubmitEditing={() => onSubmit()}`. Alternatively, add a type-guard `if (typeof overrideUsername !== 'string') overrideUsername = undefined;` at the top of onSubmit. This blocks first-time real users (only the quick-login demo path works today).",
+    "Optional (deprecation): migrate shadow* → boxShadow and prop pointerEvents → style.pointerEvents before RN Web 0.20 ships.",
+    "Optional (perf): gate useNativeDriver=true behind Platform.OS !== 'web' in sign-in.tsx and floating-jarvis.tsx animations to silence the JS-fallback warning on web preview.",
+    "Optional: server.py:1827 docstring still says 'default voice (Ryan = wViXBPUzp2ZZixB1xQuM)' but env now uses Liam TX3LPaxmHKxFdv7VOQHJ — update the docstring to prevent confusion in future maintenance."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1912-1946 _stream_tts_with_fallback — the ElevenLabs branch swallows only HTTPException from _stream_elevenlabs_tts; a network-level httpx exception (e.g. httpx.ReadTimeout during the aiter_bytes) would propagate out of the StreamingResponse mid-stream and the client gets a truncated MP3 with no fallback. Consider catching (httpx.HTTPError, Exception) around the first-chunk aiter as well.",
+    "server.py:1830 default voice fallback string 'TX3LPaxmHKxFdv7VOQHJ' is hardcoded — matches current .env by coincidence. Prefer removing the default so a missing env var fails loudly.",
+    "server.py is 2159 lines — still well over the 700-line guideline. Split routers/{auth,bullion,wingman,assistant,proxy,tts}.py for maintainability (repeat finding from iter22)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter23_elevenlabs_tts.py (new)",
+    "/app/test_reports/pytest/iter23_results.xml (new)",
+    "/app/test_reports/iteration_23.json (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "sidebar 100% via quick-login; regular login CRITICAL red-screen"},
+  "seed_data_creation": "No new seed data. Test data: only ephemeral chat/TTS calls (no persisted rows other than the standard assistant_messages append that /assistant/chat naturally creates for kishan — which is desired behaviour and matches sidebar history rendering).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "ElevenLabs TTS primary path is CONFIRMED live (Liam voice, eleven_multilingual_v2). If a future iter changes the voice or model, re-run test_iter23_elevenlabs_tts.py — it asserts BOTH content-type audio/mpeg with valid MP3 magic bytes AND the exact '[TTS] ElevenLabs streaming' log line. The sign-in.tsx onPress={onSubmit} bug MUST be fixed before iter24 UI work — otherwise no regression can log in through the primary button. Sidebar itself is healthy; existing history rendering + send/receive round-trip works.",
+  "rca_of_issue": "sign-in.tsx red-screen RCA: React Native's Pressable/TextInput pass a synthetic event as the FIRST argument to onPress/onSubmitEditing. The developer wrote `onSubmit = useCallback(async (overrideUsername?: string, overridePassword?: string) => { const u = (overrideUsername ?? username).trim(); ... })` intending overrides for the demo quick-login. When wired directly as `onPress={onSubmit}`, RN passes GestureResponderEvent → overrideUsername is truthy (an object) → .trim() throws. Reproduction: open /sign-in, tap the top 'LOGIN' icon-button OR the main 'LOG IN & OPEN DASHBOARD' button → red-screen 'overrideUsername ?? username.trim is not a function'. Mitigation: wrap in arrow (`onPress={() => onSubmit()}`) at lines 109, 161, 177 in /app/frontend/app/sign-in.tsx."
+}
