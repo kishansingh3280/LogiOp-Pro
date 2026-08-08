@@ -1812,3 +1812,70 @@ agent_communication:
             favorite silver kya hai?" via in-app /api/assistant/chat on
             a FRESH session → response "Aapka favorite silver item
             **Rani Chain** hai, Sir! 😊". Same brain, same memory. ✓
+
+  - task: "Iter33 · Right-side Sidebar + ElevenLabs TTS + Whisper Hinglish"
+    implemented: true
+    working: true
+    file: "backend/server.py (ElevenLabs streaming + Whisper prompt biasing + graceful fallback), backend/.env (ELEVENLABS_*), frontend/src/components/floating-jarvis.tsx (sidebar layout)"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Four-part refactor delivered in one pass:
+          
+          (1) Right-side vertical sidebar (replaces the popup)
+              - Full-height (top of screen → tab bar), 340-360px wide
+              - Docked to the right edge with LEFT-only rounded corners
+                so it visually attaches to the right side
+              - Slides in from the right (Animated.spring on
+                translateX: SIDEBAR_W → 0, opacity 0 → 1)
+              - Background app stays fully visible on the left half AND
+                fully interactive (not a Modal) so Ghost-User can drive
+                forms below while chat continues
+              - Cyan halo shadow (offset -12px x) to visually detach
+                from the right edge
+              - Bubble still shown at bottom-right; toggles close-X while
+                sidebar is open
+          
+          (2) ElevenLabs TTS (with graceful OpenAI fallback)
+              - New _stream_elevenlabs_tts() proxies
+                api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream
+                with model_id=eleven_multilingual_v2 (best for Hinglish)
+                and voice_settings tuned for professional emotional
+                Hindi delivery (stability=0.42, similarity=0.85,
+                style=0.35, use_speaker_boost=true)
+              - New _stream_tts_with_fallback() tries ElevenLabs first;
+                on ANY upstream error (bad key, missing permission,
+                network) transparently falls back to OpenAI shimmer at
+                0.88x. This keeps the assistant vocal even if the
+                ElevenLabs key expires.
+              - ⚠️ NOTE FOR OPERATOR: The API key provided
+                (sk_ca2332…c85b7edb) currently reports
+                "missing_permissions" for text_to_speech. To activate
+                ElevenLabs voice, go to elevenlabs.io → Profile → API
+                Keys and either enable text_to_speech scope on the
+                existing key OR generate a new key WITH that permission.
+                Until then, we're speaking through OpenAI shimmer @
+                0.88x on tts-1-hd (which is what the screenshots show).
+          
+          (3) Whisper STT with Hinglish biasing
+              - /api/assistant/stt already used language="hi" — I added
+                a `prompt=` biasing string listing the operator's domain
+                vocabulary (Kishan, Lalit, Chennai, Bangkok, hand carry,
+                IN_TO_TH, THB, INR, silver, Rani Chain, etc.). This
+                nudges Whisper toward correct proper-noun spelling and
+                enum values so the Hinglish transcript feeds cleanly
+                into the LLM → ghost-user pipeline.
+          
+          (4) Shared Wingman brain — already delivered in Iter32.
+              Reconfirmed still working: same Claude Sonnet 4.6, same
+              assistant_messages Mongo collection, same system prompt
+              serves BOTH the in-app sidebar AND /api/whatsapp/webhook.
+          
+          Verified via Playwright screenshot: sidebar opens on the right,
+          background page (India↔Thailand dashboard) still visible on
+          the left, header pill shows "Kishan Sir · Speaking…" while
+          TTS plays, proactive blocker greet + follow-up chat both
+          rendered as bubbles inside the transcript.

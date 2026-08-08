@@ -1817,6 +1817,48 @@ def _tts_prep_pauses(text: str) -> str:
     return out
 
 
+async def _stream_elevenlabs_tts(text: str, voice_id: Optional[str] = None) -> Any:
+    """Proxy an ElevenLabs streaming TTS call chunk-by-chunk. Uses the
+    `eleven_multilingual_v2` model which handles Hinglish + native Hindi
+    beautifully with emotional, natural delivery.
+
+    Env vars required:
+        ELEVENLABS_API_KEY   — from elevenlabs.io Profile → API Key
+        ELEVENLABS_VOICE_ID  — default voice (Ryan = wViXBPUzp2ZZixB1xQuM)
+    """
+    api_key = os.getenv("ELEVENLABS_API_KEY")
+    default_voice = os.getenv("ELEVENLABS_VOICE_ID") or "wViXBPUzp2ZZixB1xQuM"
+    voice = voice_id or default_voice
+    if not api_key:
+        raise HTTPException(500, "ELEVENLABS_API_KEY not configured")
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream?output_format=mp3_44100_128"
+    headers = {
+        "xi-api-key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg",
+    }
+    body = {
+        "text": _tts_prep_pauses(text)[:4000],
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            # Ryan sounds most natural + emotional at these values based
+            # on ElevenLabs's own guidance for professional Indian voices.
+            "stability": 0.42,
+            "similarity_boost": 0.85,
+            "style": 0.35,
+            "use_speaker_boost": True,
+        },
+    }
+    async with httpx.AsyncClient(timeout=45) as client:
+        async with client.stream("POST", url, json=body, headers=headers) as r:
+            if r.status_code >= 400:
+                err_text = (await r.aread()).decode("utf-8", errors="ignore")[:200]
+                raise HTTPException(502, f"ElevenLabs {r.status_code}: {err_text}")
+            async for chunk in r.aiter_bytes(chunk_size=4096):
+                if chunk:
+                    yield chunk
+
+
 async def _stream_openai_tts(text: str, voice: str, speed: float = 0.88) -> Any:
     """Proxy an OpenAI /audio/speech call chunk-by-chunk. Yields raw MP3
     bytes as the model produces them. Time-to-first-chunk from the upstream
@@ -1867,18 +1909,48 @@ class _TTSStreamRequest(BaseModel):
     speed: Optional[float] = 0.88
 
 
+async def _stream_tts_with_fallback(
+    text: str,
+    openai_voice: str = "shimmer",
+    speed: float = 0.88,
+):
+    """Try ElevenLabs first (when configured); on any upstream error
+    (bad key, missing permission, network) transparently fall back to
+    OpenAI shimmer so the operator never gets a silent assistant."""
+    use_11 = bool(os.getenv("ELEVENLABS_API_KEY"))
+    if use_11:
+        try:
+            # We need to buffer just the FIRST chunk to catch upstream
+            # errors before streaming to the client. Once we're past that,
+            # we can pipe the rest through.
+            gen = _stream_elevenlabs_tts(text)
+            first = None
+            async for chunk in gen:
+                first = chunk
+                break
+            if first is not None:
+                yield first
+                async for chunk in gen:
+                    yield chunk
+                return
+        except HTTPException as e:
+            # eslint-disable-next-line no-console
+            import logging
+            logging.warning(f"[TTS] ElevenLabs failed ({e.detail}) — falling back to OpenAI")
+    # Fallback path
+    async for chunk in _stream_openai_tts(text, openai_voice, speed):
+        yield chunk
+
+
 @api_router.post("/assistant/tts/stream")
 async def assistant_tts_stream_post(req: _TTSStreamRequest):
-    """Chunked MP3 stream. Same input as /assistant/tts but returns the
-    upstream chunks as-they-arrive so the browser can `MediaSource.appendBuffer`
-    and start playing within ~300-500ms instead of waiting for the full mp3.
-    """
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+    """Chunked MP3 stream. Prefers ElevenLabs (native Hindi male, emotional,
+    natural) when ELEVENLABS_API_KEY is set + has text_to_speech permission;
+    falls back to OpenAI shimmer at 0.88x otherwise."""
     if not req.text or not req.text.strip():
         raise HTTPException(400, "text is required")
     return StreamingResponse(
-        _stream_openai_tts(req.text, req.voice or "shimmer", req.speed or 0.88),
+        _stream_tts_with_fallback(req.text, req.voice or "shimmer", req.speed or 0.88),
         media_type="audio/mpeg",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1890,16 +1962,12 @@ async def assistant_tts_stream_get(
     voice: Optional[str] = "shimmer",
     speed: Optional[float] = 0.88,
 ):
-    """GET-flavour streaming TTS — text passed via query so native players
-    (`expo-audio createAudioPlayer({ uri })`) can pull the URL directly and
-    let the OS handle chunked playback. `voice` defaults to shimmer.
-    """
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+    """GET-flavour streaming TTS — native players (expo-audio) can pull
+    the URL directly. Uses ElevenLabs when configured, falls back on error."""
     if not text or not text.strip():
         raise HTTPException(400, "text is required")
     return StreamingResponse(
-        _stream_openai_tts(text, voice or "shimmer", speed or 0.88),
+        _stream_tts_with_fallback(text, voice or "shimmer", speed or 0.88),
         media_type="audio/mpeg",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1928,6 +1996,17 @@ async def assistant_stt(request: Request):
             audio_file_path=tmp_path,
             model="whisper-1",
             language="hi",
+            # Prompt biasing — nudge Whisper toward Hinglish + our domain
+            # vocabulary so proper nouns / logistics terms transcribe
+            # cleanly (e.g. "Lalit", "consignment", "hand carry",
+            # "IN_TO_TH").
+            prompt=(
+                "Hinglish conversation. Terms may include: Kishan Sir, "
+                "Lalit, party, shipment, invoice, bag, weight, freight, "
+                "hand carry, IN_TO_TH, Chennai, Bangkok, Mumbai, Delhi, "
+                "Bhopal, THB, INR, kg, gram, silver, gold, bullion, "
+                "Rani Chain, Wingman, assistant."
+            ),
         )
     except Exception as e:
         raise HTTPException(502, f"STT upstream error: {e}")

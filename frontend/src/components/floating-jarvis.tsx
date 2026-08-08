@@ -66,11 +66,12 @@ import { speakStreaming, type StreamingTtsHandle } from "@/src/utils/tts-stream"
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
-// Popup dimensions — sized to fit comfortably on a 390px-wide phone with
-// side gutters. Height caps at 70% of the screen so it doesn't crowd the
-// tab bar or push the input off screen when the keyboard is up.
-const POPUP_W = Math.min(320, SCREEN_W - 24);
-const POPUP_H = Math.min(460, Math.floor(SCREEN_H * 0.7));
+// Popup dimensions — right-side vertical sidebar layout. Docked to the
+// right edge, full-height (safe-area aware), 340px wide on phones and
+// widens gracefully on tablets. Background remains fully visible to the
+// left of the panel so the operator sees their app data while chatting.
+const SIDEBAR_W = Math.min(360, Math.max(300, SCREEN_W - 24));
+const SIDEBAR_MAX_H = SCREEN_H;
 
 // Bubble geometry — kept in sync with styles.bubbleBtn below.
 const BUBBLE_SIZE = 56;
@@ -147,17 +148,17 @@ export function FloatingJarvis() {
   const ringScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.15] });
   const ringOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0.9] });
 
-  // Popup scale-up animation. Driven by the `expanded` flag. transform-
-  // origin is anchored to the bubble (bottom-right) via a translate + scale
-  // combo so it visually "grows out of" the button.
+  // Sidebar slide-in animation. `expanded` drives a 0→1 value; we
+  // translate from off-screen (+SIDEBAR_W) into place at 0. Opacity
+  // fades in from 0 → 1 in parallel for a soft entry.
   const popup = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.spring(popup, {
       toValue: expanded ? 1 : 0,
-      useNativeDriver: false, // we animate width/height + transform origin
-      stiffness: expanded ? 220 : 300,
-      damping: expanded ? 22 : 26,
-      mass: 0.6,
+      useNativeDriver: false,
+      stiffness: expanded ? 220 : 280,
+      damping: expanded ? 26 : 30,
+      mass: 0.7,
     }).start();
   }, [expanded, popup]);
 
@@ -166,41 +167,31 @@ export function FloatingJarvis() {
 
   const bubbleBottom = insets.bottom + 96; // above the tab bar
 
-  // Interpolate the popup transform. It starts as a 0-scale dot at the
-  // bubble's center and grows to full size at the popup's top-right
-  // anchor. `translateX` and `translateY` correct for the fact that
-  // scale grows AROUND the element's center by default — we want it to
-  // grow FROM its bottom-right corner (i.e. the bubble).
-  const popupScale = popup.interpolate({ inputRange: [0, 1], outputRange: [0.15, 1] });
+  // Sidebar slides in from the right edge. translateX: SIDEBAR_W → 0.
   const popupOpacity = popup.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-  const popupTX = popup.interpolate({
+  const sidebarTX = popup.interpolate({
     inputRange: [0, 1],
-    // At scale 0.15, the popup is (1-0.15)/2 of its size to the right of
-    // its natural centre. We slide the natural centre to align with the
-    // bubble by shifting right/down proportionally.
-    outputRange: [POPUP_W * 0.42, 0],
-  });
-  const popupTY = popup.interpolate({
-    inputRange: [0, 1],
-    outputRange: [POPUP_H * 0.42, 0],
+    outputRange: [SIDEBAR_W, 0],
   });
 
   return (
     <>
-      {/* Popup — rendered ABOVE the bubble, extending upward. The wrap
-          uses pointerEvents="box-none" so taps outside the popup fall
-          through to the background page (ghost-user can still animate
-          forms below). */}
+      {/* Sidebar — glassmorphic right-docked vertical panel. Slides in
+          from the right edge; background stays visible to the left so
+          the operator can see their app data while chatting. NOT a
+          Modal — the background page remains fully interactive so
+          Ghost-User can navigate + type on the underlying form while
+          the operator keeps chatting. */}
       {expanded ? (
         <View
           pointerEvents="box-none"
           style={[
             styles.popupWrap,
             {
-              // Anchor the top-right corner near the top of where the
-              // bubble sits and stretch upward.
-              bottom: bubbleBottom + BUBBLE_SIZE + 8,
-              right: BUBBLE_MARGIN_RIGHT,
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: SIDEBAR_W,
             },
           ]}
         >
@@ -208,14 +199,12 @@ export function FloatingJarvis() {
             style={[
               styles.popup,
               {
-                width: POPUP_W,
-                height: POPUP_H,
+                width: SIDEBAR_W,
+                height: "100%",
                 opacity: popupOpacity,
-                transform: [
-                  { translateX: popupTX },
-                  { translateY: popupTY },
-                  { scale: popupScale },
-                ],
+                paddingTop: insets.top + 8,
+                paddingBottom: Math.max(insets.bottom, 12) + BUBBLE_SIZE + 16,
+                transform: [{ translateX: sidebarTX }],
               },
             ]}
             pointerEvents="auto"
@@ -1027,31 +1016,39 @@ const styles = StyleSheet.create({
     transform: [{ rotate: "45deg" }],
   },
 
-  // ------------------- Popup shell -------------------
+  // ------------------- Sidebar shell -------------------
   popupWrap: {
     position: "absolute",
     zIndex: 998,
   },
   popup: {
-    borderRadius: radii.xl,
+    // Full-height right-docked panel. Corners only rounded on the LEFT
+    // edge so it visually attaches to the right side of the screen.
+    borderTopLeftRadius: radii.xl,
+    borderBottomLeftRadius: radii.xl,
     overflow: "hidden",
-    backgroundColor: "rgba(6, 10, 20, 0.94)",
-    borderColor: colors.borderStrong,
-    borderWidth: StyleSheet.hairlineWidth,
-    // Cyan halo glow so the popup reads as a Cyber-Siri chat surface.
+    backgroundColor: "rgba(6, 10, 20, 0.86)",
+    borderLeftColor: colors.borderStrong,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    // Cyan halo along the left edge so the panel visually "detaches"
+    // from the background app.
     shadowColor: colors.accent,
     shadowOpacity: 0.55,
-    shadowRadius: 28,
-    shadowOffset: { width: 0, height: 12 },
+    shadowRadius: 30,
+    shadowOffset: { width: -12, height: 0 },
     elevation: 24,
   },
   popupInner: {
     flex: 1,
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
   },
   popupTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(2, 6, 16, 0.65)",
+    backgroundColor: "rgba(2, 6, 16, 0.55)",
   },
 
   // Popup header
