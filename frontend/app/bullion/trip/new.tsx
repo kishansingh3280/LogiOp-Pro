@@ -159,7 +159,13 @@ export default function NewTripScreen() {
         });
         toast.success("Trip saved");
       }
-      router.back();
+      // If we were opened via a deep link (no back stack), fall back to
+      // the Trips list instead of no-op'ing on router.back().
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace("/(tabs)/bullion");
+      }
     } catch (e) {
       toast.error(`Save failed: ${(e as Error).message}`);
     } finally {
