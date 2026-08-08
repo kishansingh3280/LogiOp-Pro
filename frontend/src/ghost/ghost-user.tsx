@@ -45,6 +45,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { API_BASE } from "@/src/api/client";
 import { getAuthTokenSync } from "@/src/auth/context";
+import { setGhostPayload, type GhostPayload } from "@/src/ghost/store";
 import { colors, radii, spacing } from "@/src/theme";
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,26 @@ export type GhostAction =
       name: string;
       unit?: string;
       hsn_code?: string;
+      notes?: string;
+    }
+  | {
+      action: "create_shipment";
+      consignment_no?: string;
+      direction?: "IN_TO_TH" | "TH_TO_IN";
+      mode?: "air" | "sea" | "land" | "hand_carry";
+      origin?: string;
+      destination?: string;
+      freight?: number;
+      freight_ccy?: "INR" | "THB";
+      notes?: string;
+    }
+  | {
+      action: "create_invoice";
+      invoice_no?: string;
+      party_name?: string;
+      amount?: number;
+      currency?: "INR" | "THB";
+      description?: string;
       notes?: string;
     }
   | {
@@ -99,6 +120,10 @@ function actionHeadline(a: GhostAction): string {
       return `Create Party: ${a.name}`;
     case "create_item":
       return `Create Item: ${a.name}`;
+    case "create_shipment":
+      return `Create Shipment ${a.consignment_no || ""}`.trim();
+    case "create_invoice":
+      return `Create Invoice ${a.invoice_no || ""}`.trim();
     case "update_ledger":
       return `Ledger entry for ${a.party_name}`;
     case "carrier_update":
@@ -245,6 +270,12 @@ type GhostUserApi = {
   run: (action: GhostAction) => Promise<void>;
   /** Show the ghost cursor at the given screen point. Used from AI hints. */
   hintCursor: (x: number, y: number) => void;
+  /** Called by useGhostFill when it starts typing a form. */
+  beginFill?: (p: GhostPayload) => void;
+  /** Called by useGhostFill after each field is typed. */
+  progressFill?: (field: string) => void;
+  /** Called by useGhostFill when all fields are filled and ready to save. */
+  readyFill?: (p: GhostPayload) => void;
 };
 
 const Ctx = createContext<GhostUserApi | null>(null);
@@ -257,6 +288,9 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<Toast | null>(null);
   const [cursorVisible, setCursorVisible] = useState(false);
   const [cursorTrail, setCursorTrail] = useState<{ x: number; y: number }[]>([]);
+  // Visual-fill state — a persistent bottom banner replaces the popup for
+  // any action that ends in a real form (create_party / create_item).
+  const [fillState, setFillState] = useState<null | { p: GhostPayload; stage: "typing" | "ready" | "saving"; currentField?: string }>(null);
 
   const showCursor = useCallback((points: { x: number; y: number }[], duration = 1500) => {
     setCursorVisible(true);
@@ -268,6 +302,56 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
     setToast({ message, kind });
     setTimeout(() => setToast(null), 3200);
   }, []);
+
+  // Programmatic navigation that reliably reaches the target route even
+  // when we're deep inside an async callback on web. Strategy:
+  //   1. router.push (SPA-friendly, preserves in-memory ghost store).
+  //   2. If the path didn't change within 600ms, retry with router.navigate.
+  //   3. NEVER use window.location.assign — a hard reload would wipe the
+  //      in-memory GhostPayload before the target screen mounts.
+  const navigateSafely = useCallback(
+    (target: string) => {
+      const tryPush = () => {
+        try {
+          router.push(target as never);
+        } catch {
+          /* fall through */
+        }
+      };
+      const tryNavigate = () => {
+        try {
+          router.navigate(target as never);
+        } catch {
+          /* last-resort: ignore */
+        }
+      };
+      // First attempt on next microtask so React batching commits any
+      // pending state (setGhostPayload) before the router transitions.
+      setTimeout(tryPush, 20);
+      // Retry once with router.navigate if the pathname didn't move.
+      setTimeout(() => {
+        if (typeof window !== "undefined" && window.location) {
+          const p = window.location.pathname || "";
+          if (!p.endsWith(target)) tryNavigate();
+        } else {
+          tryNavigate();
+        }
+      }, 600);
+    },
+    [router],
+  );
+
+  // Set the pending payload AND navigate to its target route. Called by
+  // every "create_*" action so the visual-fill flow is uniform.
+  const dispatchVisualFill = useCallback(
+    (payload: GhostPayload) => {
+      // eslint-disable-next-line no-console
+      console.log("[Ghost] dispatching visual-fill →", payload.route, payload.values);
+      setGhostPayload(payload);
+      navigateSafely(payload.route);
+    },
+    [navigateSafely],
+  );
 
   // Execute the action against the backend after user confirmation.
   const execute = useCallback(
@@ -309,8 +393,9 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
           return;
 
         case "create_party": {
-          // Backend accepts: customer | supplier | end_customer | carrier.
-          // AI sometimes uses friendlier terms (buyer / seller) — translate.
+          // Visual-fill path — hand off to /party/new. The form's
+          // useGhostFill hook will type each field one-by-one, then
+          // present its own Save button in Hindi.
           const roleMap: Record<string, string> = {
             buyer: "customer",
             purchaser: "customer",
@@ -326,27 +411,106 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
           };
           const roleIn = (a.role || "customer").toString().toLowerCase().trim();
           const role = roleMap[roleIn] || "customer";
-          const body = {
-            name: a.name,
-            role,
-            city: a.city,
-            phone: a.phone,
-            notes: a.notes,
+          const payload: GhostPayload = {
+            route: "/party/new",
+            headline: `Party बना रहा हूँ — ${a.name}`,
+            values: {
+              name: a.name,
+              role,
+              ...(a.city ? { city: a.city } : {}),
+              ...(a.phone ? { phone: a.phone } : {}),
+              ...(a.notes ? { notes: a.notes } : {}),
+            },
+            submit: {
+              method: "POST",
+              path: "/api/parties",
+              body: { name: a.name, role, city: a.city, phone: a.phone, notes: a.notes },
+            },
           };
-          await jsonRequest("POST", "/api/parties", body);
-          showToast(`Party "${a.name}" created`);
+          dispatchVisualFill(payload);
           return;
         }
 
         case "create_item": {
-          const body = {
-            name: a.name,
-            unit: a.unit || "pcs",
-            hsn_code: a.hsn_code,
-            notes: a.notes,
+          const payload: GhostPayload = {
+            // Item detail route uses [id].tsx with id="new" to create.
+            route: "/item/new",
+            headline: `Item बना रहा हूँ — ${a.name}`,
+            values: {
+              name: a.name,
+              ...(a.unit ? { unit: a.unit } : {}),
+              ...(a.hsn_code ? { hsn_code: a.hsn_code } : {}),
+              ...(a.notes ? { notes: a.notes } : {}),
+            },
+            submit: {
+              method: "POST",
+              path: "/api/items",
+              body: { name: a.name, unit: a.unit || "pcs", hsn_code: a.hsn_code, notes: a.notes },
+            },
           };
-          await jsonRequest("POST", "/api/items", body);
-          showToast(`Item "${a.name}" created`);
+          dispatchVisualFill(payload);
+          return;
+        }
+
+        case "create_shipment": {
+          const payload: GhostPayload = {
+            route: "/shipment/new",
+            headline: `Shipment बना रहा हूँ${a.consignment_no ? ` — ${a.consignment_no}` : ""}`,
+            values: {
+              ...(a.consignment_no ? { consignmentNo: a.consignment_no } : {}),
+              ...(a.direction ? { direction: a.direction } : {}),
+              ...(a.mode ? { mode: a.mode } : {}),
+              ...(a.origin ? { origin: a.origin } : {}),
+              ...(a.destination ? { destination: a.destination } : {}),
+              ...(typeof a.freight === "number" ? { freight: String(a.freight) } : {}),
+              ...(a.freight_ccy ? { freightCcy: a.freight_ccy } : {}),
+              ...(a.notes ? { notes: a.notes } : {}),
+            },
+            submit: {
+              method: "POST",
+              path: "/api/shipments",
+              body: {
+                consignment_no: a.consignment_no,
+                direction: a.direction || "IN_TO_TH",
+                mode: a.mode || "air",
+                origin: a.origin,
+                destination: a.destination,
+                freight_amount: a.freight,
+                freight_currency: a.freight_ccy || "THB",
+                notes: a.notes,
+              },
+            },
+          };
+          dispatchVisualFill(payload);
+          return;
+        }
+
+        case "create_invoice": {
+          const payload: GhostPayload = {
+            route: "/invoice/new",
+            headline: `Invoice बना रहा हूँ${a.invoice_no ? ` — ${a.invoice_no}` : ""}`,
+            values: {
+              ...(a.invoice_no ? { invoiceNo: a.invoice_no } : {}),
+              ...(a.party_name ? { partyName: a.party_name } : {}),
+              ...(typeof a.amount === "number" ? { amount: String(a.amount) } : {}),
+              ...(a.currency ? { currency: a.currency } : {}),
+              ...(a.description ? { description: a.description } : {}),
+              ...(a.notes ? { notes: a.notes } : {}),
+            },
+            submit: {
+              method: "POST",
+              path: "/api/invoices",
+              body: {
+                invoice_no: a.invoice_no,
+                party_name: a.party_name,
+                amount: a.amount,
+                currency: a.currency || "INR",
+                description: a.description,
+                notes: a.notes,
+              },
+            },
+          };
+          dispatchVisualFill(payload);
           return;
         }
 
@@ -409,19 +573,26 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [router, showCursor, showToast, insets.bottom],
+    [router, showCursor, showToast, insets.bottom, dispatchVisualFill],
+  );
+
+  // Which action types skip the confirmation popup and use visual fill?
+  const VISUAL_FILL_ACTIONS = React.useMemo(
+    () => new Set(["create_party", "create_item", "create_shipment", "create_invoice"]),
+    [],
   );
 
   const run = useCallback(
     async (a: GhostAction) => {
-      if (READ_ACTIONS.includes(a.action)) {
-        // Read-only actions auto-execute. Writes get a confirmation modal.
+      if (READ_ACTIONS.includes(a.action) || VISUAL_FILL_ACTIONS.has(a.action)) {
+        // Read-only + visual-fill actions execute immediately — the form
+        // itself collects the final confirmation.
         await execute(a).catch((e) => showToast((e as Error).message, "err"));
         return;
       }
       setPending(a);
     },
-    [execute, showToast],
+    [execute, showToast, VISUAL_FILL_ACTIONS],
   );
 
   const parseAndRun = useCallback(
@@ -473,9 +644,51 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
       parseAndRun,
       run,
       hintCursor: (x, y) => showCursor([{ x, y }]),
+      beginFill: (p) => setFillState({ p, stage: "typing" }),
+      progressFill: (field) => setFillState((s) => (s ? { ...s, currentField: field } : s)),
+      readyFill: (p) => setFillState({ p, stage: "ready" }),
     }),
     [parseAndRun, run, showCursor],
   );
+
+  const submitFilled = useCallback(async () => {
+    if (!fillState || fillState.stage !== "ready") return;
+    setFillState((s) => (s ? { ...s, stage: "saving" } : s));
+    try {
+      const token = getAuthTokenSync();
+      const res = await fetch(`${API_BASE}${fillState.p.submit.path}`, {
+        method: fillState.p.submit.method,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Entry-Source": "ai",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: fillState.p.submit.body ? JSON.stringify(fillState.p.submit.body) : undefined,
+      });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          const j = (await res.json()) as { detail?: string };
+          msg = j.detail || msg;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+      showToast("Sir, save कर दिया ✓");
+      setFillState(null);
+      router.back();
+    } catch (e) {
+      showToast((e as Error).message, "err");
+      setFillState((s) => (s ? { ...s, stage: "ready" } : s));
+    }
+  }, [fillState, router, showToast]);
+
+  const cancelFilled = useCallback(() => {
+    setGhostPayload(null);
+    setFillState(null);
+    router.back();
+  }, [router]);
 
   return (
     <Ctx.Provider value={api}>
@@ -486,6 +699,11 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
         onCancel={() => setPending(null)}
         onConfirm={confirm}
         busy={busy}
+      />
+      <GhostFillBanner
+        state={fillState}
+        onSubmit={submitFilled}
+        onCancel={cancelFilled}
       />
       {toast ? (
         <View pointerEvents="none" style={[styles.toastWrap, { top: insets.top + 12 }]}>
@@ -502,6 +720,74 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
         </View>
       ) : null}
     </Ctx.Provider>
+  );
+}
+
+/**
+ * Persistent bottom banner shown while Ghost-Fill is typing a form.
+ * Two stages: "typing" (progress) and "ready" (Hindi confirmation with
+ * Save / Cancel buttons).
+ */
+function GhostFillBanner({
+  state,
+  onSubmit,
+  onCancel,
+}: {
+  state: null | { p: GhostPayload; stage: "typing" | "ready" | "saving"; currentField?: string };
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  if (!state) return null;
+  const isReady = state.stage === "ready";
+  const isSaving = state.stage === "saving";
+  return (
+    <View pointerEvents="box-none" style={[styles.bannerWrap, { bottom: insets.bottom + 12 }]}>
+      <View style={styles.banner}>
+        <View style={styles.bannerLeft}>
+          <View style={[styles.bannerDot, isReady ? styles.bannerDotReady : null]} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.bannerTitle}>{state.p.headline}</Text>
+            <Text style={styles.bannerSub}>
+              {isSaving
+                ? "Saving…"
+                : isReady
+                ? "किशन सर, save करूँ?"
+                : `Typing… ${state.currentField ? `(${state.currentField})` : ""}`}
+            </Text>
+          </View>
+        </View>
+        {isReady || isSaving ? (
+          <View style={styles.bannerActions}>
+            <Pressable
+              onPress={onCancel}
+              disabled={isSaving}
+              style={styles.bannerCancel}
+              testID="ghost-fill-cancel"
+            >
+              <Text style={styles.bannerCancelText}>रद्द</Text>
+            </Pressable>
+            <Pressable
+              onPress={onSubmit}
+              disabled={isSaving}
+              style={[styles.bannerSave, isSaving && { opacity: 0.55 }]}
+              testID="ghost-fill-save"
+            >
+              {isSaving ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={16} color="#000" />
+                  <Text style={styles.bannerSaveText}>Save</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+        ) : (
+          <ActivityIndicator color={colors.lime} />
+        )}
+      </View>
+    </View>
   );
 }
 
@@ -779,4 +1065,58 @@ const styles = StyleSheet.create({
   },
   toastErr: { borderColor: colors.danger },
   toastText: { color: colors.text, fontSize: 13, fontWeight: "600" },
+  bannerWrap: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    zIndex: 9999,
+  },
+  banner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 12,
+    borderRadius: radii.xl,
+    backgroundColor: "rgba(15,15,20,0.95)",
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: colors.lime,
+    shadowOpacity: 0.35,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
+  },
+  bannerLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  bannerDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.lime,
+    shadowColor: colors.lime,
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  bannerDotReady: { backgroundColor: colors.ok, shadowColor: colors.ok },
+  bannerTitle: { color: colors.text, fontSize: 13, fontWeight: "800" },
+  bannerSub: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
+  bannerActions: { flexDirection: "row", gap: 8 },
+  bannerCancel: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    borderColor: colors.borderStrong,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  bannerCancelText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
+  bannerSave: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    backgroundColor: colors.lime,
+  },
+  bannerSaveText: { color: "#000", fontSize: 12, fontWeight: "800" },
 });

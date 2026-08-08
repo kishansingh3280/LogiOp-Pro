@@ -1343,3 +1343,68 @@ agent_communication:
           BAG-001 (5kg) created on the real shipment. Older prompt
           "latest shipment mein 5kg bag" also works — AI picks the
           newest real ID from the injected context.
+
+  - task: "Iter25 · Ghost-User Visual Execution — Full Visual Fill for 4 forms"
+    implemented: true
+    working: true
+    file: "frontend/src/ghost/ghost-user.tsx, store.ts, use-ghost-fill.ts, backend/server.py, frontend/app/{party/new,item/[id],shipment/new,invoice/new}.tsx"
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          User requested "Full Visual Execution" (Ghost-User) — AI physically
+          navigates to the target form and visually types out each field
+          without an initial confirmation popup, then shows a bottom banner
+          for final Save/Cancel.
+          
+          Previous attempt was stuck: programmatic router.push from within
+          the /assistant tab silently failed on web because the destructive
+          fallback `window.location.assign()` triggered a hard reload,
+          wiping the in-memory ghost payload before the target screen
+          could consume it.
+          
+          Four-part fix:
+          
+          1) `src/ghost/store.ts` — added sessionStorage (web) /
+             AsyncStorage (native) persistence + nonce stamping so payloads
+             survive hard reloads AND hot-reload dedupe still works.
+          
+          2) `src/ghost/ghost-user.tsx` — replaced the destructive nav
+             fallback with `navigateSafely()`: try router.push, then retry
+             with router.navigate after 600ms if pathname didn't move.
+             Extracted a shared `dispatchVisualFill()` helper so all four
+             create_* actions use the same code path.
+          
+          3) Added two new action types + backend prompt lines:
+             - create_shipment  (consignment_no, direction, mode, origin,
+               destination, freight, freight_ccy, notes)
+             - create_invoice   (invoice_no, party_name, amount, currency,
+               description, notes)
+          
+          4) Wired `useGhostFill` into all four target screens
+             (`/party/new`, `/item/new` via [id].tsx isNew, `/shipment/new`,
+             `/invoice/new`). For compound fields (city+notes both flow
+             into address, HSN+notes both flow into description), used
+             per-field useRef buffers so char-by-char progressive typing
+             produces the correct final string instead of runaway
+             self-appending.
+          
+          E2E verified via Playwright + live backend proxy:
+          · Party: "Add new party named Auto1786182296 as customer in Pune"
+            → navigation happened → Name/Role/Address typed → banner
+            appeared → Save clicked → 200 OK from /api/parties → returned
+            to /assistant → verified via `curl /api/parties` list.
+          · Item: "Add Silver Chain, unit grams, HSN 7113" → typed into
+            /item/new → banner shown.
+          · Shipment: "Create shipment SE/26-27/041 Chennai→BKK air" →
+            /shipment/new hydrated → banner shown.
+          · Invoice: "Create invoice INV-2026-042 for Priya Traders 55000"
+            → /invoice/new hydrated with number/currency/line-item/total
+            → banner shown.
+          
+          Data-integrity guard preserved: when the AI is asked to create
+          an invoice for a party that doesn't exist in the live parties
+          list, it correctly refuses and asks the operator to create the
+          party first (instead of hallucinating).

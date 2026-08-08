@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,6 +23,7 @@ import { apiDelete, apiPost, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Item, Party } from "@/src/api/types";
 import { toast } from "@/src/components/toast";
+import { useGhostFill } from "@/src/ghost/use-ghost-fill";
 import { colors, radii, spacing } from "@/src/theme";
 import { stripExifToBase64Async } from "@/src/utils/exif";
 import { fmtCurrency } from "@/src/utils/format";
@@ -63,6 +64,34 @@ export default function ItemDetailScreen() {
     [parties.data],
   );
   const supplier = suppliers.find((p) => p.id === supplierId);
+
+  // Ghost-Fill: when the Assistant dispatched us here via /item/new, the
+  // Ghost store has a payload like { name, unit, hsn_code, notes }. This
+  // hook types each field char-by-char and fires the confirmation banner.
+  // We track HSN and notes in refs so combined fields (both → description)
+  // reflect the actual state at any moment without the buggy accumulator
+  // pattern.
+  const hsnBufRef = useRef("");
+  const notesBufRef = useRef("");
+  const composeDescription = () => {
+    const h = hsnBufRef.current;
+    const n = notesBufRef.current;
+    if (h && n) return `HSN: ${h}\n${n}`;
+    if (h) return `HSN: ${h}`;
+    return n || "";
+  };
+  useGhostFill({
+    name: (v) => setName(String(v ?? "")),
+    unit: (v) => setUnit(String(v ?? "pcs")),
+    hsn_code: (v) => {
+      hsnBufRef.current = String(v ?? "");
+      setDescription(composeDescription());
+    },
+    notes: (v) => {
+      notesBufRef.current = String(v ?? "");
+      setDescription(composeDescription());
+    },
+  });
 
   // Autocomplete: union of every tag ever used across the catalog.
   const suggestedTags = useMemo(() => {

@@ -20,6 +20,7 @@ import type { Currency, Direction, Party, Shipment, ShipmentMode } from "@/src/a
 import { useRates as useBullionRates } from "@/src/bullion/rates";
 import { ItemPicker } from "@/src/components/item-picker";
 import { toast } from "@/src/components/toast";
+import { useGhostFill } from "@/src/ghost/use-ghost-fill";
 import { colors, radii, spacing } from "@/src/theme";
 import { syncShipmentLedger } from "@/src/utils/shipment-ledger-sync";
 import {
@@ -109,6 +110,20 @@ export default function NewShipmentScreen() {
     () => bags.reduce((s, b) => s + (parseFloat(b.weight_kg) || 0), 0),
     [bags],
   );
+
+  // Ghost-Fill: when the Assistant dispatched us here via /shipment/new,
+  // the Ghost store has a payload with the basic shipment fields. This
+  // hook types each field char-by-char and fires the confirmation banner.
+  useGhostFill({
+    consignmentNo: (v) => setConsignmentNo(String(v ?? "")),
+    direction: (v) => setDirection((String(v) as Direction) || "IN_TO_TH"),
+    mode: (v) => setMode((String(v) as ShipmentMode) || "air"),
+    origin: (v) => setOrigin(String(v ?? "")),
+    destination: (v) => setDestination(String(v ?? "")),
+    freight: (v) => setFreight(String(v ?? "")),
+    freightCcy: (v) => setFreightCcy((String(v) as Currency) || "THB"),
+    notes: (v) => setNotes(String(v ?? "")),
+  });
 
   // ---- Auto freight calculation ----------------------------------------
   // For each bag: convert the Bill-to party's `default_charge` (per-kg)

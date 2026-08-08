@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiPost, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Party, PartyRole } from "@/src/api/types";
+import { useGhostFill } from "@/src/ghost/use-ghost-fill";
 import { colors, radii, spacing } from "@/src/theme";
 
 const ROLES: PartyRole[] = ["customer", "end_customer", "supplier", "carrier", "vendor", "other"];
@@ -58,6 +59,34 @@ export default function NewPartyScreen() {
   const [lng, setLng] = useState("");
   const [busy, setBusy] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+
+  // Ghost-Fill: when the Assistant dispatched us here via /party/new, the
+  // Ghost store has a payload like { name, role, city, phone, notes }.
+  // Because useGhostFill types char-by-char, each setter is called many
+  // times with the accumulated string. We use refs to remember the
+  // "latest fully-typed value" per virtual field so combined fields
+  // (city + notes → address) reflect the actual state at any moment.
+  const cityBufRef = useRef("");
+  const notesBufRef = useRef("");
+  const composeAddress = () => {
+    const c = cityBufRef.current;
+    const n = notesBufRef.current;
+    if (c && n) return `${c}\n${n}`;
+    return c || n || "";
+  };
+  useGhostFill({
+    name: (v) => setName(String(v ?? "")),
+    role: (v) => setRole((v as PartyRole) || "customer"),
+    city: (v) => {
+      cityBufRef.current = String(v ?? "");
+      setAddress(composeAddress());
+    },
+    phone: (v) => setPhone(String(v ?? "")),
+    notes: (v) => {
+      notesBufRef.current = String(v ?? "");
+      setAddress(composeAddress());
+    },
+  });
 
   // Role-driven copy: carriers charge YOU a carrying rate, everyone else
   // has a shipping rate WE charge THEM. Keeps the mental model clean when

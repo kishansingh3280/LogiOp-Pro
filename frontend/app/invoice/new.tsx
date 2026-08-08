@@ -20,6 +20,7 @@ import { apiGet, apiPost } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Invoice, Item, Party, Shipment, ShipmentBag } from "@/src/api/types";
 import { toast } from "@/src/components/toast";
+import { useGhostFill } from "@/src/ghost/use-ghost-fill";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
 
@@ -46,6 +47,40 @@ export default function NewInvoiceScreen() {
   const [busy, setBusy] = useState(false);
   const [shipmentId, setShipmentId] = useState<string | null>(shipmentIdParam);
   const [hydrated, setHydrated] = useState(false);
+
+  // Ghost-Fill: when the Assistant dispatched us here via /invoice/new,
+  // the Ghost store has a payload with the invoice fields. This hook
+  // types each field char-by-char and fires the confirmation banner.
+  useGhostFill({
+    invoiceNo: (v) => setNumber(String(v ?? "")),
+    partyName: (v) => {
+      // Match party by name (case-insensitive) from the loaded parties.
+      const name = String(v ?? "").toLowerCase().trim();
+      const p = (parties.data || []).find(
+        (x) => (x.name || "").toLowerCase() === name,
+      );
+      if (p) setPartyId(p.id);
+    },
+    currency: (v) => setCurrency((String(v) as Currency) || "INR"),
+    amount: (v) => {
+      // Push into the first line as rate.
+      setLines((prev) => {
+        const next = [...prev];
+        if (next[0]) next[0] = { ...next[0], rate: String(v ?? "0"), quantity: "1" };
+        else next.push({ description: "", quantity: "1", rate: String(v ?? "0") });
+        return next;
+      });
+    },
+    description: (v) => {
+      setLines((prev) => {
+        const next = [...prev];
+        if (next[0]) next[0] = { ...next[0], description: String(v ?? "") };
+        else next.push({ description: String(v ?? ""), quantity: "1", rate: "0" });
+        return next;
+      });
+    },
+    notes: (v) => setNotes(String(v ?? "")),
+  });
 
   // Prefill from shipment. Fetches the shipment + its bags and materializes:
   //  · Invoice #        → INV-{consignment_no}
