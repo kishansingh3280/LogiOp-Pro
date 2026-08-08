@@ -2,11 +2,12 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
-import { LogBox, View } from "react-native";
+import { LogBox, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "@/src/auth/context";
+import { AmbientBackground } from "@/src/components/ambient-background";
 import { ToastHost } from "@/src/components/toast";
 import { FYProvider } from "@/src/context/fy-context";
 import { ScreenContextProvider } from "@/src/context/screen-context";
@@ -17,6 +18,29 @@ import { colors } from "@/src/theme";
 LogBox.ignoreAllLogs(true);
 
 SplashScreen.preventAutoHideAsync();
+
+// Web: patch the html/body background so the RN Web layout containers
+// don't fall back to iOS system-grey (#F2F2F2) around our AmbientBackground.
+if (Platform.OS === "web" && typeof document !== "undefined") {
+  const css = `
+    html, body, #root, #root > div { background-color: ${colors.bg} !important; }
+    /* RN Web sometimes injects its iOS system-grey (#F2F2F2 / #f2f2f2 /
+       rgb(242,242,242)) as the default page background — force transparent
+       so our AmbientBackground bleeds through everywhere. */
+    [style*="rgb(242, 242, 242)"], [style*="#F2F2F2"], [style*="#f2f2f2"] {
+      background-color: transparent !important;
+    }
+    /* Extremely sharp Apple/Inter-style typography for the Siri 2.0 theme. */
+    body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Segoe UI', Roboto, sans-serif !important; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; letter-spacing: -0.01em; }
+  `;
+  const style = document.createElement("style");
+  style.setAttribute("data-app-theme", "siri");
+  style.textContent = css;
+  // Remove any prior instance in case of hot-reload
+  const existing = document.head.querySelector('[data-app-theme="siri"]');
+  if (existing) existing.remove();
+  document.head.appendChild(style);
+}
 
 /**
  * Root layout — wraps everything in Auth + Screen-context providers.
@@ -57,6 +81,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <SafeAreaProvider>
+        <AmbientBackground />
         <AuthProvider>
           <FYProvider>
             <ScreenContextProvider>
@@ -66,7 +91,8 @@ export default function RootLayout() {
                   <Stack
                     screenOptions={{
                       headerShown: false,
-                      contentStyle: { backgroundColor: colors.bg },
+                      // Transparent content lets the AmbientBackground bleed through.
+                      contentStyle: { backgroundColor: "transparent" },
                       animation: "slide_from_right",
                     }}
                   />

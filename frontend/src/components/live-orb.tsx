@@ -1,12 +1,13 @@
 /**
- * LiveOrb — the "life in a body" pulsing waveform that sits at the centre of
- * the Assistant screen. Three overlapping SVG blobs drift and pulse in
- * different colours (Gemini-esque cyan / magenta / lime), driven by an
- * amplitude value from 0..1 supplied by the parent (mic level while
- * listening, TTS envelope while speaking, and a slow idle breath otherwise).
+ * LiveOrb v2 — a Siri-style nebula sphere.
  *
- * Uses react-native-reanimated (worklets) for 120fps updates without touching
- * the JS thread on every frame.
+ * Five overlapping SVG blobs drift and pulse in different colours (Deep
+ * Purple, Ocean Blue, Cyan, Lime, Magenta accent) driven by an amplitude
+ * value from 0..1 supplied by the parent. The core is a soft radial white
+ * highlight so the sphere reads as luminous rather than flat.
+ *
+ * All animation happens on the UI thread via react-native-reanimated so
+ * we hit the 120fps target even during voice metering.
  */
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect } from "react";
@@ -34,136 +35,159 @@ export function LiveOrb({
   mode = "idle",
 }: {
   size?: number;
-  amplitude?: number;   // 0..1
+  amplitude?: number;
   mode?: LiveOrbMode;
 }) {
-  // A single shared value driven either by the amplitude prop (loud voice ->
-  // bigger orb) OR by an internal "breath" loop while idle. Using
-  // withRepeat means the animation lives on the UI thread.
-  const level = useSharedValue(0.15);
-  const rotation = useSharedValue(0);
-  const modeShift = useSharedValue(0);
+  // Amplitude — either driven by parent (voice) or a mode-based breath loop.
+  const level = useSharedValue(0.2);
+  const rotA = useSharedValue(0);   // outer ring rotation
+  const rotB = useSharedValue(0);   // inner ring counter-rotation
+  const hueDrift = useSharedValue(0); // hue shifting
 
-  // Update the shared value on every amplitude change. When the mode is
-  // idle we start a slow breath cycle; otherwise the amplitude drives it.
+  // Level animator — voice OR breath.
   useEffect(() => {
+    cancelAnimation(level);
     if (mode === "idle") {
-      cancelAnimation(level);
       level.value = withRepeat(
-        withTiming(0.35, { duration: 1600, easing: Easing.inOut(Easing.quad) }),
+        withTiming(0.35, { duration: 1800, easing: Easing.inOut(Easing.quad) }),
         -1,
         true,
       );
     } else if (mode === "thinking") {
-      cancelAnimation(level);
       level.value = withRepeat(
-        withTiming(0.55, { duration: 480, easing: Easing.inOut(Easing.quad) }),
+        withTiming(0.6, { duration: 460, easing: Easing.inOut(Easing.quad) }),
         -1,
         true,
       );
     } else {
-      // Listening / speaking — smooth towards the incoming amplitude so
-      // the orb doesn't twitch on every mic sample.
-      const target = Math.max(0.2, Math.min(1, amplitude));
-      level.value = withTiming(target, { duration: 120, easing: Easing.out(Easing.quad) });
+      const target = Math.max(0.22, Math.min(1, amplitude));
+      level.value = withTiming(target, { duration: 100, easing: Easing.out(Easing.quad) });
     }
   }, [amplitude, mode, level]);
 
-  // Continuous slow rotation for the outer gradient ring.
+  // Slow rotations — never cancel these so the nebula always feels alive.
   useEffect(() => {
-    rotation.value = withRepeat(
-      withTiming(360, { duration: 14000, easing: Easing.linear }),
+    rotA.value = withRepeat(
+      withTiming(360, { duration: 22000, easing: Easing.linear }),
       -1,
       false,
     );
-    return () => cancelAnimation(rotation);
-  }, [rotation]);
-
-  // Colour shift for mode changes (idle→listening→speaking).
-  useEffect(() => {
-    const target = mode === "listening" ? 0 : mode === "speaking" ? 1 : mode === "thinking" ? 0.5 : 0.25;
-    modeShift.value = withTiming(target, { duration: 600 });
-  }, [mode, modeShift]);
-
-  const radius = size / 2;
-
-  // Outer breathing shell — big soft glow.
-  const outerStyle = useAnimatedStyle(() => {
-    const scale = 0.95 + level.value * 0.25;
-    return {
-      transform: [{ scale }, { rotate: `${rotation.value}deg` }],
-      opacity: 0.75 + level.value * 0.2,
+    rotB.value = withRepeat(
+      withTiming(-360, { duration: 30000, easing: Easing.linear }),
+      -1,
+      false,
+    );
+    hueDrift.value = withRepeat(
+      withTiming(1, { duration: 8000, easing: Easing.inOut(Easing.quad) }),
+      -1,
+      true,
+    );
+    return () => {
+      cancelAnimation(rotA);
+      cancelAnimation(rotB);
+      cancelAnimation(hueDrift);
     };
-  });
+  }, [rotA, rotB, hueDrift]);
 
-  // Inner core — reacts more aggressively.
-  const innerStyle = useAnimatedStyle(() => {
-    const scale = 0.85 + level.value * 0.35;
-    return { transform: [{ scale }] };
-  });
+  const R = size / 2;
 
-  // Middle ring — counter-rotates for depth.
-  const midStyle = useAnimatedStyle(() => {
-    const scale = 0.9 + level.value * 0.28;
-    return {
-      transform: [{ scale }, { rotate: `${-rotation.value * 0.7}deg` }],
-      opacity: 0.6 + level.value * 0.3,
-    };
-  });
+  // Outer nebula halo — purple↔blue drift, slowly rotates
+  const layerA = useAnimatedStyle(() => ({
+    transform: [
+      { scale: 0.92 + level.value * 0.24 },
+      { rotate: `${rotA.value}deg` },
+    ],
+    opacity: 0.65 + level.value * 0.25,
+  }));
 
-  const innerCircleProps = useAnimatedProps(() => {
-    return { r: (radius * 0.42) * (0.85 + level.value * 0.35) };
-  });
+  // Middle ring — cyan↔lime drift, counter-rotates
+  const layerB = useAnimatedStyle(() => ({
+    transform: [
+      { scale: 0.86 + level.value * 0.30 },
+      { rotate: `${rotB.value}deg` },
+    ],
+    opacity: 0.55 + level.value * 0.30,
+  }));
+
+  // Inner ring — pink/magenta accent, drifts slowly
+  const layerC = useAnimatedStyle(() => ({
+    transform: [{ scale: 0.75 + level.value * 0.35 }],
+    opacity: 0.5 + level.value * 0.4,
+  }));
+
+  // Core white radial highlight — pulses hardest with voice
+  const coreProps = useAnimatedProps(() => ({
+    r: R * (0.28 + level.value * 0.28),
+  }));
+
+  const coreStyle = useAnimatedStyle(() => ({
+    opacity: 0.85 + level.value * 0.15,
+  }));
 
   return (
     <View style={[styles.wrap, { width: size, height: size }]} pointerEvents="none">
-      {/* Outer soft ring — cyan/magenta drift */}
-      <Animated.View style={[StyleSheet.absoluteFill, outerStyle]}>
+      {/* Outer nebula — purple / blue */}
+      <Animated.View style={[StyleSheet.absoluteFill, layerA]}>
         <LinearGradient
-          colors={["#7DF9FF", "#FF3EA5", "#C6FF00", "#7DF9FF"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.blob, { width: size, height: size, borderRadius: radius }]}
+          colors={["rgba(159,122,234,0.85)", "rgba(59,130,246,0.65)", "rgba(159,122,234,0.0)"]}
+          start={{ x: 0.1, y: 0.1 }}
+          end={{ x: 0.9, y: 0.9 }}
+          style={[styles.blob, { width: size, height: size, borderRadius: R }]}
         />
       </Animated.View>
 
-      {/* Middle counter-rotating ring — orange/lime */}
-      <Animated.View style={[StyleSheet.absoluteFill, midStyle, { padding: size * 0.1 }]}>
+      {/* Middle ring — cyan / lime */}
+      <Animated.View style={[StyleSheet.absoluteFill, layerB, { padding: size * 0.09 }]}>
         <LinearGradient
-          colors={["#FFB020", "#C6FF00", "#00E5FF"]}
+          colors={["rgba(34,211,238,0.75)", "rgba(198,255,0,0.55)", "rgba(34,211,238,0.0)"]}
           start={{ x: 0, y: 1 }}
           end={{ x: 1, y: 0 }}
-          style={{ flex: 1, borderRadius: size, opacity: 0.85 }}
+          style={{ flex: 1, borderRadius: size }}
         />
       </Animated.View>
 
-      {/* Inner core — SVG radial gradient */}
-      <Animated.View style={[StyleSheet.absoluteFill, innerStyle, { alignItems: "center", justifyContent: "center" }]}>
+      {/* Inner ring — magenta accent */}
+      <Animated.View style={[StyleSheet.absoluteFill, layerC, { padding: size * 0.20 }]}>
+        <LinearGradient
+          colors={["rgba(236,72,153,0.60)", "rgba(198,255,0,0.20)", "rgba(236,72,153,0.0)"]}
+          start={{ x: 0.4, y: 0 }}
+          end={{ x: 0.6, y: 1 }}
+          style={{ flex: 1, borderRadius: size }}
+        />
+      </Animated.View>
+
+      {/* Core — bright white radial that pulses with voice */}
+      <Animated.View
+        style={[
+          StyleSheet.absoluteFill,
+          coreStyle,
+          { alignItems: "center", justifyContent: "center" },
+        ]}
+      >
         <Svg width={size} height={size}>
           <Defs>
-            <RadialGradient id="core" cx="50%" cy="50%" rx="50%" ry="50%" fx="45%" fy="45%">
-              <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.95" />
-              <Stop offset="40%" stopColor={colors.lime} stopOpacity="0.85" />
-              <Stop offset="80%" stopColor="#FF3EA5" stopOpacity="0.55" />
+            <RadialGradient id="core" cx="50%" cy="45%" rx="50%" ry="50%" fx="45%" fy="40%">
+              <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="1" />
+              <Stop offset="30%" stopColor={colors.lime} stopOpacity="0.8" />
+              <Stop offset="70%" stopColor={colors.purple} stopOpacity="0.35" />
               <Stop offset="100%" stopColor="#000000" stopOpacity="0" />
             </RadialGradient>
           </Defs>
-          <AnimatedCircle cx={radius} cy={radius} animatedProps={innerCircleProps} fill="url(#core)" />
+          <AnimatedCircle cx={R} cy={R} animatedProps={coreProps} fill="url(#core)" />
         </Svg>
       </Animated.View>
 
-      {/* Bright pinpoint highlight (fixed, small) to give the orb "life" */}
+      {/* Specular highlight — fixed bright dot for "life in body" feel */}
       <View
         style={[
-          styles.highlight,
+          styles.spec,
           {
-            top: size * 0.30,
-            left: size * 0.34,
-            width: size * 0.10,
-            height: size * 0.06,
-            borderRadius: size * 0.05,
-            // Web fallback: RN's `filter: blur()` is not supported cross-platform.
-            ...(Platform.OS === "web" ? ({ filter: "blur(6px)" } as any) : {}),
+            top: size * 0.26,
+            left: size * 0.30,
+            width: size * 0.14,
+            height: size * 0.07,
+            borderRadius: size * 0.06,
+            ...(Platform.OS === "web" ? ({ filter: "blur(8px)" } as unknown as object) : {}),
           },
         ]}
       />
@@ -177,10 +201,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   blob: {
-    opacity: 0.8,
+    opacity: 0.85,
   },
-  highlight: {
+  spec: {
     position: "absolute",
-    backgroundColor: "rgba(255,255,255,0.65)",
+    backgroundColor: "rgba(255,255,255,0.55)",
   },
 });

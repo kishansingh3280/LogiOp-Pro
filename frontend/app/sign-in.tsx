@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { Redirect } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -18,7 +17,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/auth/context";
-import { colors, radii, spacing } from "@/src/theme";
+import { GlassCard } from "@/src/components/glass-card";
+import { colors, font, radii, spacing } from "@/src/theme";
 
 /**
  * Sign-in screen. Dark, minimal, lime-accented. Includes a soft pulsing
@@ -35,6 +35,8 @@ export default function SignInScreen() {
 
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    // Keep a tiny pulse loop running purely for potential future use (kept
+    // as a placeholder in case we want a foreground effect on the card).
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
@@ -52,9 +54,6 @@ export default function SignInScreen() {
       ]),
     ).start();
   }, [pulse]);
-
-  const orbScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.15] });
-  const orbOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.55] });
 
   const onSubmit = useCallback(async () => {
     if (!username || !password) {
@@ -77,19 +76,7 @@ export default function SignInScreen() {
 
   return (
     <View style={[styles.wrap, { paddingTop: insets.top }]}>
-      {/* Background orb */}
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.orb,
-          { opacity: orbOpacity, transform: [{ scale: orbScale }] },
-        ]}
-      >
-        <LinearGradient
-          colors={["rgba(198,255,0,0.55)", "rgba(198,255,0,0.0)"]}
-          style={StyleSheet.absoluteFill}
-        />
-      </Animated.View>
+      {/* Ambient background is mounted at root — we don't need a local orb. */}
 
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -107,7 +94,7 @@ export default function SignInScreen() {
             <Text style={styles.tagline}>Kishan Sir · Command Console</Text>
           </View>
 
-          <View style={styles.card}>
+          <GlassCard radius="xxl" tone="elevated" padded="lg">
             <Text style={styles.title}>Welcome back</Text>
             <Text style={styles.subtitle}>
               Sign in to access ledgers, bullion, and Wingman AI.
@@ -185,7 +172,7 @@ export default function SignInScreen() {
             <Text style={styles.hint}>
               Ask an Admin to create your account. Default admin: kishan.
             </Text>
-          </View>
+          </GlassCard>
 
           <Text style={styles.footer}>Powered by Wingman AI · v1.0</Text>
         </ScrollView>
@@ -195,7 +182,7 @@ export default function SignInScreen() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: colors.bg },
+  wrap: { flex: 1 },  // AmbientBackground provides the base
   orb: {
     position: "absolute",
     top: -180,
@@ -229,41 +216,37 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "800",
     color: colors.text,
-    letterSpacing: 0.5,
+    letterSpacing: -0.3,
+    fontFamily: font.display,
   },
   tagline: {
     color: colors.textMuted,
-    fontSize: 12,
-    letterSpacing: 1,
-    textTransform: "uppercase",
-  },
-  card: {
-    backgroundColor: "rgba(15,15,15,0.85)",
-    borderRadius: radii.xl,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    padding: spacing.xl,
-    gap: spacing.md,
-  },
-  title: { fontSize: 24, fontWeight: "800", color: colors.text },
-  subtitle: { fontSize: 13, color: colors.textMuted, marginBottom: spacing.sm },
-  field: { gap: 6 },
-  label: {
     fontSize: 11,
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+    fontFamily: font.display,
+  },
+  title: { fontSize: 26, fontWeight: "800", color: colors.text, letterSpacing: -0.5, fontFamily: font.display },
+  subtitle: { fontSize: 13, color: colors.textMuted, marginBottom: spacing.sm, marginTop: 4, fontFamily: font.display },
+  field: { gap: 6, marginTop: spacing.md },
+  label: {
+    fontSize: 10,
     color: colors.textDim,
     fontWeight: "700",
-    letterSpacing: 0.7,
+    letterSpacing: 1.2,
     textTransform: "uppercase",
+    fontFamily: font.display,
   },
   input: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderColor: colors.borderStrong,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radii.md,
+    borderRadius: radii.lg,
     color: colors.text,
     paddingHorizontal: 14,
-    paddingVertical: Platform.OS === "ios" ? 12 : 10,
+    paddingVertical: Platform.OS === "ios" ? 14 : 12,
     fontSize: 16,
+    fontFamily: font.display,
   },
   pwWrap: {
     flexDirection: "row",
@@ -273,7 +256,7 @@ const styles = StyleSheet.create({
   eye: {
     position: "absolute",
     right: 14,
-    height: 36,
+    height: 44,
     justifyContent: "center",
   },
   errorBar: {
@@ -286,36 +269,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: radii.md,
+    marginTop: spacing.md,
   },
-  errorText: { color: colors.danger, fontSize: 13, flex: 1 },
+  errorText: { color: colors.danger, fontSize: 13, flex: 1, fontFamily: font.display },
   button: {
-    marginTop: spacing.sm,
+    marginTop: spacing.lg,
     backgroundColor: colors.lime,
-    paddingVertical: 14,
+    paddingVertical: 15,
     borderRadius: radii.pill,
     alignItems: "center",
     shadowColor: colors.lime,
-    shadowOpacity: 0.5,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    shadowOpacity: 0.6,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
   },
   buttonText: {
     color: "#000",
     fontWeight: "800",
     fontSize: 15,
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
+    fontFamily: font.display,
   },
   hint: {
     marginTop: spacing.md,
     color: colors.textDim,
     fontSize: 11,
     textAlign: "center",
+    fontFamily: font.display,
   },
   footer: {
     textAlign: "center",
     color: colors.textDim,
     fontSize: 11,
     letterSpacing: 0.5,
+    fontFamily: font.display,
   },
 });

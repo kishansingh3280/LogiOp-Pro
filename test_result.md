@@ -1236,3 +1236,63 @@ agent_communication:
           Post-test fixes: PATCH role enum validation (400 on bad value)
           and frontend Ghost-User JSON sanitizer both applied and
           verified via curl.
+
+  - task: "Iter23 · Siri 2.0 Design System — Wave 1 + Wave 2"
+    implemented: true
+    working: true
+    file: "frontend/src/theme/index.ts, frontend/src/components/{ambient-background,glass-card,live-orb,metric}.tsx, frontend/app/_layout.tsx, frontend/app/sign-in.tsx"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Iter23 shipped Wave 1 (foundation) + Wave 2 (Host Sphere) of the
+          full "Siri 2.0" theme, applied to Sign-in, Dashboard, Assistant
+          and Bullion screens.
+          
+          Wave 1 — Foundation:
+          - Theme rewrite: near-black #050505 base, ambient orb palette
+            (Deep Purple / Ocean Blue / Cyan / Lime / Amber), semantic
+            metric buckets (gold=amber, inr/usd=lime, thb=cyan,
+            balance=purple, info=blue).
+          - <AmbientBackground> with 3 slowly drifting orbs (Purple,
+            Blue, Lime) on ~22–32s Reanimated worklets. CSS blur(60px)
+            on web, alpha-ramp gradient on native. Full-screen 68% black
+            vignette overlaid for legibility.
+          - <GlassCard> with expo-blur BlurView (native) + CSS
+            backdrop-filter (web), tone variants, radius scale up to
+            34 (radii.xxl). <GlassPill> for chip usage.
+          - <Metric> component — glowing headline number in a semantic
+            brand color (text-shadow on web + shadowColor/shadowRadius
+            on native).
+          - Web patch: injects style tag to force html/body/#root
+            background to #050505 AND kills RN Web's iOS-grey (#F2F2F2)
+            fallback. Also sets Apple-grade SF Pro / Inter font stack.
+          
+          Wave 2 — Host Sphere (LiveOrb v2):
+          - 5 layered radial/linear gradients: outer purple/blue nebula,
+            middle cyan/lime ring, inner magenta accent, bright core
+            with animated radius from voice level, specular highlight
+            dot. Two independent rotation shared values for depth.
+          - Modes: idle (slow breath), listening (mic level),
+            thinking (fast heartbeat), speaking (TTS envelope).
+          - Fully worklet-driven on the UI thread → 120fps on web.
+          
+          Screens re-skinned this session:
+          - /sign-in — glass card, drifting orbs behind, lime CTA glow.
+          - /(tabs)/index — dashboard metrics now glow in brand colors.
+          - /(tabs)/assistant — full immersive nebula host + glass
+            controls.
+          - /(tabs)/bullion — glass trip cards, ambient background bleed.
+          
+          Deferred to next session (Waves 3, 4, 5):
+          - Proactive whispers (route-change context greetings + TTS
+            with mute toggle).
+          - Smart walkthrough / spotlight for empty screens.
+          - Elastic list transitions + full app-wide typography rewrite
+            for the remaining screens.
+          
+          Tested visually via browser automation — all 3 screens
+          screenshot-verified (see /tmp/final_signin.png,
+          /tmp/final_dash.png, /tmp/final_assist.png).
