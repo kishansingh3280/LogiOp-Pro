@@ -1300,6 +1300,77 @@ async def assistant_memory_delete(key: str):
 
 
 # ---------------------------------------------------------------------------
+# Wingman Activity — real-time log of every AI-driven write
+# ---------------------------------------------------------------------------
+class WingmanActivity(BaseModel):
+    action: str                        # e.g. "create_party", "add_bag"
+    entity_type: Optional[str] = None  # "party" | "shipment" | "invoice" | ...
+    entity_id: Optional[str] = None    # id of the created / modified row
+    entity_label: Optional[str] = None # human label for the list ("Party: Lalit")
+    route: Optional[str] = None        # deep link to open
+    method: Optional[str] = None       # POST / PUT / DELETE
+    status: Optional[str] = "ok"       # "ok" | "error"
+    error: Optional[str] = None        # error message if status=error
+    summary: Optional[str] = None      # short one-liner ("Party 'Lalit' banaya")
+
+
+@api_router.post("/wingman/activity")
+async def wingman_activity_log(
+    req: WingmanActivity,
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+):
+    """Record a single AI-driven action so the operator can audit the
+    Wingman's work later. Called by the frontend ghost engine after
+    every successful (or failed) dispatch."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": str(user.get("_id")) if user else None,
+        "user_key": user.get("username") if user else None,
+        "action": req.action,
+        "entity_type": req.entity_type,
+        "entity_id": req.entity_id,
+        "entity_label": req.entity_label,
+        "route": req.route,
+        "method": req.method or "POST",
+        "status": req.status or "ok",
+        "error": req.error,
+        "summary": req.summary,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await db.wingman_activity.insert_one(doc)
+    except Exception:
+        # Never fail the operator's flow because of an audit-log write.
+        return {"ok": False}
+    return {"ok": True, "id": doc["id"]}
+
+
+@api_router.get("/wingman/activity")
+async def wingman_activity_list(
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+    limit: int = 100,
+):
+    """Return recent Wingman actions (newest first) for the current user,
+    or across ALL users when unauthenticated (dev only)."""
+    limit = max(1, min(limit, 500))
+    q: Dict[str, Any] = {}
+    if user:
+        q["user_id"] = str(user.get("_id"))
+    docs = await db.wingman_activity.find(
+        q,
+        {"_id": 0},
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return docs
+
+
+@api_router.delete("/wingman/activity")
+async def wingman_activity_clear(user: Annotated[dict, Depends(get_current_user)]):
+    """Wipe the current user's Wingman activity log."""
+    res = await db.wingman_activity.delete_many({"user_id": str(user.get("_id"))})
+    return {"ok": True, "deleted": res.deleted_count}
+
+
+# ---------------------------------------------------------------------------
 # Assistant conversation history — Phase 3 (server-side memory)
 # ---------------------------------------------------------------------------
 @api_router.get("/assistant/history")

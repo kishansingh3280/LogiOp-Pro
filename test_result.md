@@ -1701,3 +1701,53 @@ agent_communication:
           - Sending a chat → closing the popup → cloud pops up with the
             latest reply ("Sab badhiya hai Sir, aapki seva mein …")
           - Cloud has a close X and auto-dismisses after 8s
+
+  - task: "Iter31 · Wingman Activity screen"
+    implemented: true
+    working: true
+    file: "backend/server.py (POST/GET/DELETE /api/wingman/activity + WingmanActivity model), frontend/src/ghost/ghost-user.tsx (audit-log every submitFilled), frontend/app/wingman/activity.tsx (new screen), frontend/src/components/floating-jarvis.tsx (history icon in popup header)"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          New "Wingman Activity" audit log — real-time list of every
+          AI-driven write, with tap-to-open deep-links.
+          
+          Backend:
+          - New WingmanActivity Pydantic model
+          - POST /api/wingman/activity — fire-and-forget insert into
+            db.wingman_activity keyed by user_id (from JWT)
+          - GET /api/wingman/activity?limit=100 — newest first,
+            user-scoped
+          - DELETE /api/wingman/activity — auth-required wipe
+          
+          Frontend:
+          - Ghost engine's submitFilled() now logs every save (success
+            OR failure) via a fire-and-forget POST. Response body is
+            parsed to extract the created entity's id so the row can
+            deep-link to /party/{id}, /shipment/{id}, /invoice/{id}.
+          - New helpers _deriveEntityType() + _deriveActionFromPath()
+            infer type + action label from the API path.
+          - New screen /app/wingman/activity.tsx with:
+              • Header (back + title + trash-clear button)
+              • Auto-refresh every 20s + pull-to-refresh
+              • Empty state ("No AI actions yet") with cyber-siri ring
+              • Rows: action icon (tinted for status), Hinglish action
+                label ("Party banaya", "Shipment banaya", …), entity
+                label, relative timestamp ("5s ago"), error line if
+                status=error, chevron for tappable success rows
+              • Tap row → router.push(row.route) to open the entity
+          - Popup header gets a new "history" (time-outline) icon
+            next to the close X. Tap → closes popup, opens
+            /wingman/activity.
+          
+          Verified end-to-end via Playwright:
+          - Created party "ActivityDemo445" via AI popup + ghost save
+          - Opened popup → tapped history icon → landed on
+            /wingman/activity showing "Party banaya · Party ban raha hoon
+            — ActivityDemo445 · 5s ago" as the top row with a chevron
+            to open the newly-created party
+          - Older entries from prior AI sessions (carrier-update,
+            ledger-entry, etc.) also visible.

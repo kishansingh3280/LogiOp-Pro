@@ -34,7 +34,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
-import { usePathname } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -335,6 +335,7 @@ function JarvisPopup({ onClose, onGoLive }: { onClose: () => void; onGoLive: () 
   const { describeForAI } = useScreenContext();
   const ghost = useGhostUser();
   const mic = useMicLevel();
+  const router = useRouter();
 
   const [mode, setMode] = useState<LiveOrbMode>("idle");
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -529,6 +530,20 @@ function JarvisPopup({ onClose, onGoLive }: { onClose: () => void; onGoLive: () 
             </Text>
           </View>
         </View>
+        <Pressable
+          onPress={() => {
+            onClose();
+            // Small delay so the popup animation can start closing before
+            // the route transition. Otherwise the two animations stutter.
+            setTimeout(() => router.push("/wingman/activity" as never), 120);
+          }}
+          style={styles.popupClose}
+          hitSlop={10}
+          testID="jarvis-history"
+          accessibilityLabel="Open Wingman activity log"
+        >
+          <Ionicons name="time-outline" size={16} color={colors.textMuted} />
+        </Pressable>
         <Pressable
           onPress={onClose}
           style={styles.popupClose}

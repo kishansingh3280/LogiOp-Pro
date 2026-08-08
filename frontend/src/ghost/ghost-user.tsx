@@ -711,9 +711,43 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
         } catch {
           /* ignore */
         }
+        // Audit-log the failure so the operator can see WHY the ghost
+        // attempt didn't stick.
+        void _logWingmanActivity({
+          action: _deriveActionFromPath(fillState.p.submit.path),
+          entity_type: _deriveEntityType(fillState.p.submit.path),
+          entity_label: fillState.p.headline,
+          route: fillState.p.route,
+          method: fillState.p.submit.method,
+          status: "error",
+          error: msg,
+          summary: `Failed: ${fillState.p.headline} — ${msg}`,
+        });
         throw new Error(msg);
       }
-      showToast("Sir, save कर दिया ✓");
+      // Success — log the action and grab the created entity's id/route
+      // (if the response body carries one).
+      let createdId: string | undefined;
+      let createdRoute: string | undefined;
+      try {
+        const j = (await res.clone().json()) as { id?: string };
+        if (j?.id) {
+          createdId = j.id;
+          const type = _deriveEntityType(fillState.p.submit.path);
+          if (type && j.id) createdRoute = `/${type}/${j.id}`;
+        }
+      } catch { /* body not JSON — that's fine */ }
+      void _logWingmanActivity({
+        action: _deriveActionFromPath(fillState.p.submit.path),
+        entity_type: _deriveEntityType(fillState.p.submit.path),
+        entity_id: createdId,
+        entity_label: fillState.p.headline,
+        route: createdRoute || fillState.p.route,
+        method: fillState.p.submit.method,
+        status: "ok",
+        summary: fillState.p.headline,
+      });
+      showToast("Sir, save ho gaya ✓");
       setFillState(null);
       router.back();
     } catch (e) {
@@ -1214,4 +1248,62 @@ function _normalizeShipmentMode(raw: string | undefined): "air" | "sea" | "land"
   if (s === "land" || s === "road" || s === "truck") return "land";
   if (s === "hand_carry" || s === "handcarry" || s === "hand" || s === "carrier") return "hand_carry";
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Wingman Activity — audit-log every ghost-driven write
+// ---------------------------------------------------------------------------
+
+type _WingmanActivityPayload = {
+  action: string;
+  entity_type?: string;
+  entity_id?: string;
+  entity_label?: string;
+  route?: string;
+  method?: string;
+  status?: "ok" | "error";
+  error?: string;
+  summary?: string;
+};
+
+/** Fire-and-forget POST to /api/wingman/activity. Never blocks the UI or
+ * surfaces errors — the audit log is best-effort. */
+function _logWingmanActivity(p: _WingmanActivityPayload): void {
+  try {
+    const token = getAuthTokenSync();
+    void fetch(`${API_BASE}/api/wingman/activity`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(p),
+    }).catch(() => undefined);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Cheap heuristic: pull "party" / "shipment" / "invoice" / "item" /
+ * "ledger" out of the API path. Used to build a deep-link and label the
+ * activity row. */
+function _deriveEntityType(path: string): string | undefined {
+  const m = path.match(/^\/api\/(parties|shipments|invoices|items|ledger|bullion|warehouses)/);
+  if (!m) return undefined;
+  const map: Record<string, string> = {
+    parties: "party",
+    shipments: "shipment",
+    invoices: "invoice",
+    items: "item",
+    ledger: "ledger",
+    bullion: "bullion",
+    warehouses: "warehouse",
+  };
+  return map[m[1]] || m[1];
+}
+
+/** Rough action label from the path, e.g. "/api/parties" → "create_party". */
+function _deriveActionFromPath(path: string): string {
+  const t = _deriveEntityType(path);
+  return t ? `create_${t}` : "ai_action";
 }
