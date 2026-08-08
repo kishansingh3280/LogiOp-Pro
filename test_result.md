@@ -1751,3 +1751,64 @@ agent_communication:
             to open the newly-created party
           - Older entries from prior AI sessions (carrier-update,
             ledger-entry, etc.) also visible.
+
+  - task: "Iter32 · Central Wingman brain + WhatsApp webhook (shared memory)"
+    implemented: true
+    working: true
+    file: "backend/server.py (whatsapp webhook + _generate_wingman_reply + _resolve_whatsapp_user + _send_whatsapp_reply), backend/.env (WHATSAPP_* stubs)"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Declared this backend the "Main Wingman" for the business.
+          Both the in-app popup + Live Mode AND WhatsApp share:
+          - Same Claude Sonnet 4.6 brain (via Universal Key)
+          - Same `assistant_messages` MongoDB collection keyed by user_id
+          - Same _ASSISTANT_SYSTEM_HI system prompt (Hinglish, multi-turn
+            breakdown, strict enum values)
+          - Same real-time DB snapshot (shipments/parties) to prevent
+            hallucination
+          
+          New endpoints in backend/server.py:
+          
+          - GET /api/whatsapp/webhook — Meta Cloud API verification
+            handshake. Reads WHATSAPP_VERIFY_TOKEN from env and echoes
+            hub.challenge only on match.
+          
+          - POST /api/whatsapp/webhook — parses Meta payload shape,
+            extracts sender phone + text, resolves phone → user_id via
+            _resolve_whatsapp_user, calls the shared
+            _generate_wingman_reply helper, then POSTs the reply back
+            via /messages endpoint on graph.facebook.com. Logs a
+            wingman_activity row for every WhatsApp turn so the operator
+            can audit them in the /wingman/activity screen. Always
+            returns 200 so Meta doesn't disable the webhook on errors.
+          
+          - _generate_wingman_reply(user_id, message, ...) — non-
+            streaming variant that runs the same pipeline as
+            /api/assistant/chat (memory backfill, real-data block,
+            same LlmChat session_id="user:{user_id}"). Buffers the
+            full reply for the WhatsApp POST body.
+          
+          Env vars added to backend/.env (empty values are placeholders
+          — endpoint is functional today, Meta reply is a no-op until
+          the operator pastes real Cloud API credentials):
+              WHATSAPP_VERIFY_TOKEN=wingman-kishan-verify-2026
+              WHATSAPP_ACCESS_TOKEN=       (from Meta System User)
+              WHATSAPP_PHONE_NUMBER_ID=    (from Meta WABA setup)
+              WHATSAPP_OWNER_PHONE=        (your WhatsApp E.164 sans +)
+              WHATSAPP_OWNER_USER_ID=6a76cdd9023ad8547b215ad9
+          
+          Verified:
+          - GET verify with correct token → 200 echoes challenge
+          - GET verify with wrong token → 403
+          - POST payload from "owner" phone → 200 {ok:true}; user turn
+            + assistant turn both land in assistant_messages with
+            channel="whatsapp"
+          - Cross-channel memory: sent "Yaad rakhna: mera favorite silver
+            Rani Chain hai" via WhatsApp webhook, then asked "Mera
+            favorite silver kya hai?" via in-app /api/assistant/chat on
+            a FRESH session → response "Aapka favorite silver item
+            **Rani Chain** hai, Sir! 😊". Same brain, same memory. ✓

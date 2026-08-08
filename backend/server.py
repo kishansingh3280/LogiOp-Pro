@@ -7,7 +7,7 @@ import logging
 import json
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import Any, List, Optional, Dict, Annotated
+from typing import Any, List, Optional, Dict, Annotated, Tuple
 import uuid
 from datetime import datetime, timezone
 import httpx
@@ -825,7 +825,7 @@ async def wingman_health():
 # assistant is instructed to reply in native Hindi (Devanagari) by default
 # and to emit structured JSON tool-calls that the client executes against
 # the existing REST endpoints (Wingman surface).
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse
 import asyncio
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
@@ -1371,8 +1371,247 @@ async def wingman_activity_clear(user: Annotated[dict, Depends(get_current_user)
 
 
 # ---------------------------------------------------------------------------
-# Assistant conversation history — Phase 3 (server-side memory)
+# WhatsApp Wingman — webhook that shares the same brain + memory as the app
 # ---------------------------------------------------------------------------
+#
+# GET  /api/whatsapp/webhook — Meta Cloud API verification handshake.
+# POST /api/whatsapp/webhook — Meta Cloud API incoming message payload.
+#
+# The webhook is deliberately conservative:
+#   • It always returns 200 so Meta doesn't disable the webhook if we
+#     throw during processing.
+#   • It writes the user's turn to `assistant_messages` (same collection
+#     as the in-app popup) BEFORE calling the LLM so a slow LLM never
+#     eats a message.
+#   • The reply is a plain text WhatsApp message via the Cloud Graph API.
+#
+# Environment variables (add to backend/.env before the webhook can
+# actually reply):
+#   WHATSAPP_VERIFY_TOKEN     — any string; must match "hub.verify_token"
+#                               you paste into Meta's webhook config UI
+#   WHATSAPP_ACCESS_TOKEN     — Cloud API "System User" token
+#   WHATSAPP_PHONE_NUMBER_ID  — the /messages endpoint ID
+#   WHATSAPP_OWNER_PHONE      — your WhatsApp phone (E.164, e.g. "919876543210")
+#   WHATSAPP_OWNER_USER_ID    — the Mongo _id of your user document
+#                               (found under db.users where username="kishan")
+# ---------------------------------------------------------------------------
+
+async def _generate_wingman_reply(
+    user_id: Optional[str],
+    user_key: Optional[str],
+    message: str,
+    *,
+    honorific: str = "Sir",
+    display_name: str = "Kishan",
+    session_id: Optional[str] = None,
+) -> str:
+    """Non-streaming Wingman reply. Same brain, prompt, real-data block
+    and memory backfill as /api/assistant/chat — just buffered so it can
+    be POSTed to WhatsApp in one shot.
+
+    Persists both the user + assistant turns to `assistant_messages`
+    (fire-and-forget) so WhatsApp + in-app share the same conversation.
+    """
+    if not EMERGENT_LLM_KEY:
+        return "Sir, mera LLM key configure nahi hai — please app dekh lijiye."
+
+    from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+
+    # ---- persist user turn ----
+    try:
+        await db.assistant_messages.insert_one({
+            "id": str(uuid.uuid4()),
+            "session_id": session_id or (f"user:{user_id}" if user_id else "whatsapp"),
+            "user_id": user_id,
+            "user_key": user_key,
+            "channel": "whatsapp",
+            "role": "user",
+            "content": message,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+
+    # ---- real-data context ----
+    address_line = f"\nऑपरेटर का पूरा संबोधन: '{display_name} {honorific}'.\n"
+    try:
+        real_ctx = await assistant_context()
+    except Exception:
+        real_ctx = {}
+    real_block = ""
+    ships = (real_ctx.get("shipments") or [])[:12]
+    parties = (real_ctx.get("parties") or [])[:15]
+    if ships or parties:
+        real_block = "\n=== DB snapshot (only use these IDs) ===\n"
+        for s in ships:
+            real_block += f"  • Shipment {s.get('consignment_no')} · {s.get('status')} · {s.get('party_name') or '—'}\n"
+        for p in parties:
+            real_block += f"  • Party {p.get('name')} · {p.get('role') or '—'}\n"
+
+    # ---- memory replay ----
+    prompt_message = message
+    if user_id:
+        try:
+            prev = await db.assistant_messages.find(
+                {"user_id": user_id},
+                {"_id": 0, "role": 1, "content": 1, "created_at": 1},
+            ).sort("created_at", -1).limit(20).to_list(20)
+            prev = list(reversed(prev))
+            if prev:
+                recap_lines: List[str] = []
+                for m in prev[-10:]:
+                    who = "User" if m.get("role") == "user" else "Wingman"
+                    snippet = (m.get("content") or "").strip().replace("\n", " ")[:160]
+                    if snippet:
+                        recap_lines.append(f"  • {who}: {snippet}")
+                if recap_lines:
+                    prompt_message = (
+                        "\n=== Pichli baatcheet ka saar (memory) ===\n"
+                        + "\n".join(recap_lines)
+                        + "\n=== Vartaman turn ===\n" + message
+                    )
+        except Exception:
+            pass
+
+    chat = (
+        LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=session_id or (f"user:{user_id}" if user_id else "whatsapp"),
+            system_message=_ASSISTANT_SYSTEM_HI + address_line + real_block,
+        )
+        .with_model("anthropic", "claude-sonnet-4-6")
+    )
+
+    buf = ""
+    try:
+        async for event in chat.stream_message(UserMessage(text=prompt_message)):
+            if isinstance(event, TextDelta):
+                buf += event.content
+            elif isinstance(event, StreamDone):
+                break
+    except Exception as e:
+        buf = f"Sir, error aa gaya: {e}"
+
+    # ---- persist assistant turn ----
+    try:
+        await db.assistant_messages.insert_one({
+            "id": str(uuid.uuid4()),
+            "session_id": session_id or (f"user:{user_id}" if user_id else "whatsapp"),
+            "user_id": user_id,
+            "user_key": user_key,
+            "channel": "whatsapp",
+            "role": "assistant",
+            "content": buf,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+    return buf
+
+
+def _resolve_whatsapp_user(from_phone: str) -> Tuple[Optional[str], Optional[str]]:
+    """Map incoming WhatsApp `from` phone to (user_id, user_key).
+    Uses env vars for the owner phone/user; unknown senders get None."""
+    owner_phone = (os.getenv("WHATSAPP_OWNER_PHONE") or "").strip()
+    owner_uid = (os.getenv("WHATSAPP_OWNER_USER_ID") or "").strip()
+    if owner_phone and from_phone and from_phone.endswith(owner_phone.lstrip("+")):
+        return owner_uid or None, "kishan"
+    # Future: db lookup by phone. For now, only the owner is recognised.
+    return None, None
+
+
+async def _send_whatsapp_reply(to_phone: str, text: str) -> bool:
+    """POST a text reply back to the Meta WhatsApp Cloud API. Returns
+    True on 2xx. Silent no-op if the required env vars aren't set."""
+    token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    if not token or not phone_id:
+        return False
+    url = f"https://graph.facebook.com/v20.0/{phone_id}/messages"
+    body = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "text",
+        "text": {"body": text[:4000]},  # WhatsApp text body cap
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(url, json=body, headers={"Authorization": f"Bearer {token}"})
+            return r.status_code < 300
+    except Exception:
+        return False
+
+
+@api_router.get("/whatsapp/webhook")
+async def whatsapp_verify(request: Request):
+    """Meta Cloud API verification handshake. Meta sends:
+    ?hub.mode=subscribe&hub.verify_token=X&hub.challenge=Y
+    We echo hub.challenge only if the token matches our env var."""
+    params = request.query_params
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+    expected = os.getenv("WHATSAPP_VERIFY_TOKEN") or ""
+    if mode == "subscribe" and token and token == expected:
+        return PlainTextResponse(challenge or "ok", status_code=200)
+    return PlainTextResponse("forbidden", status_code=403)
+
+
+@api_router.post("/whatsapp/webhook")
+async def whatsapp_incoming(request: Request):
+    """Handle an incoming WhatsApp message. We always return 200 so Meta
+    doesn't disable the webhook on transient errors."""
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"ok": True}
+
+    # Meta payload shape (simplified):
+    # { entry: [{ changes: [{ value: { messages: [{ from, text: { body } }] } }] }] }
+    try:
+        entry = (payload.get("entry") or [{}])[0]
+        changes = (entry.get("changes") or [{}])[0]
+        value = changes.get("value") or {}
+        messages = value.get("messages") or []
+        if not messages:
+            return {"ok": True}
+        msg = messages[0]
+        from_phone = msg.get("from") or ""
+        text = (msg.get("text") or {}).get("body") or ""
+        if not text.strip():
+            return {"ok": True}
+    except Exception:
+        return {"ok": True}
+
+    user_id, user_key = _resolve_whatsapp_user(from_phone)
+    reply = await _generate_wingman_reply(
+        user_id=user_id,
+        user_key=user_key,
+        message=text,
+        session_id=f"user:{user_id}" if user_id else f"whatsapp:{from_phone}",
+    )
+    # Best-effort delivery. Log if send fails so the operator can see it
+    # in the Wingman Activity log too.
+    ok = await _send_whatsapp_reply(from_phone, reply)
+    try:
+        await db.wingman_activity.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "user_key": user_key,
+            "action": "whatsapp_reply",
+            "entity_type": "whatsapp",
+            "entity_label": f"WhatsApp → {from_phone}",
+            "status": "ok" if ok else "error",
+            "error": None if ok else "delivery failed (check env vars)",
+            "summary": reply[:200],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+
 @api_router.get("/assistant/history")
 async def assistant_history(
     user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
