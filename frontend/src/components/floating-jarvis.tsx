@@ -32,7 +32,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Animated,
-  Dimensions,
   Easing,
   KeyboardAvoidingView,
   Modal,
@@ -47,14 +46,15 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { API_BASE } from "@/src/api/client";
-import { useAuth } from "@/src/auth/context";
+import { getAuthTokenSync, useAuth } from "@/src/auth/context";
+import { getCachedBlockers, useBlockers } from "@/src/components/blocker-bell";
 import { LiveOrb, type LiveOrbMode } from "@/src/components/live-orb";
 import { useScreenContext } from "@/src/context/screen-context";
 import { useGhostUser } from "@/src/ghost/ghost-user";
 import { useMicLevel } from "@/src/hooks/use-mic-level";
 import { colors, radii, spacing } from "@/src/theme";
 
-const { width: _SCREEN_W, height: _SCREEN_H } = Dimensions.get("window");
+// (Dimensions was only used for the removed absolute width — dropped.)
 
 type Msg = { role: "user" | "assistant"; text: string; at: number };
 
@@ -236,6 +236,25 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
     return () => clearTimeout(t);
   }, []);
 
+  // Proactive greeting: if there are blockers, greet with a short Hindi
+  // summary the moment the nebula opens. Uses the cached blocker set so
+  // there's no visible network wait — if empty, the hook still refreshes
+  // in the background.
+  useBlockers(); // ensures the hook starts polling in this component too
+  useEffect(() => {
+    const b = getCachedBlockers();
+    if (!b || b.total === 0) return;
+    // Small delay so the modal transition finishes before speech starts.
+    const t = setTimeout(() => {
+      setMessages((prev) => (prev.length ? prev : [{ role: "assistant", text: b.summary_hi, at: Date.now() }]));
+      speak(b.summary_hi).catch(() => undefined);
+    }, 400);
+    return () => clearTimeout(t);
+    // Intentional: run only once on mount — subsequent blocker changes
+    // are surfaced by the bell badge, not by another spoken interrupt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const stripTools = (text: string) => text.replace(/```json[\s\S]*?```/g, "").trim();
 
   const speak = useCallback(
@@ -296,11 +315,13 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
       setStreaming("");
       setMode("thinking");
       try {
+        const token = getAuthTokenSync();
         const resp = await fetch(`${API_BASE}/api/assistant/chat`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "X-Entry-Source": "ai",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
             session_id: `nebula-${Date.now()}`,

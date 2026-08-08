@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "@/src/auth/context";
 import { AmbientBackground } from "@/src/components/ambient-background";
+import { BlockerBell } from "@/src/components/blocker-bell";
 import { FloatingJarvis } from "@/src/components/floating-jarvis";
 import { ToastHost } from "@/src/components/toast";
 import { FYProvider } from "@/src/context/fy-context";
@@ -98,6 +99,7 @@ export default function RootLayout() {
                     }}
                   />
                 </AuthGate>
+                <BlockerBell />
                 <FloatingJarvis />
                 <ToastHost />
               </GhostUserProvider>

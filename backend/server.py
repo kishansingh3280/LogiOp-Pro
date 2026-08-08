@@ -963,13 +963,26 @@ async def assistant_context():
 
 
 @api_router.post("/assistant/chat")
-async def assistant_chat(req: AssistantChatRequest):
+async def assistant_chat(
+    req: AssistantChatRequest,
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+):
     """SSE streaming Claude Sonnet response. Turn writes are fired-and-
-    forgotten so time-to-first-token stays under the operator's 2s SLA."""
+    forgotten so time-to-first-token stays under the operator's 2s SLA.
+
+    NEW (Phase 3): server-side conversation memory. If the caller didn't
+    supply any history, we backfill it from the `assistant_messages`
+    collection keyed by user_id — so Jarvis remembers what the operator
+    told him yesterday across the S26 Ultra, the Tab S11, and the
+    Android-TV console.
+    """
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
 
     from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+
+    user_id = str(user.get("_id")) if user else None
+    user_key = user.get("username") if user else None
 
     # Fire user turn persistence asynchronously so it doesn't gate the first
     # streamed byte. Silent failure is acceptable here — chat still lands.
@@ -978,6 +991,8 @@ async def assistant_chat(req: AssistantChatRequest):
             await db.assistant_messages.insert_one({
                 "id": str(uuid.uuid4()),
                 "session_id": req.session_id,
+                "user_id": user_id,
+                "user_key": user_key,
                 "role": "user",
                 "content": req.message,
                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1046,14 +1061,58 @@ async def assistant_chat(req: AssistantChatRequest):
             "IDs ('CN-S/01' आदि) मत बनाएँ।\n"
         )
 
+    # ------------------------------------------------------------------
+    # Server-side memory (Phase 3): If the client didn't send us any
+    # history AND we know the user, backfill the last N turns from
+    # Mongo. This keeps Jarvis' memory alive across devices + sessions.
+    # ------------------------------------------------------------------
+    replayed_history: List[Dict[str, str]] = []
+    if user_id and len(req.history or []) == 0:
+        try:
+            prev = await db.assistant_messages.find(
+                {"user_id": user_id},
+                {"_id": 0, "role": 1, "content": 1, "created_at": 1},
+            ).sort("created_at", -1).limit(24).to_list(24)
+            # Chronological order (oldest first).
+            prev = list(reversed(prev))
+            replayed_history = [
+                {"role": p.get("role") or "user", "content": p.get("content") or ""}
+                for p in prev
+                if p.get("content")
+            ]
+        except Exception:
+            replayed_history = []
+
+    # For LlmChat we use a stable per-user session_id so its internal
+    # context store also accumulates naturally. Fallback to client's id.
+    effective_session_id = f"user:{user_id}" if user_id else req.session_id
+
     chat = (
         LlmChat(
             api_key=EMERGENT_LLM_KEY,
-            session_id=req.session_id,
+            session_id=effective_session_id,
             system_message=_ASSISTANT_SYSTEM_HI + address_line + ctx_block + real_block + memory_block,
         )
         .with_model("anthropic", "claude-sonnet-4-6")
     )
+
+    # Compose the message we send to Claude. If we replayed history, embed
+    # a short "पिछली बातचीत का सार" block so the model has context even on
+    # the very first turn of a fresh session_id.
+    prompt_message = req.message
+    if replayed_history:
+        # Take the last ~10 user↔assistant exchanges so we don't blow the
+        # context window on very long histories.
+        tail = replayed_history[-10:]
+        recap_lines = []
+        for m in tail:
+            who = "उपयोगकर्ता" if m["role"] == "user" else "मैं"
+            snippet = (m["content"] or "").strip().replace("\n", " ")[:160]
+            if snippet:
+                recap_lines.append(f"  • {who}: {snippet}")
+        if recap_lines:
+            recap = "\n=== पिछली बातचीत का सार (memory) ===\n" + "\n".join(recap_lines) + "\n=== वर्तमान turn ===\n"
+            prompt_message = recap + req.message
 
     async def event_gen():
         # Immediate keep-alive comment frame — flushes the connection buffer
@@ -1061,7 +1120,7 @@ async def assistant_chat(req: AssistantChatRequest):
         yield ": ping\n\n"
         buf = ""
         try:
-            async for event in chat.stream_message(UserMessage(text=req.message)):
+            async for event in chat.stream_message(UserMessage(text=prompt_message)):
                 if isinstance(event, TextDelta):
                     buf += event.content
                     # SSE spec: a `data:` frame ends at the first blank line.
@@ -1090,6 +1149,8 @@ async def assistant_chat(req: AssistantChatRequest):
                     await db.assistant_messages.insert_one({
                         "id": str(uuid.uuid4()),
                         "session_id": req.session_id,
+                        "user_id": user_id,
+                        "user_key": user_key,
                         "role": "assistant",
                         "content": buf,
                         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1163,15 +1224,168 @@ async def assistant_memory_delete(key: str):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Assistant conversation history — Phase 3 (server-side memory)
+# ---------------------------------------------------------------------------
+@api_router.get("/assistant/history")
+async def assistant_history(
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+    limit: int = 40,
+):
+    """Return the most recent messages for the current user, oldest→newest.
+    Falls back to session_id if the caller is unauthenticated (returns []).
+    """
+    limit = max(1, min(limit, 200))
+    user_id = str(user.get("_id")) if user else None
+    if not user_id:
+        return []
+    docs = await db.assistant_messages.find(
+        {"user_id": user_id},
+        {"_id": 0, "id": 1, "role": 1, "content": 1, "created_at": 1},
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return list(reversed(docs))
+
+
+@api_router.delete("/assistant/history")
+async def assistant_history_clear(
+    user: Annotated[dict, Depends(get_current_user)],
+):
+    """Wipe the current user's conversation history (opt-in fresh start)."""
+    user_id = str(user.get("_id"))
+    res = await db.assistant_messages.delete_many({"user_id": user_id})
+    return {"ok": True, "deleted": res.deleted_count}
+
+
+# ---------------------------------------------------------------------------
+# Intelligent To-Do — Phase 3 blockers endpoint
+# ---------------------------------------------------------------------------
+@api_router.get("/todo/blockers")
+async def todo_blockers():
+    """Return a categorised list of "blocking" data-hygiene issues the
+    operator needs to fix. Categories:
+      • bags        — bags with no `weight_kg`
+      • shipments   — shipments missing freight amount OR bill-to party
+      • invoices    — invoices with an amount of 0
+
+    The counts + item lists are used by the bell/inbox in the mobile app.
+    Parties w/o phone/GSTIN were removed at the operator's request — the
+    catalog often has partial contacts by design.
+    """
+    async def _get_remote(path: str) -> Any:
+        if not REMOTE_BACKEND_URL:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(REMOTE_BACKEND_URL + path)
+                if r.status_code >= 400 or not r.content:
+                    return []
+                return r.json()
+        except Exception:
+            return []
+
+    shipments = await _get_remote("/api/shipments") or []
+    invoices = await _get_remote("/api/invoices") or []
+
+    # -------- Shipments missing freight OR bill-to party ----------
+    ship_blockers: List[Dict[str, Any]] = []
+    for s in shipments:
+        missing = []
+        freight = s.get("freight") or s.get("freight_amount") or 0
+        try:
+            freight_val = float(freight or 0)
+        except (TypeError, ValueError):
+            freight_val = 0.0
+        if freight_val <= 0:
+            missing.append("freight")
+        # Bill-to party can be at shipment-level (party_id) or per-bag.
+        # We flag when NO party is attached anywhere.
+        if not s.get("party_id") and not s.get("party_name"):
+            missing.append("bill_to")
+        if missing:
+            ship_blockers.append({
+                "id": s.get("id"),
+                "consignment_no": s.get("consignment_no"),
+                "origin": s.get("origin"),
+                "destination": s.get("destination"),
+                "missing": missing,
+                "route": f"/shipment/{s.get('id')}" if s.get("id") else "/shipments",
+            })
+
+    # -------- Invoices with amount = 0 ----------
+    inv_blockers: List[Dict[str, Any]] = []
+    for inv in invoices:
+        amt = inv.get("total") or inv.get("amount") or 0
+        try:
+            amt_val = float(amt or 0)
+        except (TypeError, ValueError):
+            amt_val = 0.0
+        if amt_val <= 0:
+            inv_blockers.append({
+                "id": inv.get("id"),
+                "invoice_no": inv.get("invoice_no") or inv.get("number"),
+                "party_name": inv.get("party_name") or "—",
+                "route": f"/invoice/{inv.get('id')}" if inv.get("id") else "/invoices",
+            })
+
+    # -------- Bags without weight_kg (per shipment) ----------
+    # Fetch bags for the first 30 recent shipments — walking all bags for
+    # every shipment on every poll would be quadratic. 30 covers the
+    # active window.
+    bag_blockers: List[Dict[str, Any]] = []
+    ship_slice = shipments[:30]
+    for s in ship_slice:
+        sid = s.get("id")
+        if not sid:
+            continue
+        bags = await _get_remote(f"/api/shipments/{sid}/bags") or []
+        for b in bags:
+            try:
+                w = float(b.get("weight_kg") or 0)
+            except (TypeError, ValueError):
+                w = 0.0
+            if w <= 0:
+                bag_blockers.append({
+                    "id": b.get("id"),
+                    "bag_no": b.get("bag_no") or b.get("id"),
+                    "shipment_id": sid,
+                    "consignment_no": s.get("consignment_no"),
+                    "route": f"/shipment/{sid}",
+                })
+
+    total = len(ship_blockers) + len(inv_blockers) + len(bag_blockers)
+    return {
+        "total": total,
+        "shipments": ship_blockers,
+        "invoices": inv_blockers,
+        "bags": bag_blockers,
+        "summary_hi": _blockers_summary_hi(len(ship_blockers), len(inv_blockers), len(bag_blockers)),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _blockers_summary_hi(ships: int, invs: int, bags: int) -> str:
+    """Compose the short Hindi one-liner Jarvis speaks on assistant open."""
+    parts: List[str] = []
+    if bags:
+        parts.append(f"{bags} bags अभी भी weight बिना हैं")
+    if ships:
+        parts.append(f"{ships} shipments incomplete हैं")
+    if invs:
+        parts.append(f"{invs} invoices का amount खाली है")
+    if not parts:
+        return "Sir, सब कुछ अपडेट है — कोई pending काम नहीं।"
+    return "Sir, " + ", ".join(parts) + "। Bell icon पर tap करें to fix."
+
+
 class TTSRequest(BaseModel):
     text: str
-    voice: Optional[str] = "nova"   # nova/shimmer are the most natural for Hindi
+    voice: Optional[str] = "shimmer"   # shimmer = softest natural Hindi delivery
 
 
 @api_router.post("/assistant/tts")
 async def assistant_tts(req: TTSRequest):
     """Text → audio/mpeg via OpenAI TTS through the Emergent proxy.
-    Uses `nova` as the default voice — best natural Hindi delivery on tts-1."""
+    Uses `shimmer` as the default voice — softest, most natural Hindi delivery."""
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
     from emergentintegrations.llm.openai.text_to_speech import OpenAITextToSpeech

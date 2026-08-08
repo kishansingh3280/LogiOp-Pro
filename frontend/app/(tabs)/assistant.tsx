@@ -33,7 +33,8 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { API_BASE } from "@/src/api/client";
-import { useAuth } from "@/src/auth/context";
+import { getAuthTokenSync, useAuth } from "@/src/auth/context";
+import { getCachedBlockers, useBlockers } from "@/src/components/blocker-bell";
 import { LiveOrb, type LiveOrbMode } from "@/src/components/live-orb";
 import { useScreenContext } from "@/src/context/screen-context";
 import { useGhostUser } from "@/src/ghost/ghost-user";
@@ -67,16 +68,26 @@ export default function AssistantScreen() {
   const [ttsLevelNum, setTtsLevelNum] = useState(0);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
 
+  // Keep the polling loop alive so the bell badge stays fresh even on
+  // this screen (the bell hides itself here, but the poll shares state).
+  useBlockers();
+
   // Emit a spoken greeting on first mount so the immersion feels alive.
+  // If there are any blockers, Jarvis reports them proactively.
   useEffect(() => {
     if (greeted) return;
     const address = user ? `${user.display_name} ${user.honorific}` : "Sir";
     const ctx = describeForAI();
-    const opener = `नमस्ते ${address}! मैं आपका AI सहायक हूँ। ${
-      ctx && ctx !== "Current route: /(tabs)/assistant"
-        ? "बताइए, क्या मदद करूँ?"
-        : "बोलिए, क्या हुक्म है?"
-    }`;
+    const blockers = getCachedBlockers();
+    const blockerLine =
+      blockers && blockers.total > 0 ? ` ${blockers.summary_hi}` : "";
+    const baseOpener = `नमस्ते ${address}! मैं आपका AI सहायक हूँ।`;
+    const tail = blockerLine
+      ? blockerLine
+      : ctx && ctx !== "Current route: /(tabs)/assistant"
+        ? " बताइए, क्या मदद करूँ?"
+        : " बोलिए, क्या हुक्म है?";
+    const opener = `${baseOpener}${tail}`;
     setMessages([{ role: "assistant", text: opener, at: Date.now() }]);
     speak(opener).catch(() => undefined);
     setGreeted(true);
@@ -191,11 +202,13 @@ export default function AssistantScreen() {
       setStreaming("");
       setMode("thinking");
       try {
+        const token = getAuthTokenSync();
         const resp = await fetch(`${API_BASE}/api/assistant/chat`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "X-Entry-Source": "ai",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
             session_id: SESSION_KEY,
