@@ -129,7 +129,19 @@ export function useBlockers(): { data: BlockerSet | null; refresh: () => Promise
 // Bell — floating top-right icon
 // ---------------------------------------------------------------------------
 
-const HIDE_ON = new Set<string>(["/sign-in"]);
+// Routes where the floating bell would collide with a header-right action
+// button (Save / Modify / etc). Prefix-matched so both `/bullion/trip/new`
+// and `/bullion/trip/<id>` are covered. Add new form routes here whenever
+// a screen packs its own top-right action.
+const HIDE_ON_PREFIXES = [
+  "/sign-in",
+  "/bullion/trip",
+];
+
+function shouldHideBellFor(pathname: string): boolean {
+  if (!pathname) return false;
+  return HIDE_ON_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
 
 export function BlockerBell() {
   const insets = useSafeAreaInsets();
@@ -138,7 +150,7 @@ export function BlockerBell() {
   const { data } = useBlockers();
   const [open, setOpen] = useState(false);
 
-  const shouldHide = !user || HIDE_ON.has(pathname || "");
+  const shouldHide = !user || shouldHideBellFor(pathname || "");
   if (shouldHide) return null;
 
   const count = data?.total || 0;

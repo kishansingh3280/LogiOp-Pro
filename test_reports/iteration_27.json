@@ -1,0 +1,35 @@
+{
+  "summary": "Iter27 re-verification of iter26 overlay-stacking fixes. ALL 3 fixes PASS + regression checks PASS. Fix #1 (FAB above Jarvis): bullion-fab bounding box y=620, floating-jarvis bounding box y=692 — FAB now sits ~72px above the Jarvis bubble; tapping bullion-fab opens the 'Create' bottom sheet (Carrier trip / Currency carry / Gold carry) instead of the Jarvis panel. Fix #2 (bell hidden + Save works on /bullion/trip/new): blocker-bell NOT visible on /bullion/trip/new; tapping save-trip-btn with a fully-filled form (Iter27 Test Carrier, IN→BKK, USD 5000, gold 25.5 baht, carry 3200, shipment CN-1040) successfully POSTed the trip — the new record appeared in the list with a trip-strip-<id> info-pill row, and the trip detail page rendered with all 4 SummaryRow values. Fix #3 (Modify works on trip detail): blocker-bell NOT visible on /bullion/trip/{id}; modify-trip-btn tap navigates to /bullion/trip/new?editId=<id> with the header 'Edit carrier trip' and every input pre-filled (trip-carrier-name='Iter27 Test Carrier', trip-cur-amount='5000', trip-gold-baht='25.5', trip-carry-charge='3200', trip-shipment-pick button label='CN-1040'). Regression: blocker-bell IS visible on Home (/) and on the /bullion tab as expected. Backend smoke: POST/GET/DELETE on /api/bullion/trips all 200 with the new fields (currency_type, currency_amount, gold_baht, carry_charge_inr, shipment_ref, direction↔route mirror) persisting correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/bullion/trips/{id}", "issue": "Single-trip GET returns 404 even for a just-created id (list has it). Not part of this iter's fix but noted — the frontend fetches the trip via the list cache so this doesn't break the UX. Consider adding a single-record GET or ignore."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "app/bullion/trip/new.tsx save-trip-btn (post-save navigation)", "issue": "After a successful save, router.back() emits a dev warning 'The action \\'GO_BACK\\' was not handled by any navigator. Is there any screen to go back to?' when the form was opened via a direct URL (no back stack). The trip is still saved correctly — record appears in the list, all fields persist — but if a user deep-links to /bullion/trip/new, they stay on the form after Save instead of returning to the Trips list. In the normal flow (FAB → Carrier trip → /bullion/trip/new) the back stack exists, so this is a deep-link edge case only. Suggest using router.replace('/bullion') or router.canGoBack() ? router.back() : router.replace('/bullion').", "testID": "save-trip-btn", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter26_trips_module.py"
+  ],
+  "action_items": [
+    "(Optional) In app/bullion/trip/new.tsx replace router.back() on save-success with `router.canGoBack() ? router.back() : router.replace('/bullion')` so deep-link opens still land back on the Trips list. Not blocking — normal flow works and the trip persists.",
+    "(Optional) Add a GET /api/bullion/trips/{id} single-record endpoint or update the frontend detail screen to always source from the list cache (currently works, but a direct 404 is a smell if any future flow needs a single fetch)."
+  ],
+  "critical_code_review_comments": [
+    "app/(tabs)/bullion.tsx FAB now uses zIndex 1001 (comment in file: 'sit above the FloatingJarvis bubble (zIndex 999)') and bottom: insets.bottom + 168 — good clearance (56px FAB + 56px Jarvis + 56px gap = 168px). Verified visually in bounding boxes.",
+    "components/blocker-bell.tsx prefix-based HIDE_ON_PREFIXES = ['/sign-in', '/bullion/trip'] with startsWith(p + '/') helper correctly covers both /bullion/trip/new and /bullion/trip/<id> without hiding on /bullion itself."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (smoke: POST + GET list + DELETE all 200)", "frontend": "100% on the 3 targeted fixes; 1 low-priority polish item on post-save deep-link back-nav"},
+  "seed_data_creation": "Created 1 trip via UI (id 52e2d0dd-c615-4a7f-b4c1-03be9e4b1eca, carrier 'Iter27 Test Carrier') and 1 via backend smoke — both cleaned up via DELETE at test end.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter26 overlay/hit-test regressions on the Trips module are all resolved. FAB clearance = 72px above Jarvis (y=620 vs y=692). Bell prefix-hide works for /bullion/trip/* only. When testing this module going forward, quick-login (`text=Quick login as Kishan Sir (demo)`) is the fastest auth path — no need to fill username/password. Use domcontentloaded (not networkidle) for goto() since the market ticker + Jarvis heartbeat keep the network busy.",
+  "rca_of_issue": "Both iter26 regressions were pure z-index/positional stacking bugs on the mobile 390-wide viewport: (a) the FloatingJarvis bubble (bottom-right, zIndex 999) was sitting on top of the FAB (bottom-right, no explicit zIndex, default z-index below Jarvis) so onPress on the FAB was actually hitting Jarvis; (b) BlockerBell (top-right, zIndex 800) sat on top of the trip form's header 'Save' and detail-view's 'Modify' buttons. Iter27 fixes are minimal and correct: FAB moved to bottom: insets.bottom + 168 with zIndex 1001 (above Jarvis's 999), and BlockerBell short-circuits render (`return null`) for pathnames starting with '/bullion/trip/'. Verified with both bounding-box math and end-to-end save/modify flows."
+}

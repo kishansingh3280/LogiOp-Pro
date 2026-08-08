@@ -15,7 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useApi } from "@/src/api/hooks";
 import type { Party } from "@/src/api/types";
@@ -46,6 +46,7 @@ type Filter = "all" | "currency" | "gold" | "open" | "completed";
 
 export default function BullionScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const trips = useTrips();
   const txns = useTxns();
   const parties = useApi<Party[]>("/api/parties");
@@ -406,7 +407,12 @@ export default function BullionScreen() {
         />
       )}
 
-      <TouchableOpacity style={styles.fab} onPress={() => setFabOpen(true)} activeOpacity={0.9} testID="bullion-fab">
+      <TouchableOpacity
+        style={[styles.fab, { bottom: insets.bottom + 168 }]}
+        onPress={() => setFabOpen(true)}
+        activeOpacity={0.9}
+        testID="bullion-fab"
+      >
         <Ionicons name="add" size={26} color={colors.bg} />
       </TouchableOpacity>
 
@@ -966,10 +972,15 @@ const styles = StyleSheet.create({
   emptyTitle: { color: colors.text, fontSize: 15, fontWeight: "700", marginTop: 8 },
   emptySub: { color: colors.textDim, fontSize: 13, textAlign: "center" },
   fab: {
-    position: "absolute", right: spacing.lg, bottom: spacing.lg + 60,
+    position: "absolute", right: spacing.lg,
     width: 56, height: 56, borderRadius: 28,
     backgroundColor: colors.lime, alignItems: "center", justifyContent: "center",
     elevation: 10,
+    zIndex: 1001,   // sit above the FloatingJarvis bubble (zIndex 999)
+    shadowColor: colors.lime,
+    shadowOpacity: 0.6,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
   },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
   sheet: {
