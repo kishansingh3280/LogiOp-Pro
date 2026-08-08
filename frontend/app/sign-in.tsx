@@ -95,10 +95,29 @@ export default function SignInScreen() {
           </View>
 
           <GlassCard radius="xxl" tone="elevated" padded="lg">
-            <Text style={styles.title}>Welcome back</Text>
+            <Text style={styles.title}>Welcome, Kishan Sir</Text>
             <Text style={styles.subtitle}>
-              Sign in to access ledgers, bullion, and Wingman AI.
+              Log in to open your dashboard, ledgers, bullion & Wingman AI.
             </Text>
+
+            {/* Top-of-card CTA — always above the fold so the Login action
+                is unmissable regardless of viewport height. Duplicate of
+                the main submit button so tapping either logs in. */}
+            <Pressable
+              onPress={onSubmit}
+              disabled={busy || !username || !password}
+              style={({ pressed }) => [
+                styles.buttonTop,
+                (busy || !username || !password) && { opacity: 0.55 },
+                pressed && { opacity: 0.85 },
+              ]}
+              testID="signin-top-cta"
+              accessibilityLabel="Login"
+              accessibilityRole="button"
+            >
+              <Ionicons name="log-in-outline" size={18} color="#000" />
+              <Text style={styles.buttonTopText}>LOGIN</Text>
+            </Pressable>
 
             <View style={styles.field}>
               <Text style={styles.label}>Username</Text>
@@ -161,16 +180,41 @@ export default function SignInScreen() {
                 busy && { opacity: 0.6 },
               ]}
               testID="signin-submit"
+              accessibilityLabel="Login and go to dashboard"
+              accessibilityRole="button"
             >
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <Text style={styles.buttonText}>Sign in</Text>
+                <>
+                  <Ionicons name="arrow-forward-circle" size={20} color="#000" />
+                  <Text style={styles.buttonText}>LOG IN &amp; OPEN DASHBOARD</Text>
+                </>
               )}
             </Pressable>
 
+            {/* Quick-fill demo credentials — one tap lands you inside the
+                app without typing anything. Speeds up first-time review
+                and helps if the user can't spot the primary button. */}
+            <Pressable
+              onPress={() => {
+                setUsername("kishan");
+                setPassword("Kishan@Boss2026");
+                setError(null);
+                // Auto-submit right after state settles.
+                setTimeout(() => onSubmit(), 50);
+              }}
+              style={styles.quickBtn}
+              testID="signin-quick-demo"
+              accessibilityLabel="Login as Kishan Sir with demo credentials"
+            >
+              <Ionicons name="flash" size={14} color={colors.lime} />
+              <Text style={styles.quickBtnText}>Quick login as Kishan Sir (demo)</Text>
+            </Pressable>
+
             <Text style={styles.hint}>
-              Ask an Admin to create your account. Default admin: kishan.
+              New account? Ask an Admin to create one. Registration is
+              Admin-controlled for audit compliance.
             </Text>
           </GlassCard>
 
@@ -275,20 +319,67 @@ const styles = StyleSheet.create({
   button: {
     marginTop: spacing.lg,
     backgroundColor: colors.lime,
-    paddingVertical: 15,
+    paddingVertical: 17,
     borderRadius: radii.pill,
     alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
     shadowColor: colors.lime,
-    shadowOpacity: 0.6,
-    shadowRadius: 20,
+    shadowOpacity: 0.75,
+    shadowRadius: 24,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
+    elevation: 10,
+    borderWidth: 2,
+    borderColor: "rgba(198,255,0,0.35)",
   },
   buttonText: {
     color: "#000",
-    fontWeight: "800",
+    fontWeight: "900",
     fontSize: 15,
-    letterSpacing: 0.3,
+    letterSpacing: 0.6,
+    fontFamily: font.display,
+  },
+  buttonTop: {
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.lime,
+    paddingVertical: 14,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    shadowColor: colors.lime,
+    shadowOpacity: 0.55,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  buttonTopText: {
+    color: "#000",
+    fontWeight: "900",
+    fontSize: 16,
+    letterSpacing: 1.5,
+    fontFamily: font.display,
+  },
+  quickBtn: {
+    marginTop: spacing.md,
+    paddingVertical: 10,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(198,255,0,0.08)",
+  },
+  quickBtnText: {
+    color: colors.lime,
+    fontWeight: "700",
+    fontSize: 12,
+    letterSpacing: 0.4,
     fontFamily: font.display,
   },
   hint: {
