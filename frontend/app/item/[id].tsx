@@ -24,6 +24,7 @@ import { useApi } from "@/src/api/hooks";
 import type { Item, Party } from "@/src/api/types";
 import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
+import { stripExifToBase64Async } from "@/src/utils/exif";
 import { fmtCurrency } from "@/src/utils/format";
 
 // Full editable Item profile — used both for creating new items (id="new")
@@ -103,18 +104,25 @@ export default function ItemDetailScreen() {
     }
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.6,
-      base64: true,
+      quality: 0.9,
+      base64: false,
       allowsEditing: true,
       aspect: [1, 1],
     });
     if (res.canceled || !res.assets?.[0]) return;
     const asset = res.assets[0];
-    // Prefer data-uri so the photo persists across devices without a CDN.
-    if (asset.base64) {
-      const mime = asset.mimeType || "image/jpeg";
-      setPhotoUri(`data:${mime};base64,${asset.base64}`);
-    } else {
+    // Route through the EXIF stripper before persisting — this removes
+    // GPS coords, camera identifiers, timestamps, and everything else the
+    // OS embedded on capture. Also resizes huge photos so we don't bloat
+    // the DB with 12MP raws when a thumbnail will do.
+    try {
+      const cleaned = await stripExifToBase64Async(asset.uri);
+      setPhotoUri(cleaned);
+    } catch (e) {
+      // Fall back to the original if the manipulator fails (rare on
+      // supported formats); worst case we skip stripping but never lose
+      // the photo the operator picked.
+      console.warn("EXIF strip failed, using original:", (e as Error).message);
       setPhotoUri(asset.uri);
     }
   };

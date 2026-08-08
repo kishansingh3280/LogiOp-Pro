@@ -98,11 +98,45 @@ async function rawRequest<T>(method: Method, path: string, body?: unknown): Prom
   }
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+    // Tag the error so callers can distinguish 404 (record gone) from
+    // other failures — e.g. useApi can invalidate its cache when a 404
+    // comes back so the "stale cached record" trap goes away.
+    const err = new Error(`${res.status} ${res.statusText}: ${text}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) return (await res.json()) as T;
   return (await res.text()) as unknown as T;
+}
+
+async function purgeCache(path: string): Promise<void> {
+  try {
+    await storage.removeItem(CACHE_PREFIX + path);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Invalidate the list-cache that owns a collection route so the next GET
+ * always refreshes from the server. Called from apiMutate after every
+ * successful POST/PUT/DELETE so the invoices tab (etc.) never shows a
+ * ghost of a deleted row.
+ */
+async function invalidateCollection(path: string): Promise<void> {
+  // Match: /api/invoices/{id} → /api/invoices; /api/bullion/transactions/{id}
+  // → /api/bullion/transactions. Query strings and trailing slashes stripped.
+  const base = path.split("?")[0].replace(/\/+$/, "");
+  const parts = base.split("/");
+  // Drop trailing id-like segment (last segment that isn't the collection root)
+  if (parts.length > 3) {
+    const withoutId = parts.slice(0, -1).join("/");
+    await purgeCache(withoutId);
+    await purgeCache(base); // also clear the item entry itself
+  } else {
+    await purgeCache(base);
+  }
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
@@ -113,6 +147,13 @@ export async function apiGet<T>(path: string): Promise<T> {
       await writeCache(path, data);
       return data;
     } catch (e) {
+      // Don't hide 404s behind cached data — that's exactly the "Invoice
+      // not found" symptom the operator hit after a data reset. Purge the
+      // stale entry and rethrow so the UI can surface a clear message.
+      if ((e as { status?: number }).status === 404) {
+        await purgeCache(path);
+        throw e;
+      }
       const cached = await readCache<T>(path);
       if (cached !== null) return cached;
       throw e;
@@ -127,7 +168,12 @@ export async function apiMutate<T>(method: Method, path: string, body?: unknown)
   const online = await isOnline();
   if (online) {
     try {
-      return await rawRequest<T>(method, path, body);
+      const res = await rawRequest<T>(method, path, body);
+      // Wipe the matching list cache so the very next GET reflects the
+      // mutation (create/update/delete). Fire-and-forget — cache purge
+      // doesn't need to block the caller.
+      invalidateCollection(path).catch(() => undefined);
+      return res;
     } catch (e) {
       // Non-network error — bubble up (validation etc.)
       throw e;

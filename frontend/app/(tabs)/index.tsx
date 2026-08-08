@@ -10,7 +10,7 @@ import { useApi } from "@/src/api/hooks";
 import type { DashboardStats, LedgerEntry, LedgerSummary, Shipment, WarehouseSummary } from "@/src/api/types";
 import { computeAssetTotals } from "@/src/bullion/AssetMap";
 import { useTrips, useTxns, usedWeightKgFor } from "@/src/bullion/store";
-import type { BullionTxn } from "@/src/bullion/types";
+import type { BullionTxn, CarrierTrip } from "@/src/bullion/types";
 import { tripCapacityKg } from "@/src/bullion/types";
 import { FYPicker } from "@/src/components/fy-picker";
 import { Card } from "@/src/components/ui";
@@ -153,10 +153,26 @@ export default function DashboardScreen() {
           </ScrollView>
         )}
 
-        {/* Assets on hand — bullion pocket-book that shows how much
-            currency + gold is physically sitting in India, Bangkok, and
-            in-transit right now. Tapping opens the Asset Map. */}
+        {/* Bullion module — reordered per operator's request:
+              1. Active Carrier Trips (upcoming/in-flight bullion trips)
+              2. Bullion Vault Snapshot (assets on hand by location) */}
+        <ActiveCarrierTripsCard
+          trips={trips.data}
+          txns={batches.data}
+          onPress={() => router.push("/bullion" as never)}
+        />
         <AssetsOnHandCard txns={batches.data} onPress={() => router.push("/bullion" as never)} />
+
+        {/* Reports console shortcut — quick access to PDF exports. */}
+        <TouchableOpacity
+          style={styles.reportsShortcut}
+          onPress={() => router.push("/reports" as never)}
+          testID="reports-shortcut"
+        >
+          <Ionicons name="document-text-outline" size={16} color={colors.lime} />
+          <Text style={styles.reportsShortcutText}>Open Reports Console</Text>
+          <Ionicons name="chevron-forward" size={14} color={colors.textDim} />
+        </TouchableOpacity>
 
         {/* Warehouse card */}
         <TouchableOpacity
@@ -468,6 +484,68 @@ function countBy<T>(arr: T[], fn: (x: T) => boolean) {
  * currencies broken down by physical location so the operator can
  * eyeball where the money is without diving into the Bullion tab.
  */
+
+/**
+ * Active Carrier Trips widget — top-most bullion-related card on the
+ * dashboard. Shows planned/in-transit trips first with capacity vs.
+ * usage bar so the operator sees at a glance where free slots are.
+ */
+function ActiveCarrierTripsCard({
+  trips, txns, onPress,
+}: { trips: CarrierTrip[]; txns: BullionTxn[]; onPress: () => void }) {
+  const active = trips
+    .filter((t) => t.status === "planned" || t.status === "in_transit")
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  const usedByTrip: Record<string, number> = {};
+  txns.forEach((t) => {
+    if (!t.trip_id) return;
+    usedByTrip[t.trip_id] = (usedByTrip[t.trip_id] || 0) + (Number(t.weight_kg) || 0);
+  });
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={onPress} testID="active-trips-card">
+      <Card>
+        <View style={styles.aohHead}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.aohEyebrow}>Bullion module</Text>
+            <Text style={styles.aohTitle}>Active carrier trips</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
+        </View>
+        {active.length === 0 ? (
+          <Text style={styles.aohEmpty}>No trips scheduled. Add one from the Bullion tab.</Text>
+        ) : (
+          <View style={{ marginTop: spacing.md, gap: 12 }}>
+            {active.slice(0, 4).map((t) => {
+              const capacity = tripCapacityKg(t) || 0;
+              const used = usedByTrip[t.id] || 0;
+              const pct = capacity > 0 ? Math.min(100, (used / capacity) * 100) : 0;
+              return (
+                <View key={t.id}>
+                  <View style={styles.tripHead}>
+                    <Text style={styles.tripName} numberOfLines={1}>
+                      {t.carrier_name || "TBD"} · {t.route === "IN_TO_TH" ? "IN → BKK" : "BKK → IN"}
+                    </Text>
+                    <Text style={styles.tripDate}>{shortDate(t.date)}</Text>
+                  </View>
+                  <View style={styles.tripBar}>
+                    <View style={[styles.tripFill, { width: `${pct}%` }]} />
+                  </View>
+                  <Text style={styles.tripMeta}>
+                    {used.toFixed(1)} / {capacity.toFixed(0)} kg · {(capacity - used).toFixed(1)} kg free · {t.status}
+                  </Text>
+                </View>
+              );
+            })}
+            {active.length > 4 ? (
+              <Text style={styles.tripMore}>+{active.length - 4} more trips</Text>
+            ) : null}
+          </View>
+        )}
+      </Card>
+    </TouchableOpacity>
+  );
+}
+
 function AssetsOnHandCard({ txns, onPress }: { txns: BullionTxn[]; onPress: () => void }) {
   const totals = computeAssetTotals(txns);
   const totalGoldBaht =
@@ -787,4 +865,42 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginTop: 2,
   },
+  // Active Carrier Trips widget
+  tripHead: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  tripName: { color: colors.text, fontSize: 13, fontWeight: "700", flex: 1 },
+  tripDate: { color: colors.textDim, fontSize: 11 },
+  tripBar: {
+    height: 4,
+    backgroundColor: colors.chipBg,
+    borderRadius: 2,
+    overflow: "hidden",
+    marginTop: 4,
+  },
+  tripFill: { height: "100%", backgroundColor: colors.lime, borderRadius: 2 },
+  tripMeta: {
+    color: colors.textMuted,
+    fontSize: 10,
+    marginTop: 4,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  tripMore: { color: colors.textDim, fontSize: 11, fontStyle: "italic" },
+  // Reports console shortcut card
+  reportsShortcut: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  reportsShortcutText: { color: colors.lime, fontSize: 13, fontWeight: "800", flex: 1 },
 });

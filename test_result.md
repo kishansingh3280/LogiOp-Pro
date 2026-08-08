@@ -613,3 +613,222 @@ agent_communication:
       Feel free to write additional pytest smoke tests but the primary
       goal is end-to-end verification, not exhaustive coverage.
 
+
+# --- Final Module Build (iteration 19) -----------------------------------
+# Bug reported by operator earlier: "Invoice not found" after data reset.
+# Fixes applied:
+#   * api/client.ts — apiGet now purges the stale local cache when a 404
+#     comes back so a wiped record no longer resurrects on the client.
+#     apiMutate additionally invalidates the collection cache after every
+#     POST/PUT/DELETE. Errors thrown by rawRequest carry a `status` field.
+#   * api/hooks.ts — useApi drops data on path change AND on 404 so the
+#     detail screen cannot render a ghost row. Exposes the HTTP status.
+#   * app/invoice/[id].tsx — the plain "Invoice not found" text is now a
+#     branded error card with a Retry button, distinct 404 vs. network
+#     copy, and a "Back to list" secondary action.
+#
+# Feature build:
+#   1. Reports console at /reports:
+#      - Three tabs: Invoices · Packing · Bullion (FY-filtered).
+#      - Each row exports a branded True-Black PDF using expo-print +
+#        expo-sharing (bulk bullion history + per-record invoice/packing).
+#      - Bullion history uses the same PDF shell.
+#   2. Bullion dashboard reorder:
+#      - New ActiveCarrierTripsCard renders first (upcoming/in-transit,
+#        capacity bar + usage), followed by AssetsOnHandCard "Vault snapshot".
+#      - Reports Console shortcut card sits right below both.
+#   3. EXIF stripping:
+#      - New src/utils/exif.ts wraps expo-image-manipulator to re-encode
+#        JPEGs (dropping GPS/timestamp/device tags) + downsize to <= 1600px.
+#      - Item photo picker (app/item/[id].tsx) routes every pick through
+#        stripExifToBase64Async before persisting the data URI.
+#   4. FY integration:
+#      - Reports console reads useFY() and calls fyBounds() to filter
+#        every dataset before render + PDF export.
+
+frontend:
+  - task: "Invoice-not-found bug — cache invalidation + retry UX"
+    implemented: true
+    working: true
+    file: "frontend/src/api/client.ts, frontend/src/api/hooks.ts, frontend/app/invoice/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Iteration 19 PASS. 5/5 back-to-back invoice saves via /invoice/new
+          all landed on /invoice/{uuid} with the newly-created number in the
+          header — ZERO "Invoice not found" occurrences (each save round-trip
+          <2.1s). Branded 404 card verified: title 'Invoice not found' +
+          testID invoice-error-retry + testID invoice-error-back-to-list all
+          render. Stale-cache purge confirmed: deleted invoice row disappears
+          from the invoices list on next visit. Backend 10/10 pytest PASS.
+      - working: "NA"
+        agent: "main"
+
+  - task: "Reports Console at /reports"
+    implemented: true
+    working: true
+    file: "frontend/app/reports.tsx, frontend/src/utils/pdf.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Iteration 19 PASS. /reports loaded via reports-shortcut CTA.
+          Three tabs present with FY 26-27 counts: Invoices·20, Packing·35,
+          Bullion·43. Rows render with testIDs export-invoice-{id} (20),
+          export-packing-{id} (35), and the full-width export-bullion-history
+          button on the Bullion tab. FY picker present. No console errors
+          on Reports screen itself.
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Please verify by navigating to /reports:
+          - Three tabs (Invoices · Packing · Bullion) with counts driven
+            by the currently-selected FY.
+          - Switching FY on the picker at the top updates all three
+            counts and the listed rows.
+          - Tapping "Download" (cloud-arrow icon) on any invoice/packing
+            row runs the PDF export flow without console errors. Web
+            preview opens the PDF in a new tab; native devices open the
+            share sheet.
+          - Bullion tab shows a full-width "Download bullion history"
+            button + list preview of first 30 txns.
+
+  - task: "Bullion dashboard reorder + Reports shortcut"
+    implemented: true
+    working: true
+    file: "frontend/app/(tabs)/index.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Iteration 19 PASS. Geometry verified on 390x844 mobile viewport:
+          active-trips-card (y=253) is above assets-on-hand-card (y=572)
+          which is above reports-shortcut (y=951). testIDs active-trips-card,
+          assets-on-hand-card, reports-shortcut all present. Reports shortcut
+          navigates to /reports on tap.
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Verify on the main dashboard tab (scroll below the stats
+          carousel):
+          - The FIRST bullion widget is 'Active carrier trips' with an
+            eyebrow "Bullion module", showing each trip's carrier · route
+            · date + a lime progress bar + used / capacity meta line.
+          - The SECOND card is 'Vault snapshot' (AssetsOnHandCard).
+          - A 'Open Reports Console' shortcut appears right below,
+            navigating to /reports on tap.
+
+  - task: "EXIF stripping on item photo upload"
+    implemented: true
+    working: true
+    file: "frontend/src/utils/exif.ts, frontend/app/item/[id].tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Iteration 19 PASS (static check). /app/frontend/src/utils/exif.ts
+          exists and exports stripExifAsync + stripExifToBase64Async.
+          app/item/[id].tsx imports stripExifToBase64Async from
+          @/src/utils/exif and awaits it in the pickPhoto handler
+          (line 119). ImagePicker.launchImageLibraryAsync is called with
+          base64:false (line 108) — no longer requests raw base64 directly.
+          Full on-device round-trip verification would require a native
+          build; smoke-check complete.
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Cannot fully verify without a real camera pick on-device — but
+          please at least confirm:
+          - The item detail's photo picker no longer requests raw base64
+            from ImagePicker (base64:false now).
+          - The stripExifToBase64Async helper is imported and awaited
+            before setPhotoUri.
+          - Manipulator errors fall back to the unstripped URI (verify
+            the try/catch is in place; a smoke Jest test can hit a
+            malformed URI mock).
+
+metadata:
+  created_by: "main_agent"
+  version: "5.0"
+  test_sequence: 19
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Invoice-not-found bug — cache invalidation + retry UX"
+    - "Reports Console at /reports"
+    - "Bullion dashboard reorder + Reports shortcut"
+    - "EXIF stripping on item photo upload"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Ship of the final module build + fix for the operator-reported
+      'Invoice not found' bug. Please:
+        (1) Reproduce the earlier "Invoice not found" symptom by first
+            creating an invoice via /invoice/new (fill number + client +
+            one description + rate → Save), verify it navigates to
+            /invoice/{id} with success toast, then repeat 5x back-to-back.
+            All 5 must open. This was the operator's explicit ask.
+        (2) Force the error state: pick any invoice id, DELETE it via
+            `curl -X DELETE $BACKEND/api/invoices/{id}`, then navigate to
+            /invoice/{id} in the UI. Confirm the branded error card with
+            Retry + Back-to-list is shown (not the old plain text).
+        (3) Exercise Reports Console: switch FY, download an invoice PDF,
+            download a packing PDF, download the bullion history PDF.
+            On the web preview a new tab opens with the rendered PDF.
+        (4) Dashboard: confirm the two bullion widgets appear in the
+            right order (Active trips → Vault snapshot) and the reports
+            shortcut is right below.
+        (5) EXIF: static-check the utility works (Jest or direct import
+            check). Full on-device verification requires a build.
+      Preview URL: https://native-logistics-hub.preview.emergentagent.com/
+
+
+  - agent: "testing"
+    message: |
+      Iteration 19 verification COMPLETE — ALL 4 tasks green.
+
+      BUG FIX (Invoice not found) — HARD-PASS:
+        - 5/5 back-to-back invoice creates via /invoice/new landed on
+          /invoice/{uuid} with correct number in header, ZERO not-found
+          errors. Each save round-trip <2.1s.
+        - Branded 404 card renders (title 'Invoice not found', testID
+          invoice-error-retry, testID invoice-error-back-to-list).
+        - Stale-cache purge works: DELETE via API + reload list, deleted
+          row is GONE.
+        - Backend pytest (test_iter19_invoice_reports.py): 10/10 PASS.
+
+      REPORTS CONSOLE — PASS:
+        - /reports reachable via reports-shortcut CTA on dashboard.
+        - Three tabs: Invoices 20, Packing 35, Bullion 43 (FY 26-27).
+        - testIDs export-invoice-{id}, export-packing-{id},
+          export-bullion-history all present and clickable.
+
+      DASHBOARD REORDER — PASS:
+        - active-trips-card (y=253) then assets-on-hand-card (y=572)
+          then reports-shortcut (y=951) in 390x844 viewport.
+
+      EXIF STRIPPING — PASS (static):
+        - src/utils/exif.ts exports both helpers.
+        - item/[id].tsx uses stripExifToBase64Async, ImagePicker base64:false.
+
+      All 5 test invoices cleaned up; /api/invoices back to 20 (FY 26-27
+      demo state preserved). Report: /app/test_reports/iteration_19.json,
+      pytest XML: /app/test_reports/pytest/iter19_results.xml.

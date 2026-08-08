@@ -32,14 +32,62 @@ export default function InvoiceDetail() {
   if (inv.loading && !inv.data) {
     return (
       <SafeAreaView edges={["top"]} style={styles.safe}>
+        <View style={styles.headBar}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+            <Ionicons name="chevron-back" size={22} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.headTitle}>Invoice</Text>
+          <View style={{ width: 32 }} />
+        </View>
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.lime} />
       </SafeAreaView>
     );
   }
   if (!inv.data) {
+    // Distinguish "record deleted / never existed" (404) from a general
+    // network error so the operator knows whether to retry or move on.
+    const is404 = inv.status === 404;
     return (
       <SafeAreaView edges={["top"]} style={styles.safe}>
-        <Text style={styles.dim}>Invoice not found</Text>
+        <View style={styles.headBar}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+            <Ionicons name="chevron-back" size={22} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.headTitle}>Invoice</Text>
+          <View style={{ width: 32 }} />
+        </View>
+        <View style={styles.errorBox}>
+          <Ionicons
+            name={is404 ? "alert-circle-outline" : "cloud-offline-outline"}
+            size={40}
+            color={is404 ? colors.warn : colors.danger}
+          />
+          <Text style={styles.errorTitle}>
+            {is404 ? "Invoice not found" : "Couldn't load invoice"}
+          </Text>
+          <Text style={styles.errorSub}>
+            {is404
+              ? `The record with id ${(id || "").slice(0, 8)}… no longer exists on the server. It may have been deleted or replaced by a data reset.`
+              : (inv.error || "Something went wrong reaching the server.")}
+          </Text>
+          <View style={styles.errorActions}>
+            <TouchableOpacity
+              style={styles.errorRetryBtn}
+              onPress={() => inv.refresh()}
+              testID="invoice-error-retry"
+            >
+              <Ionicons name="refresh-outline" size={14} color={colors.bg} />
+              <Text style={styles.errorRetryText}>Retry</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.errorSecondaryBtn}
+              onPress={() => router.replace("/(tabs)/invoices" as never)}
+              testID="invoice-error-back-to-list"
+            >
+              <Text style={styles.errorSecondaryText}>Back to list</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </SafeAreaView>
     );
   }
@@ -433,4 +481,37 @@ const styles = StyleSheet.create({
     backgroundColor: colors.lime,
   },
   shipOpenText: { color: colors.bg, fontSize: 12, fontWeight: "800" },
+  // Error / not-found state
+  errorBox: {
+    marginTop: spacing.xl,
+    marginHorizontal: spacing.lg,
+    padding: spacing.lg,
+    borderRadius: radii.lg,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    gap: 10,
+  },
+  errorTitle: { color: colors.text, fontSize: 17, fontWeight: "800", marginTop: 6 },
+  errorSub: { color: colors.textMuted, fontSize: 13, textAlign: "center", lineHeight: 18 },
+  errorActions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  errorRetryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    backgroundColor: colors.lime,
+    borderRadius: 999,
+  },
+  errorRetryText: { color: colors.bg, fontSize: 13, fontWeight: "800" },
+  errorSecondaryBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+  },
+  errorSecondaryText: { color: colors.text, fontSize: 13, fontWeight: "700" },
 });

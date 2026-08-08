@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 19 verification PASS on ALL four tasks. (1) Bug fix — 5/5 back-to-back invoice saves via /invoice/new landed on /invoice/{uuid} with the newly-created number in the header, ZERO 'Invoice not found' occurrences, each save round-trip <2.1s. Branded 404 error card renders with title + testID retry + testID back-to-list; stale-cache purge confirmed (deleted invoice row disappears from the invoices list on next visit). (2) Reports Console tabs render with FY-driven counts (Invoices·20, Packing·35, Bullion·43); export-invoice, export-packing, and export-bullion-history testIDs all present. (3) Dashboard reorder verified geometrically: active-trips-card (y=253) above assets-on-hand-card (y=572) above reports-shortcut (y=951). (4) EXIF stripping helpers exist in /app/frontend/src/utils/exif.ts (stripExifAsync + stripExifToBase64Async) and item/[id].tsx imports and awaits stripExifToBase64Async with base64:false on ImagePicker. Backend 10/10 pytest PASS.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter19_invoice_reports.py",
+    "/app/test_reports/pytest/iter19_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "invoice/new uses base64:false + stripExifToBase64Async only in item/[id].tsx (not invoice/new — invoice form doesn't accept photos, so this is not a gap).",
+    "Reports console runPackingListPdf constructs the /bags URL from process.env.EXPO_PUBLIC_BACKEND_URL directly instead of going through apiGet — that's fine for one-shot render but bypasses the offline cache layer. Consider apiGet in a follow-up so the packing PDF works offline too."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter19_invoice_reports.py (new)"
+  ],
+  "success_rate": { "backend": "100% (10/10)", "frontend": "100% (all 4 tasks green)" },
+  "seed_data_creation": "Created 5 INV-VERIFY-* invoices during the 5-instance UI test AND 6 more (5 via UI + 1 via delete-then-get pytest) — ALL cleaned up. Final /api/invoices count is 20 (FY 26-27 demo state preserved). No shipments, bullion txns, or parties were touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The 'Invoice not found' regression is fixed. apiGet purges the local cache on 404 and apiMutate invalidates the collection cache after POST/PUT/DELETE; useApi drops data on path change AND on 404 status. The branded error card lives in app/invoice/[id].tsx behind !inv.data with testIDs invoice-error-retry + invoice-error-back-to-list. Reports Console is at /reports and needs three tabs (tab-invoices/tab-packing/tab-bullion) plus per-row export buttons named export-invoice-{id}/export-packing-{id}/export-bullion-history — all confirmed. Dashboard reorder is enforced in app/(tabs)/index.tsx lines 159–175 (ActiveCarrierTripsCard, AssetsOnHandCard, then reports-shortcut).",
+  "rca_of_issue": "Original 'Invoice not found' bug root cause: apiGet returned stale AsyncStorage cache when the backend returned 404 (after a data reset), so useApi kept rendering a ghost record. Fix applied by main agent: apiGet now purges the cache entry AND rethrows on 404 instead of falling back to cache; apiMutate additionally purges the collection cache after every mutation so a freshly-created row shows up (and a freshly-deleted row disappears) on the very next GET. useApi drops data on 404 so the detail screen shifts into the branded error state. All three code paths were exercised: 5 sequential creates + immediate detail navigation (0 not-found), 1 delete + detail navigation (branded card), 1 delete + list refresh (row gone). Round-trip latency <2.1s on every save; PDF renderer references not exercised at the print step (web preview would open a new tab; unable to inspect PDF binary from Playwright without downloading, but sharePdf codepath and export testIDs are wired up)."
+}
