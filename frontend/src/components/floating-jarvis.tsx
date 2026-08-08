@@ -41,6 +41,7 @@ import {
   Animated,
   Dimensions,
   Easing,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -84,6 +85,7 @@ export function FloatingJarvis() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
+  const [liveMode, setLiveMode] = useState(false);
 
   // Bubble breath pulse.
   const pulse = useRef(new Animated.Value(0)).current;
@@ -184,9 +186,24 @@ export function FloatingJarvis() {
             ]}
             pointerEvents="auto"
           >
-            <JarvisPopup onClose={() => setExpanded(false)} />
+            <JarvisPopup
+              onClose={() => setExpanded(false)}
+              onGoLive={() => {
+                setExpanded(false);
+                setLiveMode(true);
+              }}
+            />
           </Animated.View>
         </View>
+      ) : null}
+
+      {/* Hands-free Live Mode — fullscreen Gemini-Live-style loop. */}
+      {liveMode ? (
+        <LiveMode
+          onClose={() => {
+            setLiveMode(false);
+          }}
+        />
       ) : null}
 
       {/* Bubble — always visible when auth'd + not on assistant tab. */}
@@ -242,7 +259,7 @@ export function FloatingJarvis() {
 // JarvisPopup — the actual chat surface rendered inside the animated shell
 // ---------------------------------------------------------------------------
 
-function JarvisPopup({ onClose }: { onClose: () => void }) {
+function JarvisPopup({ onClose, onGoLive }: { onClose: () => void; onGoLive: () => void }) {
   const { user } = useAuth();
   const { describeForAI } = useScreenContext();
   const ghost = useGhostUser();
@@ -387,7 +404,7 @@ function JarvisPopup({ onClose }: { onClose: () => void }) {
       } catch (e) {
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", text: `त्रुटि: ${(e as Error).message}`, at: Date.now() },
+          { role: "assistant", text: `Error: ${(e as Error).message}`, at: Date.now() },
         ]);
         setStreaming("");
         setMode("idle");
@@ -397,38 +414,9 @@ function JarvisPopup({ onClose }: { onClose: () => void }) {
   );
 
   const handleMicPress = useCallback(async () => {
-    if (mic.listening) {
-      const result = await mic.stop();
-      setMode("thinking");
-      if (!result) {
-        setMode("idle");
-        return;
-      }
-      try {
-        const form = new FormData();
-        if ("blob" in result && result.blob) {
-          const filename = (result.mimeType || "audio/webm").includes("mp4")
-            ? "voice.mp4"
-            : "voice.webm";
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          form.append("audio", result.blob as any, filename);
-        } else if ("uri" in result && result.uri) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          form.append("audio", { uri: result.uri, name: "voice.m4a", type: "audio/m4a" } as any);
-        }
-        const res = await fetch(`${API_BASE}/api/assistant/stt`, { method: "POST", body: form });
-        if (!res.ok) throw new Error(`STT ${res.status}`);
-        const data = (await res.json()) as { text?: string };
-        const text = (data.text || "").trim();
-        if (text) await sendMessage(text);
-        else setMode("idle");
-      } catch {
-        setMode("idle");
-      }
-    } else {
-      await mic.start();
-    }
-  }, [mic, sendMessage]);
+    // No-op — kept for backward compat. Mic in the popup now opens Live Mode.
+  }, []);
+  void handleMicPress; // silence unused warning
 
   const modeLabel =
     mode === "listening"
@@ -487,8 +475,8 @@ function JarvisPopup({ onClose }: { onClose: () => void }) {
       >
         {messages.length === 0 && !streaming ? (
           <Text style={styles.transcriptPlaceholder}>
-            बोलिए, सर — Party, item, shipment, या invoice बनाना हो, या कोई
-            update करना हो, बता दीजिए।
+            Boliye Sir — party, item, shipment ya invoice banana ho, ya
+            koi update, bata dijiye.
           </Text>
         ) : null}
         {messages.map((m, i) => (
@@ -537,19 +525,15 @@ function JarvisPopup({ onClose }: { onClose: () => void }) {
           autoFocus
         />
         <Pressable
-          onPress={handleMicPress}
+          onPress={onGoLive}
           style={({ pressed }) => [
             styles.composerMic,
-            mic.listening && styles.composerMicActive,
             pressed && { transform: [{ scale: 0.94 }] },
           ]}
           testID="jarvis-mic"
+          accessibilityLabel="Enter hands-free Live mode"
         >
-          <Ionicons
-            name={mic.listening ? "stop" : "mic"}
-            size={16}
-            color={mic.listening ? "#000" : colors.accent}
-          />
+          <Ionicons name="mic" size={16} color={colors.accent} />
         </Pressable>
         <Pressable
           onPress={() => {
@@ -572,6 +556,278 @@ function JarvisPopup({ onClose }: { onClose: () => void }) {
         </Pressable>
       </View>
     </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// LiveMode — fullscreen hands-free "Gemini-Live"-style conversation loop
+// ---------------------------------------------------------------------------
+//
+// Auto-listens on mount. When the mic level goes above a speech threshold
+// and then stays below a silence threshold for ~1.5s, we treat it as
+// "user finished a phrase", run STT → chat → TTS, then re-open the mic
+// for the next turn. Loop continues until the operator taps End.
+
+function LiveMode({ onClose }: { onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const { describeForAI } = useScreenContext();
+  const ghost = useGhostUser();
+  const mic = useMicLevel();
+
+  const [phase, setPhase] = useState<"listening" | "processing" | "thinking" | "speaking" | "starting">("starting");
+  const [transcript, setTranscript] = useState("");         // rolling last STT
+  const [reply, setReply] = useState("");                    // rolling last assistant reply
+  const messagesRef = useRef<Msg[]>([]);
+  const ttsHandleRef = useRef<StreamingTtsHandle | null>(null);
+  const spokeRef = useRef(false);                            // has user vocalised at least once this cycle?
+  const silenceSinceRef = useRef<number | null>(null);       // ms timestamp when silence started
+  const cancelledRef = useRef(false);
+  const busyRef = useRef(false);
+
+  // Big-orb amplitude
+  const amplitude = useMemo(() => {
+    if (phase === "listening") return mic.level;
+    if (phase === "speaking") return 0.55;
+    if (phase === "thinking" || phase === "processing") return 0.15;
+    return 0;
+  }, [phase, mic.level]);
+
+  const orbMode: LiveOrbMode =
+    phase === "listening" ? "listening" : phase === "speaking" ? "speaking" : phase === "thinking" ? "thinking" : "idle";
+
+  // ---------- helpers ----------
+  const beginListening = useCallback(async () => {
+    if (cancelledRef.current) return;
+    setPhase("listening");
+    spokeRef.current = false;
+    silenceSinceRef.current = null;
+    setTranscript("");
+    try {
+      await mic.start();
+    } catch {
+      setPhase("starting");
+    }
+  }, [mic]);
+
+  const finishTurn = useCallback(async () => {
+    if (busyRef.current || cancelledRef.current) return;
+    busyRef.current = true;
+    try {
+      setPhase("processing");
+      const result = await mic.stop();
+      if (cancelledRef.current) return;
+      if (!result) {
+        // Nothing was captured; loop back to listening after a brief pause.
+        setTimeout(() => void beginListening(), 400);
+        return;
+      }
+      // Upload for STT.
+      const form = new FormData();
+      if ("blob" in result && result.blob) {
+        const filename = (result.mimeType || "audio/webm").includes("mp4") ? "voice.mp4" : "voice.webm";
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        form.append("audio", result.blob as any, filename);
+      } else if ("uri" in result && result.uri) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        form.append("audio", { uri: result.uri, name: "voice.m4a", type: "audio/m4a" } as any);
+      }
+      const sttRes = await fetch(`${API_BASE}/api/assistant/stt`, { method: "POST", body: form });
+      if (!sttRes.ok) throw new Error(`STT ${sttRes.status}`);
+      const sttJson = (await sttRes.json()) as { text?: string };
+      const heard = (sttJson.text || "").trim();
+      if (!heard) {
+        if (!cancelledRef.current) setTimeout(() => void beginListening(), 400);
+        return;
+      }
+      setTranscript(heard);
+      messagesRef.current = [...messagesRef.current, { role: "user", text: heard, at: Date.now() }];
+
+      // Now stream chat.
+      setPhase("thinking");
+      const token = getAuthTokenSync();
+      const chatRes = await fetch(`${API_BASE}/api/assistant/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Entry-Source": "ai",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          session_id: `live-${Date.now()}`,
+          message: heard,
+          history: messagesRef.current,
+          screen_context: describeForAI(),
+          honorific: user?.honorific || "Sir",
+          display_name: user?.display_name || "Kishan",
+        }),
+      });
+      if (!chatRes.ok || !chatRes.body) throw new Error(`chat ${chatRes.status}`);
+      const reader = chatRes.body.getReader();
+      const decoder = new TextDecoder();
+      let full = "";
+      let carry = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = carry + decoder.decode(value, { stream: true });
+        const frames = chunk.split("\n\n");
+        carry = frames.pop() || "";
+        for (const frame of frames) {
+          const dataLines = frame
+            .split("\n")
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.slice(5).replace(/^ /, ""));
+          if (dataLines.length === 0) continue;
+          const payload = dataLines.join("\n");
+          if (payload === "[DONE]") continue;
+          full += payload;
+          setReply(full);
+        }
+      }
+      messagesRef.current = [...messagesRef.current, { role: "assistant", text: full, at: Date.now() }];
+      // Ghost dispatches happen on the background page — user hears the
+      // spoken confirmation while the ghost fills the form.
+      void ghost.parseAndRun(full).catch(() => undefined);
+
+      if (cancelledRef.current) return;
+
+      // Speak.
+      const clean = full.replace(/```json[\s\S]*?```/g, "").trim();
+      if (clean) {
+        setPhase("speaking");
+        ttsHandleRef.current?.stop();
+        const handle = speakStreaming({
+          text: clean,
+          voice: "shimmer",
+          authToken: token,
+          onError: () => undefined,
+        });
+        ttsHandleRef.current = handle;
+        await handle.promise;
+        ttsHandleRef.current = null;
+      }
+      if (!cancelledRef.current) {
+        // Auto-listen again.
+        await beginListening();
+      }
+    } catch {
+      if (!cancelledRef.current) {
+        setTimeout(() => void beginListening(), 800);
+      }
+    } finally {
+      busyRef.current = false;
+    }
+  }, [beginListening, describeForAI, ghost, mic, user]);
+
+  // Kick off the first listen on mount.
+  useEffect(() => {
+    void beginListening();
+    return () => {
+      cancelledRef.current = true;
+      ttsHandleRef.current?.stop();
+      ttsHandleRef.current = null;
+      if (mic.listening) void mic.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // VAD — poll the mic level and detect end of utterance.
+  useEffect(() => {
+    if (phase !== "listening") return;
+    const now = Date.now();
+    const SPEECH_THRESHOLD = 0.15;
+    const SILENCE_THRESHOLD = 0.08;
+    const SILENCE_HOLD_MS = 1400;
+    if (mic.level > SPEECH_THRESHOLD) {
+      spokeRef.current = true;
+      silenceSinceRef.current = null;
+      return;
+    }
+    if (spokeRef.current && mic.level < SILENCE_THRESHOLD) {
+      if (silenceSinceRef.current == null) {
+        silenceSinceRef.current = now;
+      } else if (now - silenceSinceRef.current >= SILENCE_HOLD_MS) {
+        // End of phrase — fire the pipeline.
+        silenceSinceRef.current = null;
+        void finishTurn();
+      }
+    }
+  }, [mic.level, phase, finishTurn]);
+
+  // Manual "send now" — tap the orb to finish speaking early.
+  const handleOrbTap = useCallback(() => {
+    if (phase === "listening" && spokeRef.current) void finishTurn();
+  }, [phase, finishTurn]);
+
+  const label =
+    phase === "starting" ? "Warming up…" :
+    phase === "listening" ? "Suno raha hoon…" :
+    phase === "processing" ? "Aapki baat samajh raha hoon…" :
+    phase === "thinking" ? "Soch raha hoon…" :
+    phase === "speaking" ? "Bol raha hoon…" : "";
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.liveWrap}>
+        <LinearGradient
+          colors={["#020202", "#050820", "#020202"]}
+          style={StyleSheet.absoluteFill}
+        />
+        {Platform.OS !== "web" ? (
+          <BlurView tint="dark" intensity={40} style={StyleSheet.absoluteFill} />
+        ) : (
+          <View
+            style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(2,2,2,0.55)" }]}
+            pointerEvents="none"
+          />
+        )}
+
+        {/* Close button */}
+        <Pressable
+          onPress={onClose}
+          style={[styles.liveClose, { top: insets.top + 12 }]}
+          testID="live-close"
+          accessibilityLabel="End Live mode"
+          hitSlop={12}
+        >
+          <Ionicons name="close" size={22} color={colors.text} />
+        </Pressable>
+
+        {/* Header */}
+        <View style={[styles.liveHeader, { top: insets.top + 14 }]}>
+          <View style={styles.liveHeaderDot} />
+          <Text style={styles.liveHeaderText}>
+            Live · {user ? `${user.display_name} ${user.honorific}` : "Kishan Sir"}
+          </Text>
+        </View>
+
+        {/* Orb — tap to end phrase early */}
+        <Pressable
+          onPress={handleOrbTap}
+          style={styles.liveOrbArea}
+          accessibilityLabel="Tap to end phrase"
+        >
+          <LiveOrb size={260} amplitude={amplitude} mode={orbMode} />
+        </Pressable>
+
+        {/* Status + last transcript / reply */}
+        <View style={[styles.liveStatus, { paddingBottom: Math.max(insets.bottom, 12) + 24 }]}>
+          <Text style={styles.liveLabel}>{label}</Text>
+          {transcript ? (
+            <Text style={styles.liveTranscript} numberOfLines={2}>
+              “{transcript}”
+            </Text>
+          ) : null}
+          {reply ? (
+            <Text style={styles.liveReply} numberOfLines={4}>
+              {reply.replace(/```json[\s\S]*?```/g, "").trim()}
+            </Text>
+          ) : null}
+          <Text style={styles.liveHint}>Tap orb to send · Tap × to end</Text>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -767,5 +1023,86 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.8,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 0 },
+  },
+
+  // ------------------- Live Mode -------------------
+  liveWrap: {
+    flex: 1,
+    backgroundColor: "#020202",
+  },
+  liveClose: {
+    position: "absolute",
+    right: 14,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 209, 255, 0.10)",
+    borderColor: colors.borderStrong,
+    borderWidth: StyleSheet.hairlineWidth,
+    zIndex: 20,
+  },
+  liveHeader: {
+    position: "absolute",
+    left: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    backgroundColor: "rgba(0, 209, 255, 0.08)",
+    borderColor: colors.borderStrong,
+    borderWidth: StyleSheet.hairlineWidth,
+    zIndex: 20,
+  },
+  liveHeaderDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  liveHeaderText: { color: colors.text, fontSize: 12, fontWeight: "800" },
+  liveOrbArea: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 40,
+  },
+  liveStatus: {
+    paddingHorizontal: spacing.xl,
+    alignItems: "center",
+    gap: 8,
+  },
+  liveLabel: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+  },
+  liveTranscript: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontStyle: "italic",
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  liveReply: {
+    color: colors.text,
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  liveHint: {
+    color: colors.textDim,
+    fontSize: 10,
+    marginTop: 12,
+    letterSpacing: 0.6,
   },
 });

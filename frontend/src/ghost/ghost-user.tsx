@@ -413,7 +413,7 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
           const role = roleMap[roleIn] || "customer";
           const payload: GhostPayload = {
             route: "/party/new",
-            headline: `Party बना रहा हूँ — ${a.name}`,
+            headline: `Party ban raha hoon — ${a.name}`,
             values: {
               name: a.name,
               role,
@@ -435,7 +435,7 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
           const payload: GhostPayload = {
             // Item detail route uses [id].tsx with id="new" to create.
             route: "/item/new",
-            headline: `Item बना रहा हूँ — ${a.name}`,
+            headline: `Item ban raha hoon — ${a.name}`,
             values: {
               name: a.name,
               ...(a.unit ? { unit: a.unit } : {}),
@@ -453,13 +453,28 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
         }
 
         case "create_shipment": {
+          // Resolve the bill-to party via the live parties list — the
+          // API rejects party_name and requires party_id. If no name was
+          // supplied, we still fire the visual-fill so the operator can
+          // pick the party manually.
+          let partyId: string | undefined;
+          // Allow the AI to pass an explicit party_name via a loose
+          // schema — TS types don't cover it but the JSON often does.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const partyName = (a as any).party_name as string | undefined;
+          if (partyName) {
+            partyId = await _resolvePartyIdByName(partyName);
+          }
+          // Direction / mode: uppercase-safe, snake-case-safe enum coercion.
+          const direction = _normalizeDirection(a.direction) || "IN_TO_TH";
+          const mode = _normalizeShipmentMode(a.mode) || "air";
           const payload: GhostPayload = {
             route: "/shipment/new",
-            headline: `Shipment बना रहा हूँ${a.consignment_no ? ` — ${a.consignment_no}` : ""}`,
+            headline: `Shipment ban raha hoon${a.consignment_no ? ` — ${a.consignment_no}` : ""}`,
             values: {
               ...(a.consignment_no ? { consignmentNo: a.consignment_no } : {}),
-              ...(a.direction ? { direction: a.direction } : {}),
-              ...(a.mode ? { mode: a.mode } : {}),
+              direction,
+              mode,
               ...(a.origin ? { origin: a.origin } : {}),
               ...(a.destination ? { destination: a.destination } : {}),
               ...(typeof a.freight === "number" ? { freight: String(a.freight) } : {}),
@@ -471,13 +486,16 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
               path: "/api/shipments",
               body: {
                 consignment_no: a.consignment_no,
-                direction: a.direction || "IN_TO_TH",
-                mode: a.mode || "air",
+                direction, // ← exact enum e.g. "IN_TO_TH"
+                mode,      // ← exact enum e.g. "hand_carry"
                 origin: a.origin,
                 destination: a.destination,
-                freight_amount: a.freight,
+                // The API field is `freight`, NOT `freight_amount`.
+                freight: a.freight,
                 freight_currency: a.freight_ccy || "THB",
                 notes: a.notes,
+                // party_id is REQUIRED — include it if we resolved a name.
+                ...(partyId ? { party_id: partyId } : {}),
               },
             },
           };
@@ -486,14 +504,32 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
         }
 
         case "create_invoice": {
+          // Same pattern as create_shipment — the API needs party_id +
+          // ISO date + line items, not a flat amount.
+          let partyId: string | undefined;
+          if (a.party_name) {
+            partyId = await _resolvePartyIdByName(a.party_name);
+          }
+          const isoDate = new Date().toISOString().slice(0, 10);
+          const currency = (a.currency as "INR" | "THB") || "INR";
+          const lineItems = typeof a.amount === "number" && a.amount > 0
+            ? [{
+                description: a.description || a.notes || "Freight charges",
+                quantity: 1,
+                unit: "pcs",
+                rate: a.amount,
+                amount: a.amount,
+              }]
+            : [];
+
           const payload: GhostPayload = {
             route: "/invoice/new",
-            headline: `Invoice बना रहा हूँ${a.invoice_no ? ` — ${a.invoice_no}` : ""}`,
+            headline: `Invoice ban raha hoon${a.invoice_no ? ` — ${a.invoice_no}` : ""}`,
             values: {
               ...(a.invoice_no ? { invoiceNo: a.invoice_no } : {}),
               ...(a.party_name ? { partyName: a.party_name } : {}),
               ...(typeof a.amount === "number" ? { amount: String(a.amount) } : {}),
-              ...(a.currency ? { currency: a.currency } : {}),
+              currency,
               ...(a.description ? { description: a.description } : {}),
               ...(a.notes ? { notes: a.notes } : {}),
             },
@@ -501,12 +537,14 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
               method: "POST",
               path: "/api/invoices",
               body: {
-                invoice_no: a.invoice_no,
-                party_name: a.party_name,
-                amount: a.amount,
-                currency: a.currency || "INR",
-                description: a.description,
-                notes: a.notes,
+                // The API field is `number`, not `invoice_no`.
+                number: a.invoice_no,
+                date: isoDate,
+                currency,
+                tax_percent: 0,
+                notes: a.notes || a.description,
+                items: lineItems,
+                ...(partyId ? { party_id: partyId } : {}),
               },
             },
           };
@@ -752,7 +790,7 @@ function GhostFillBanner({
               {isSaving
                 ? "Saving…"
                 : isReady
-                ? "किशन सर, save करूँ?"
+                ? "Kishan Sir, save karoon?"
                 : `Typing… ${state.currentField ? `(${state.currentField})` : ""}`}
             </Text>
           </View>
@@ -1120,3 +1158,60 @@ const styles = StyleSheet.create({
   },
   bannerSaveText: { color: "#000", fontSize: 12, fontWeight: "800" },
 });
+
+// ---------------------------------------------------------------------------
+// AI action helpers — enum normalisation + party resolver
+// ---------------------------------------------------------------------------
+
+/** In-memory cache for the parties list. Refresh window: 30s.
+ *  Avoids hammering /api/parties on every consecutive create_* action. */
+type _PartiesCache = { at: number; list: Array<{ id: string; name: string; role?: string }> };
+let _partiesCache: _PartiesCache | null = null;
+
+async function _resolvePartyIdByName(name: string): Promise<string | undefined> {
+  if (!name) return undefined;
+  const key = name.toLowerCase().trim();
+  const now = Date.now();
+  if (!_partiesCache || now - _partiesCache.at > 30_000) {
+    try {
+      const res = await fetch(`${API_BASE}/api/parties`);
+      if (res.ok) {
+        const list = (await res.json()) as Array<{ id: string; name: string; role?: string }>;
+        _partiesCache = { at: now, list: list || [] };
+      }
+    } catch {
+      /* keep whatever we had (possibly stale) */
+    }
+  }
+  const list = _partiesCache?.list || [];
+  // Exact match first, then startsWith, then substring.
+  const exact = list.find((p) => (p.name || "").toLowerCase().trim() === key);
+  if (exact) return exact.id;
+  const starts = list.find((p) => (p.name || "").toLowerCase().startsWith(key));
+  if (starts) return starts.id;
+  const sub = list.find((p) => (p.name || "").toLowerCase().includes(key));
+  return sub?.id;
+}
+
+/** Coerce direction to the exact enum the API accepts. Handles casing +
+ *  common misspellings + Hinglish variations. */
+function _normalizeDirection(raw: string | undefined): "IN_TO_TH" | "TH_TO_IN" | undefined {
+  if (!raw) return undefined;
+  const s = raw.toString().toLowerCase().replace(/[-\s]/g, "_");
+  if (s.includes("in_to_th") || (s.includes("in") && s.includes("th") && !s.includes("th_to_in"))) return "IN_TO_TH";
+  if (s.includes("th_to_in") || (s.includes("th") && s.includes("in"))) return "TH_TO_IN";
+  if (s === "in" || s === "india" || s === "bharat") return "IN_TO_TH";
+  if (s === "th" || s === "thailand") return "TH_TO_IN";
+  return undefined;
+}
+
+/** Coerce mode to the exact enum. */
+function _normalizeShipmentMode(raw: string | undefined): "air" | "sea" | "land" | "hand_carry" | undefined {
+  if (!raw) return undefined;
+  const s = raw.toString().toLowerCase().replace(/[-\s]/g, "_");
+  if (s === "air" || s === "flight" || s === "plane") return "air";
+  if (s === "sea" || s === "ship" || s === "boat") return "sea";
+  if (s === "land" || s === "road" || s === "truck") return "land";
+  if (s === "hand_carry" || s === "handcarry" || s === "hand" || s === "carrier") return "hand_carry";
+  return undefined;
+}

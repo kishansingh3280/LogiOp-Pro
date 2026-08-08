@@ -1571,3 +1571,73 @@ agent_communication:
           → preprocessed to "नमस्ते सर। … बताइए। … तीन shipments हैं। … पहला Delhi से।"
           End-to-end: /assistant/tts/stream still streams (TTFB=24ms) and
           the popup UI shows "Speaking…" mode within ~500ms of first byte.
+
+  - task: "Iter29 · 422 fix + Hinglish + Multi-turn + Live Mode"
+    implemented: true
+    working: true
+    file: "backend/server.py (schema + system prompt + Hinglish summary), frontend/src/ghost/ghost-user.tsx (enum coercion + party resolver + submit-body correctness), frontend/src/components/floating-jarvis.tsx (Live Mode hands-free component)"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Four connected user requests in one pass:
+          
+          (1) HTTP 422 fix. Root causes:
+              - /api/shipments requires `party_id` (not party_name) and
+                the field is `freight` (not `freight_amount`)
+              - /api/invoices requires `party_id`, `date` (ISO), and
+                `items` array (not flat `amount`)
+              Fixes in ghost-user.tsx:
+              - New `_resolvePartyIdByName()` — fetches /api/parties
+                (cached for 30s) and does exact/startsWith/substring match
+              - New `_normalizeDirection()` / `_normalizeShipmentMode()`
+                coerce loose LLM output ("in to th", "hand-carry") into
+                strict enums (IN_TO_TH / hand_carry)
+              - create_shipment / create_invoice submit bodies rewritten
+                to hit the exact upstream schema (freight, party_id,
+                items:[{description,quantity,unit,rate,amount}], date)
+              Also fixed AssistantMessage schema to accept both `content`
+              and `text` keys so client-supplied history no longer 422s.
+              Verified: shipment SE/26-27/T8719 created with 200 OK
+              via ghost-user Save (dir=IN_TO_TH, mode=hand_carry,
+              freight=12500, party_id resolved from "Lalit").
+          
+          (2) Hinglish switch. Assistant system prompt rewritten:
+              - Response ALWAYS in Latin-script Hinglish (Namaste, kya,
+                bataiye, etc.), never Devanagari
+              - Understand voice input in either script
+              - System prompt has explicit tone + enum + confirmation
+                rules in English + Hinglish examples
+              Also swapped all UI strings:
+              - Assistant tab opener ("Namaste Kishan Sir!")
+              - Popup placeholder ("Boliye Sir …")
+              - Ghost banner ("Kishan Sir, save karoon?")
+              - Blocker summary ("N bags abhi tak weight ke bina hain")
+              - Error toasts ("Error: …" instead of "त्रुटि: …")
+          
+          (3) Multi-turn breakdown. Added an explicit section in the
+              system prompt with a canonical sequence for shipment/bag
+              creation (Party → Consignment → Direction → Mode → Bag
+              count + weight → Items → Freight → Notes). Instructed the
+              model to ask for ONE missing field per turn, never repeat
+              questions, and only emit the create_* action when all
+              mandatory fields are known. Verified in a 3-turn dialogue:
+              "Lalit ke paas 4 bags hain" → asks for weight
+              "Har bag 2 kg ka hai" → confirms, asks for bag count
+              "India se Thailand, hand carry" → confirms both, asks for
+              party name.
+          
+          (4) Live Mode — new hands-free UI. Tapping the mic in the
+              chat popup now opens a fullscreen "Live" modal that:
+              - Auto-starts the mic on mount
+              - Uses a simple VAD (level>0.15 = speech; level<0.08 for
+                1400ms after speech = end-of-phrase) to auto-fire the
+                STT → chat → TTS pipeline without any tap
+              - Loops back into listening the moment TTS finishes
+              - Shows a large pulsing LiveOrb + Hinglish status label
+                ("SUNO RAHA HOON…" / "SOCH RAHA HOON…" / "BOL RAHA HOON…")
+              - Tap orb to end phrase early; tap × to exit
+              - Ghost-User dispatches still work on the background
+                page while Live Mode is showing

@@ -82,12 +82,12 @@ export default function AssistantScreen() {
     const blockers = getCachedBlockers();
     const blockerLine =
       blockers && blockers.total > 0 ? ` ${blockers.summary_hi}` : "";
-    const baseOpener = `नमस्ते ${address}! मैं आपका AI सहायक हूँ।`;
+    const baseOpener = `Namaste ${address}! Main aapka Wingman hoon.`;
     const tail = blockerLine
       ? blockerLine
       : ctx && ctx !== "Current route: /(tabs)/assistant"
-        ? " बताइए, क्या मदद करूँ?"
-        : " बोलिए, क्या हुक्म है?";
+        ? " Bataiye, kya madad karoon?"
+        : " Boliye, kya hukum hai?";
     const opener = `${baseOpener}${tail}`;
     setMessages([{ role: "assistant", text: opener, at: Date.now() }]);
     speak(opener).catch(() => undefined);
@@ -226,7 +226,7 @@ export default function AssistantScreen() {
         // Speak the reply (strips JSON blocks).
         speak(full).catch(() => undefined);
       } catch (e) {
-        const msg = `त्रुटि: ${(e as Error).message}`;
+        const msg = `Error: ${(e as Error).message}`;
         setMessages((prev) => [...prev, { role: "assistant", text: msg, at: Date.now() }]);
         setStreaming("");
         setMode("idle");
