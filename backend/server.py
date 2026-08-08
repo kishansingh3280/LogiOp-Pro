@@ -848,7 +848,20 @@ async def assistant_chat(req: AssistantChatRequest):
             async for event in chat.stream_message(UserMessage(text=req.message)):
                 if isinstance(event, TextDelta):
                     buf += event.content
-                    yield f"data: {event.content}\n\n"
+                    # SSE spec: a `data:` frame ends at the first blank line.
+                    # If the model streams a chunk that contains one or more
+                    # embedded `\n` (typical around fenced ```json``` blocks),
+                    # sending `data: <chunk>\n\n` truncates the frame at the
+                    # embedded newline and the rest leaks out un-prefixed.
+                    # Emit each line as its own `data:` line, then a single
+                    # blank line to terminate the record — the client
+                    # concatenates them back with `\n`. Empty chunks are
+                    # emitted as a single blank `data:` line to preserve
+                    # newlines that Claude actually intended.
+                    lines = event.content.split("\n") if event.content else [""]
+                    for seg in lines:
+                        yield f"data: {seg}\n"
+                    yield "\n"
                 elif isinstance(event, StreamDone):
                     break
         except Exception as e:

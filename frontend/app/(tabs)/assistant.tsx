@@ -208,14 +208,25 @@ export default function AssistantScreen() {
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let full = "";
+        let carry = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          for (const line of chunk.split("\n\n")) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith("data: ")) continue;
-            const payload = trimmed.slice(6);
+          const chunk = carry + decoder.decode(value, { stream: true });
+          // Frames end at a blank line (\n\n). Anything after the last \n\n
+          // is a partial frame — save it to carry into the next read().
+          const frames = chunk.split("\n\n");
+          carry = frames.pop() || "";
+          for (const frame of frames) {
+            // Extract every `data:` line inside the frame — SSE spec says a
+            // record can span multiple `data:` lines which the receiver
+            // joins with "\n". Ignore comment (`: ...`) and event lines.
+            const dataLines = frame
+              .split("\n")
+              .filter((l) => l.startsWith("data:"))
+              .map((l) => l.slice(5).replace(/^ /, ""));
+            if (dataLines.length === 0) continue;
+            const payload = dataLines.join("\n");
             if (payload === "[DONE]") continue;
             full += payload;
             setStreaming(full);

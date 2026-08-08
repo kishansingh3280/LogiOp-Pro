@@ -1125,3 +1125,50 @@ agent_communication:
       pytest XML: /app/test_reports/pytest/iter20_results.xml,
       new test file: /app/backend/tests/test_iter20_assistant.py
 
+
+  - task: "Iter21 · JWT Auth + Audit Tagging + Immersive Assistant"
+    implemented: true
+    working: true
+    file: "backend/auth.py, backend/server.py, backend/seed_users.py, frontend/src/auth/context.tsx, frontend/app/sign-in.tsx, frontend/app/(tabs)/assistant.tsx, frontend/src/components/live-orb.tsx, frontend/src/hooks/use-mic-level.ts, frontend/src/context/screen-context.tsx"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Iter21 — Auth foundation + Immersive Gemini-Live UI + audit tagging.
+
+          Backend:
+          - /api/auth/login, /auth/me, /auth/register (Admin only), /auth/users,
+            PATCH/DELETE /auth/users/{id}, /auth/change-password.
+          - 3 roles: Admin, Staff, Carrier. Seeded via seed_users.py.
+          - Audit middleware injects created_by/modified_by/entry_source into
+            all bullion writes AND proxied POST/PUT bodies to the remote backend.
+          - X-Actor-{Username,Role,Id} + X-Entry-Source headers forwarded.
+
+          Frontend:
+          - AuthProvider (SecureStore) + AuthGate in _layout.tsx.
+          - Beautiful pulsing sign-in screen with lime orb.
+          - Assistant tab overhauled into a full-screen Gemini-Live UI:
+            multi-color SVG+Reanimated gradient waveform orb ("Life in a body")
+            reacting to mic level (expo-audio metering) and TTS envelope.
+            Transcript bottom-sheet, mode indicator (LISTENING/THINKING/SPEAKING),
+            hold-to-talk mic, text input.
+          - Screen-context provider — AI receives current route + visible data
+            on every turn.
+          - Assistant system prompt hard-wires the honorific: always "Kishan Sir",
+            "Sir", or "Boss" — never first name alone.
+          - Ghost-User: navigate JSON tool calls trigger router.push (verified
+            end-to-end via browser automation).
+          - Dashboard greets user by display_name + honorific.
+          - Sign-out in More menu with Account section.
+
+          Testing agent (iter21): 25/25 passed. Found + fixed SSE framing bug
+          where multi-line data (```json``` fenced blocks) leaked outside
+          `data:` prefix — fixed by emitting one `data: <line>\n` per line
+          and terminating with a blank line. Frontend parser updated to
+          concatenate multi-line data records. Browser test confirms Ghost-
+          User navigate works: "invoices पर ले चलो" → routes to /invoices.
+
+          Credentials: kishan/Kishan@Boss2026 (Admin), staff/Staff@2026,
+          carrier/Carrier@2026. See /app/memory/test_credentials.md.
