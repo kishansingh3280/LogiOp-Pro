@@ -1,28 +1,35 @@
 /**
  * FloatingJarvis — persistent "always-on" AI assistant bubble.
  *
- * Renders two things:
- *   1. A tiny 56px pulsing blue-ring bubble anchored to the bottom-right,
- *      above the tab bar. Visible on every screen EXCEPT `/(tabs)/assistant`
- *      itself (the full-page nebula view has the assistant inline).
+ * Two layers, both rendered at the app root over every other UI:
  *
- *   2. A fullscreen "nebula" modal that fades in when the bubble is tapped.
- *      Contains a big LiveOrb, an auto-focused text input (so the operator
- *      can type instantly), and a live mic button (press-to-talk).
+ *   1. Bubble — 56px pulsing blue-ring anchored bottom-right, above the
+ *      tab bar. Visible on every screen except /(tabs)/assistant and the
+ *      sign-in gate.
  *
- * The modal reuses the same backend endpoints as the /assistant tab:
- *   - POST /api/assistant/chat  (SSE stream)
- *   - POST /api/assistant/stt   (voice → text)
- *   - POST /api/assistant/tts   (text → mp3 blob)
+ *   2. Popup — glassmorphic chat window that scales UP from the bubble's
+ *      origin (bottom-right) when the bubble is tapped. NOT a Modal —
+ *      the background page remains fully interactive, so the Ghost-User
+ *      engine can still navigate + type on the underlying form while the
+ *      operator keeps chatting through the popup.
  *
- * It also dispatches ghost-user actions parsed from the AI reply so the
- * "create party / item / shipment / invoice" visual-fill flow works from
- * anywhere in the app, not just the assistant tab.
+ * The popup contains:
+ *   • Header: small LiveOrb + "Wingman" title + close X
+ *   • Scrollable transcript of the current chat
+ *   • Text input (auto-focused) + Send button
+ *   • Round mic button for hold-to-talk
  *
- * Design principles:
- *   - Bubble is never in the way (56px, only bottom-right).
- *   - Modal opens with keyboard already up + input focused → zero-friction.
- *   - Uses the same LiveOrb so the visual language stays coherent.
+ * It reuses the same backend endpoints as the /assistant tab:
+ *   POST /api/assistant/chat   (SSE stream)
+ *   POST /api/assistant/stt    (voice → text)
+ *   POST /api/assistant/tts/stream  (chunked audio via `speakStreaming`)
+ *
+ * Ghost-User integration: after each turn the AI reply is fed into
+ * `ghost.parseAndRun()` — if it contains a JSON action, the ghost engine
+ * navigates the BACKGROUND page (which is fully interactive because we
+ * are not blocking it with a Modal) and visually types into the target
+ * form. The chat popup stays open so the operator can dictate the next
+ * command while the previous one is being executed.
  */
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
@@ -32,9 +39,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Animated,
+  Dimensions,
   Easing,
-  KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -55,12 +61,22 @@ import { useMicLevel } from "@/src/hooks/use-mic-level";
 import { colors, radii, spacing } from "@/src/theme";
 import { speakStreaming, type StreamingTtsHandle } from "@/src/utils/tts-stream";
 
-// (Dimensions was only used for the removed absolute width — dropped.)
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
+
+// Popup dimensions — sized to fit comfortably on a 390px-wide phone with
+// side gutters. Height caps at 70% of the screen so it doesn't crowd the
+// tab bar or push the input off screen when the keyboard is up.
+const POPUP_W = Math.min(320, SCREEN_W - 24);
+const POPUP_H = Math.min(460, Math.floor(SCREEN_H * 0.7));
+
+// Bubble geometry — kept in sync with styles.bubbleBtn below.
+const BUBBLE_SIZE = 56;
+const BUBBLE_MARGIN_RIGHT = 14;
 
 type Msg = { role: "user" | "assistant"; text: string; at: number };
 
-// Where NOT to show the bubble (assistant tab has its own big orb, and
-// the sign-in gate is before auth so no assistant available).
+// Where NOT to show the bubble (assistant tab has its own big orb; sign-in
+// is pre-auth so there's no assistant to talk to yet).
 const HIDE_ON = new Set<string>(["/assistant", "/sign-in", "/(tabs)/assistant"]);
 
 export function FloatingJarvis() {
@@ -69,7 +85,7 @@ export function FloatingJarvis() {
   const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
 
-  // Slow "breath" pulse for the bubble ring.
+  // Bubble breath pulse.
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(
@@ -95,78 +111,138 @@ export function FloatingJarvis() {
   const ringScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.15] });
   const ringOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0.9] });
 
+  // Popup scale-up animation. Driven by the `expanded` flag. transform-
+  // origin is anchored to the bubble (bottom-right) via a translate + scale
+  // combo so it visually "grows out of" the button.
+  const popup = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(popup, {
+      toValue: expanded ? 1 : 0,
+      useNativeDriver: false, // we animate width/height + transform origin
+      stiffness: expanded ? 220 : 300,
+      damping: expanded ? 22 : 26,
+      mass: 0.6,
+    }).start();
+  }, [expanded, popup]);
+
   const shouldHide = !user || HIDE_ON.has(pathname || "");
-  if (shouldHide && !expanded) return null;
+  if (shouldHide) return null;
+
+  const bubbleBottom = insets.bottom + 96; // above the tab bar
+
+  // Interpolate the popup transform. It starts as a 0-scale dot at the
+  // bubble's center and grows to full size at the popup's top-right
+  // anchor. `translateX` and `translateY` correct for the fact that
+  // scale grows AROUND the element's center by default — we want it to
+  // grow FROM its bottom-right corner (i.e. the bubble).
+  const popupScale = popup.interpolate({ inputRange: [0, 1], outputRange: [0.15, 1] });
+  const popupOpacity = popup.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
+  const popupTX = popup.interpolate({
+    inputRange: [0, 1],
+    // At scale 0.15, the popup is (1-0.15)/2 of its size to the right of
+    // its natural centre. We slide the natural centre to align with the
+    // bubble by shifting right/down proportionally.
+    outputRange: [POPUP_W * 0.42, 0],
+  });
+  const popupTY = popup.interpolate({
+    inputRange: [0, 1],
+    outputRange: [POPUP_H * 0.42, 0],
+  });
 
   return (
     <>
-      {!shouldHide && !expanded ? (
+      {/* Popup — rendered ABOVE the bubble, extending upward. The wrap
+          uses pointerEvents="box-none" so taps outside the popup fall
+          through to the background page (ghost-user can still animate
+          forms below). */}
+      {expanded ? (
         <View
           pointerEvents="box-none"
           style={[
-            styles.bubbleWrap,
+            styles.popupWrap,
             {
-              bottom: insets.bottom + 96, // above the tab bar
-              right: 14,
+              // Anchor the top-right corner near the top of where the
+              // bubble sits and stretch upward.
+              bottom: bubbleBottom + BUBBLE_SIZE + 8,
+              right: BUBBLE_MARGIN_RIGHT,
             },
           ]}
         >
-          <Pressable
-            onPress={() => setExpanded(true)}
-            style={styles.bubbleBtn}
-            testID="floating-jarvis"
-            accessibilityRole="button"
-            accessibilityLabel="Open Wingman assistant"
-            hitSlop={8}
+          <Animated.View
+            style={[
+              styles.popup,
+              {
+                width: POPUP_W,
+                height: POPUP_H,
+                opacity: popupOpacity,
+                transform: [
+                  { translateX: popupTX },
+                  { translateY: popupTY },
+                  { scale: popupScale },
+                ],
+              },
+            ]}
+            pointerEvents="auto"
           >
-            {/* Outer pulsing ring */}
-            <Animated.View
-              pointerEvents="none"
-              style={[
-                styles.bubbleRing,
-                { transform: [{ scale: ringScale }], opacity: ringOpacity },
-              ]}
-            />
-            {/* Middle steady ring */}
-            <View style={styles.bubbleRingSteady} pointerEvents="none" />
-            {/* Core mini-orb */}
-            <View style={styles.bubbleCore} pointerEvents="none">
-              <LinearGradient
-                colors={["#FFFFFF", "#00FFFF", "#00D1FF"]}
-                start={{ x: 0.3, y: 0.3 }}
-                end={{ x: 0.7, y: 0.7 }}
-                style={StyleSheet.absoluteFill}
-              />
-            </View>
-            {/* Sparkle glyph */}
-            <Ionicons
-              name="sparkles"
-              size={14}
-              color="#FFFFFF"
-              style={{ zIndex: 2, opacity: 0.9 }}
-            />
-          </Pressable>
+            <JarvisPopup onClose={() => setExpanded(false)} />
+          </Animated.View>
         </View>
       ) : null}
 
-      {/* Expanded nebula modal */}
-      {expanded ? (
-        <NebulaModal onClose={() => setExpanded(false)} />
-      ) : null}
+      {/* Bubble — always visible when auth'd + not on assistant tab. */}
+      <View
+        pointerEvents="box-none"
+        style={[
+          styles.bubbleWrap,
+          { bottom: bubbleBottom, right: BUBBLE_MARGIN_RIGHT },
+        ]}
+      >
+        <Pressable
+          onPress={() => setExpanded((prev) => !prev)}
+          style={styles.bubbleBtn}
+          testID="floating-jarvis"
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? "Close Wingman chat" : "Open Wingman chat"}
+          hitSlop={8}
+        >
+          {/* Outer pulsing ring — subdued while popup is open. */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.bubbleRing,
+              {
+                transform: [{ scale: ringScale }],
+                opacity: expanded ? 0.35 : ringOpacity,
+              },
+            ]}
+          />
+          <View style={styles.bubbleRingSteady} pointerEvents="none" />
+          <View style={styles.bubbleCore} pointerEvents="none">
+            <LinearGradient
+              colors={["#FFFFFF", "#00FFFF", "#00D1FF"]}
+              start={{ x: 0.3, y: 0.3 }}
+              end={{ x: 0.7, y: 0.7 }}
+              style={StyleSheet.absoluteFill}
+            />
+          </View>
+          {/* Glyph swaps to close-X when the popup is open. */}
+          <Ionicons
+            name={expanded ? "close" : "sparkles"}
+            size={expanded ? 18 : 14}
+            color="#FFFFFF"
+            style={{ zIndex: 2, opacity: 0.95 }}
+          />
+        </Pressable>
+      </View>
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Fullscreen nebula listening mode
+// JarvisPopup — the actual chat surface rendered inside the animated shell
 // ---------------------------------------------------------------------------
 
-/**
- * NebulaModal — reused by FloatingJarvis. Auto-focuses the text input and
- * lights up the mic so the operator can immediately type OR press-to-talk.
- */
-function NebulaModal({ onClose }: { onClose: () => void }) {
-  const insets = useSafeAreaInsets();
+function JarvisPopup({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
   const { describeForAI } = useScreenContext();
   const ghost = useGhostUser();
@@ -177,51 +253,45 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
   const [streaming, setStreaming] = useState("");
   const [textInput, setTextInput] = useState("");
   const inputRef = useRef<TextInput | null>(null);
-
-  // TTS envelope — same 5-6Hz burst pattern as the main assistant.
-  const ttsLevel = useRef(new Animated.Value(0)).current;
-  const [ttsLevelNum, setTtsLevelNum] = useState(0);
+  const scrollRef = useRef<ScrollView | null>(null);
   const ttsHandleRef = useRef<StreamingTtsHandle | null>(null);
+  useBlockers(); // keeps the shared blocker cache warm
 
+  // Auto-focus the input the moment the popup mounts.
   useEffect(() => {
-    const id = ttsLevel.addListener(({ value }) => setTtsLevelNum(value));
-    return () => ttsLevel.removeListener(id);
-  }, [ttsLevel]);
+    const t = setTimeout(() => inputRef.current?.focus(), 260);
+    return () => clearTimeout(t);
+  }, []);
 
+  // Proactive greeting — if blockers exist, greet with the summary line.
   useEffect(() => {
-    if (mode !== "speaking") {
-      ttsLevel.stopAnimation();
-      ttsLevel.setValue(0);
-      return;
-    }
-    const loop = () => {
-      Animated.sequence([
-        Animated.timing(ttsLevel, {
-          toValue: 0.9,
-          duration: 90,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: false,
-        }),
-        Animated.timing(ttsLevel, {
-          toValue: 0.15,
-          duration: 110,
-          easing: Easing.in(Easing.quad),
-          useNativeDriver: false,
-        }),
-      ]).start(() => {
-        if (mode === "speaking") loop();
-      });
+    const b = getCachedBlockers();
+    if (!b || b.total === 0) return;
+    const t = setTimeout(() => {
+      setMessages((prev) =>
+        prev.length ? prev : [{ role: "assistant", text: b.summary_hi, at: Date.now() }],
+      );
+      speak(b.summary_hi).catch(() => undefined);
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Cleanup on unmount — cancel in-flight TTS + release mic.
+  useEffect(() => {
+    return () => {
+      ttsHandleRef.current?.stop();
+      ttsHandleRef.current = null;
+      if (mic.listening) void mic.stop();
     };
-    loop();
-    return () => ttsLevel.stopAnimation();
-  }, [mode, ttsLevel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Amplitude for the orb — mic while listening, TTS envelope while speaking.
   const amplitude = useMemo(() => {
     if (mode === "listening") return mic.level;
-    if (mode === "speaking") return 0.3 + ttsLevelNum * 0.7;
+    if (mode === "speaking") return 0.4;
     return 0;
-  }, [mode, mic.level, ttsLevelNum]);
+  }, [mode, mic.level]);
 
   useEffect(() => {
     if (mic.listening) setMode("listening");
@@ -229,67 +299,40 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mic.listening]);
 
-  // Auto-focus the text input the moment the modal opens.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      inputRef.current?.focus();
-    }, 220);
-    return () => clearTimeout(t);
-  }, []);
-
-  // Proactive greeting: if there are blockers, greet with a short Hindi
-  // summary the moment the nebula opens. Uses the cached blocker set so
-  // there's no visible network wait — if empty, the hook still refreshes
-  // in the background.
-  useBlockers(); // ensures the hook starts polling in this component too
-  useEffect(() => {
-    const b = getCachedBlockers();
-    if (!b || b.total === 0) return;
-    // Small delay so the modal transition finishes before speech starts.
-    const t = setTimeout(() => {
-      setMessages((prev) => (prev.length ? prev : [{ role: "assistant", text: b.summary_hi, at: Date.now() }]));
-      speak(b.summary_hi).catch(() => undefined);
-    }, 400);
-    return () => clearTimeout(t);
-    // Intentional: run only once on mount — subsequent blocker changes
-    // are surfaced by the bell badge, not by another spoken interrupt.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const stripTools = (text: string) => text.replace(/```json[\s\S]*?```/g, "").trim();
 
-  const speak = useCallback(
-    async (text: string) => {
-      const clean = stripTools(text);
-      if (!clean.trim()) return;
-      // Cancel any in-flight TTS before starting a new one.
-      ttsHandleRef.current?.stop();
-      const token = getAuthTokenSync();
-      const handle = speakStreaming({
-        text: clean,
-        voice: "shimmer",
-        authToken: token,
-        onStart: () => setMode("speaking"),
-        onError: () => setMode("idle"),
-      });
-      ttsHandleRef.current = handle;
-      // When playback finishes, drop back to idle. The onStart callback
-      // switched us to "speaking"; wait for the promise to resolve.
-      handle.promise.finally(() => {
-        if (ttsHandleRef.current === handle) {
-          setMode("idle");
-          ttsHandleRef.current = null;
-        }
-      });
-    },
-    [],
-  );
+  const speak = useCallback(async (text: string) => {
+    const clean = stripTools(text);
+    if (!clean.trim()) return;
+    ttsHandleRef.current?.stop();
+    const token = getAuthTokenSync();
+    const handle = speakStreaming({
+      text: clean,
+      voice: "shimmer",
+      authToken: token,
+      onStart: () => setMode("speaking"),
+      onError: () => setMode("idle"),
+    });
+    ttsHandleRef.current = handle;
+    handle.promise.finally(() => {
+      if (ttsHandleRef.current === handle) {
+        setMode("idle");
+        ttsHandleRef.current = null;
+      }
+    });
+  }, []);
+
+  const scrollToEnd = useCallback(() => {
+    // Small delay so the new message has been laid out.
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 30);
+  }, []);
 
   const sendMessage = useCallback(
     async (message: string) => {
       const q = message.trim();
       if (!q) return;
       setMessages((prev) => [...prev, { role: "user", text: q, at: Date.now() }]);
+      scrollToEnd();
       setStreaming("");
       setMode("thinking");
       try {
@@ -302,7 +345,7 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
-            session_id: `nebula-${Date.now()}`,
+            session_id: `popup-${Date.now()}`,
             message: q,
             history: messages,
             screen_context: describeForAI(),
@@ -331,14 +374,16 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
             if (payload === "[DONE]") continue;
             full += payload;
             setStreaming(full);
+            scrollToEnd();
           }
         }
         setMessages((prev) => [...prev, { role: "assistant", text: full, at: Date.now() }]);
         setStreaming("");
-        // Fire ghost actions — this is the whole point of the floating
-        // bubble: user can trigger "create party X" from ANY screen.
+        scrollToEnd();
+        // Ghost-user dispatches on the background page (which is fully
+        // interactive because this popup isn't a Modal).
         void ghost.parseAndRun(full).catch(() => undefined);
-        speak(full).catch(() => undefined);
+        void speak(full).catch(() => undefined);
       } catch (e) {
         setMessages((prev) => [
           ...prev,
@@ -348,7 +393,7 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
         setMode("idle");
       }
     },
-    [describeForAI, ghost, messages, speak, user],
+    [describeForAI, ghost, messages, scrollToEnd, speak, user],
   );
 
   const handleMicPress = useCallback(async () => {
@@ -385,14 +430,6 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
     }
   }, [mic, sendMessage]);
 
-  const close = useCallback(() => {
-    // Stop any in-flight audio + release mic.
-    ttsHandleRef.current?.stop();
-    ttsHandleRef.current = null;
-    if (mic.listening) void mic.stop();
-    onClose();
-  }, [mic, onClose]);
-
   const modeLabel =
     mode === "listening"
       ? "Listening…"
@@ -400,127 +437,141 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
         ? "Thinking…"
         : mode === "speaking"
           ? "Speaking…"
-          : "Type or hold mic to talk";
-
-  const lastReply = messages.length > 0 ? messages[messages.length - 1].text : "";
+          : "Ready";
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={close}>
-      <View style={styles.modalWrap}>
-        {/* Deep-space background */}
-        <LinearGradient
-          colors={["#020202", "#050820", "#020202"]}
+    <View style={styles.popupInner}>
+      {/* Glass background — BlurView on native, plain darkened panel on web
+          (some Chromium builds refuse to blur inside a scale-transformed
+          parent, producing a solid-white flash). */}
+      {Platform.OS !== "web" ? (
+        <BlurView
+          tint="dark"
+          intensity={55}
           style={StyleSheet.absoluteFill}
+          pointerEvents="none"
         />
-        {/* Semi-blur overlay for depth */}
-        {Platform.OS !== "web" ? (
-          <BlurView tint="dark" intensity={40} style={StyleSheet.absoluteFill} />
-        ) : (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(2,2,2,0.75)" }]} />
-        )}
+      ) : null}
+      <View style={styles.popupTint} pointerEvents="none" />
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={{ flex: 1 }}
+      {/* Header */}
+      <View style={styles.popupHeader}>
+        <View style={styles.popupHeaderLeft}>
+          <View style={styles.popupOrbSlot}>
+            <LiveOrb size={34} amplitude={amplitude} mode={mode} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.popupTitle}>Wingman</Text>
+            <Text style={styles.popupSub} numberOfLines={1}>
+              {user ? `${user.display_name} ${user.honorific}` : "Kishan Sir"} · {modeLabel}
+            </Text>
+          </View>
+        </View>
+        <Pressable
+          onPress={onClose}
+          style={styles.popupClose}
+          hitSlop={10}
+          testID="jarvis-close"
         >
-          {/* Close button */}
-          <Pressable
-            onPress={close}
-            style={[styles.modalClose, { top: insets.top + 12 }]}
-            testID="jarvis-close"
-            hitSlop={12}
-          >
-            <Ionicons name="close" size={22} color={colors.text} />
-          </Pressable>
+          <Ionicons name="close" size={16} color={colors.textMuted} />
+        </Pressable>
+      </View>
 
-          {/* Header pill */}
-          <View style={[styles.modalHeader, { top: insets.top + 12 }]}>
-            <View style={styles.modalHeaderDot} />
-            <Text style={styles.modalHeaderText}>
-              Wingman · {user ? `${user.display_name} ${user.honorific}` : "Kishan Sir"}
-            </Text>
-          </View>
-
-          {/* Orb centrepiece */}
-          <View style={styles.modalOrbArea}>
-            <LiveOrb size={280} amplitude={amplitude} mode={mode} />
-          </View>
-
-          {/* Streaming / last reply strip */}
-          <ScrollView
-            style={styles.modalTranscriptWrap}
-            contentContainerStyle={{ paddingBottom: 12 }}
-            showsVerticalScrollIndicator={false}
-          >
-            <Text style={styles.modalModeLabel}>{modeLabel}</Text>
-            <Text style={styles.modalTranscript} numberOfLines={6}>
-              {streaming || lastReply}
-            </Text>
-          </ScrollView>
-
-          {/* Input row + Mic button */}
+      {/* Transcript */}
+      <ScrollView
+        ref={scrollRef}
+        style={styles.transcript}
+        contentContainerStyle={styles.transcriptContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {messages.length === 0 && !streaming ? (
+          <Text style={styles.transcriptPlaceholder}>
+            बोलिए, सर — Party, item, shipment, या invoice बनाना हो, या कोई
+            update करना हो, बता दीजिए।
+          </Text>
+        ) : null}
+        {messages.map((m, i) => (
           <View
+            key={i}
             style={[
-              styles.modalControls,
-              { paddingBottom: Math.max(insets.bottom, 12) + 12 },
+              styles.msg,
+              m.role === "user" ? styles.msgUser : styles.msgAi,
             ]}
           >
-            <View style={styles.modalTextRow}>
-              <TextInput
-                ref={inputRef}
-                autoFocus
-                value={textInput}
-                onChangeText={setTextInput}
-                placeholder="बोलिए या यहाँ टाइप कीजिए…"
-                placeholderTextColor={colors.textDim}
-                style={styles.modalTextInput}
-                testID="jarvis-input"
-                onSubmitEditing={() => {
-                  const v = textInput.trim();
-                  if (!v) return;
-                  setTextInput("");
-                  void sendMessage(v);
-                }}
-                returnKeyType="send"
-              />
-              <Pressable
-                onPress={() => {
-                  const v = textInput.trim();
-                  if (!v) return;
-                  setTextInput("");
-                  void sendMessage(v);
-                }}
-                style={styles.modalSend}
-                testID="jarvis-send"
-              >
-                {mode === "thinking" ? (
-                  <ActivityIndicator size={16} color="#000" />
-                ) : (
-                  <Ionicons name="send" size={16} color="#000" />
-                )}
-              </Pressable>
-            </View>
-
-            <Pressable
-              onPress={handleMicPress}
-              style={({ pressed }) => [
-                styles.modalMic,
-                mic.listening && styles.modalMicActive,
-                pressed && { transform: [{ scale: 0.96 }] },
+            <Text
+              style={[
+                styles.msgText,
+                m.role === "user" ? styles.msgTextUser : styles.msgTextAi,
               ]}
-              testID="jarvis-mic"
             >
-              <Ionicons
-                name={mic.listening ? "stop" : "mic"}
-                size={28}
-                color={mic.listening ? "#000" : colors.accent}
-              />
-            </Pressable>
-            {mic.error ? <Text style={styles.modalError}>{mic.error}</Text> : null}
+              {stripTools(m.text) || (m.role === "assistant" && mode === "thinking" ? "…" : "")}
+            </Text>
           </View>
-        </KeyboardAvoidingView>
+        ))}
+        {streaming ? (
+          <View style={[styles.msg, styles.msgAi, styles.msgStreaming]}>
+            <Text style={[styles.msgText, styles.msgTextAi]}>{stripTools(streaming)}</Text>
+          </View>
+        ) : null}
+      </ScrollView>
+
+      {/* Composer */}
+      <View style={styles.composer}>
+        <TextInput
+          ref={inputRef}
+          value={textInput}
+          onChangeText={setTextInput}
+          placeholder="Type a command…"
+          placeholderTextColor={colors.textDim}
+          style={styles.composerInput}
+          testID="jarvis-input"
+          onSubmitEditing={() => {
+            const v = textInput.trim();
+            if (!v) return;
+            setTextInput("");
+            void sendMessage(v);
+          }}
+          returnKeyType="send"
+          multiline={false}
+          autoFocus
+        />
+        <Pressable
+          onPress={handleMicPress}
+          style={({ pressed }) => [
+            styles.composerMic,
+            mic.listening && styles.composerMicActive,
+            pressed && { transform: [{ scale: 0.94 }] },
+          ]}
+          testID="jarvis-mic"
+        >
+          <Ionicons
+            name={mic.listening ? "stop" : "mic"}
+            size={16}
+            color={mic.listening ? "#000" : colors.accent}
+          />
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            const v = textInput.trim();
+            if (!v) return;
+            setTextInput("");
+            void sendMessage(v);
+          }}
+          style={({ pressed }) => [
+            styles.composerSend,
+            pressed && { transform: [{ scale: 0.94 }] },
+          ]}
+          testID="jarvis-send"
+        >
+          {mode === "thinking" ? (
+            <ActivityIndicator size={14} color="#000" />
+          ) : (
+            <Ionicons name="send" size={14} color="#000" />
+          )}
+        </Pressable>
       </View>
-    </Modal>
+    </View>
   );
 }
 
@@ -531,18 +582,18 @@ const styles = StyleSheet.create({
     zIndex: 999,
   },
   bubbleBtn: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: BUBBLE_SIZE,
+    height: BUBBLE_SIZE,
+    borderRadius: BUBBLE_SIZE / 2,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0, 209, 255, 0.08)",
+    backgroundColor: "rgba(0, 209, 255, 0.10)",
   },
   bubbleRing: {
     position: "absolute",
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: BUBBLE_SIZE,
+    height: BUBBLE_SIZE,
+    borderRadius: BUBBLE_SIZE / 2,
     borderWidth: 1.5,
     borderColor: colors.accent,
     shadowColor: colors.accent,
@@ -571,130 +622,150 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
   },
 
-  // ------------------- Modal (nebula listening mode) -------------------
-  modalWrap: {
-    flex: 1,
-    backgroundColor: "#020202",
-  },
-  modalClose: {
+  // ------------------- Popup shell -------------------
+  popupWrap: {
     position: "absolute",
-    right: 14,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(0, 209, 255, 0.08)",
+    zIndex: 998,
+  },
+  popup: {
+    borderRadius: radii.xl,
+    overflow: "hidden",
+    backgroundColor: "rgba(6, 10, 20, 0.94)",
     borderColor: colors.borderStrong,
     borderWidth: StyleSheet.hairlineWidth,
-    zIndex: 20,
+    // Cyan halo glow so the popup reads as a Cyber-Siri chat surface.
+    shadowColor: colors.accent,
+    shadowOpacity: 0.55,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 24,
   },
-  modalHeader: {
-    position: "absolute",
-    left: 16,
+  popupInner: {
+    flex: 1,
+    padding: spacing.md,
+  },
+  popupTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(2, 6, 16, 0.65)",
+  },
+
+  // Popup header
+  popupHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(0, 209, 255, 0.08)",
-    borderColor: colors.borderStrong,
-    borderWidth: StyleSheet.hairlineWidth,
-    zIndex: 20,
+    marginBottom: spacing.sm,
+    paddingBottom: spacing.sm,
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 10,
   },
-  modalHeaderDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.accent,
-    shadowColor: colors.accent,
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  modalHeaderText: { color: colors.text, fontSize: 12, fontWeight: "700" },
-  modalOrbArea: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 40,
-  },
-  modalTranscriptWrap: {
-    maxHeight: 120,
-    paddingHorizontal: spacing.lg,
-  },
-  modalModeLabel: {
-    color: colors.textMuted,
-    fontSize: 10,
-    letterSpacing: 1.2,
-    textTransform: "uppercase",
-    textAlign: "center",
-    marginBottom: 6,
-    fontWeight: "800",
-  },
-  modalTranscript: {
-    color: colors.text,
-    fontSize: 15,
-    textAlign: "center",
-    lineHeight: 22,
-  },
-  modalControls: {
-    paddingHorizontal: spacing.lg,
-    alignItems: "center",
-    gap: 12,
-  },
-  modalTextRow: {
+  popupHeaderLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    width: "100%",
-  },
-  modalTextInput: {
     flex: 1,
-    backgroundColor: "rgba(10, 12, 20, 0.65)",
-    borderRadius: radii.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: 18,
-    paddingVertical: Platform.OS === "ios" ? 12 : 8,
-    color: colors.text,
-    fontSize: 15,
+    gap: 10,
   },
-  modalSend: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.accent,
+  popupOrbSlot: {
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: colors.accent,
-    shadowOpacity: 0.9,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 10,
   },
-  modalMic: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+  popupTitle: { color: colors.text, fontSize: 14, fontWeight: "800" },
+  popupSub: { color: colors.textMuted, fontSize: 10, marginTop: 1, letterSpacing: 0.3 },
+  popupClose: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(0, 209, 255, 0.06)",
-    borderColor: colors.accent,
-    borderWidth: 2,
-    shadowColor: colors.accent,
-    shadowOpacity: 0.9,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 12,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  modalMicActive: {
-    backgroundColor: colors.accent,
+
+  // Transcript
+  transcript: {
+    flex: 1,
   },
-  modalError: {
-    color: colors.danger,
-    fontSize: 11,
+  transcriptContent: {
+    paddingBottom: 8,
+    gap: 6,
+  },
+  transcriptPlaceholder: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontStyle: "italic",
+    lineHeight: 18,
     textAlign: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 24,
+  },
+  msg: {
+    maxWidth: "88%",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: radii.md,
+  },
+  msgUser: {
+    alignSelf: "flex-end",
+    backgroundColor: "rgba(0, 209, 255, 0.85)",
+  },
+  msgAi: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(15, 25, 45, 0.85)",
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  msgStreaming: { opacity: 0.9 },
+  msgText: { fontSize: 12.5, lineHeight: 17 },
+  msgTextUser: { color: "#02121a", fontWeight: "600" },
+  msgTextAi: { color: colors.text },
+
+  // Composer
+  composer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingTop: 8,
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  composerInput: {
+    flex: 1,
+    backgroundColor: "rgba(10, 14, 24, 0.9)",
+    borderRadius: radii.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderStrong,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === "ios" ? 9 : 6,
+    color: colors.text,
+    fontSize: 13,
+  },
+  composerMic: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0, 209, 255, 0.08)",
+    borderColor: colors.accent,
+    borderWidth: 1,
+  },
+  composerMicActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  composerSend: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
   },
 });

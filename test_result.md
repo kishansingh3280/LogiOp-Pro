@@ -1495,3 +1495,49 @@ agent_communication:
             starting a new one.
           - Measured: assistant-tab open → "Speaking" mode reached at
             t+1.34s (vs. prior 2-4s waiting on the full mp3 blob).
+
+  - task: "Iter27 · Interactive Chat Popup (replaces full-screen modal)"
+    implemented: true
+    working: true
+    file: "frontend/src/components/floating-jarvis.tsx (full rewrite)"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          User asked for the FloatingJarvis to open a small adjacent chat
+          window instead of the full-screen nebula modal, with a scale-up
+          animation from the button and full Ghost-User sync on the
+          background page.
+          
+          Changed:
+          - Removed <Modal>. Popup is now a bare absolutely-positioned
+            View at zIndex 998, rendered adjacent to (above) the bubble.
+            Because it isn't a Modal, the background page remains fully
+            interactive — the Ghost-User engine can navigate + type on
+            the underlying form while the operator continues chatting.
+          - Popup: 320px wide × 460px tall (capped to screen). Header
+            shows a small (34px) reactive LiveOrb + "Wingman" title +
+            mode label ("Ready / Listening / Thinking / Speaking") +
+            close X. Middle is a scrolling transcript with user/AI
+            message bubbles (electric-blue for user, glass for AI).
+            Composer row: text input (auto-focus) + mic + send.
+          - Bubble icon toggles between "sparkles" (closed) and "close"
+            (open) so a second tap dismisses the popup.
+          - Animation: Animated.spring on a scale [0.15 → 1] combined
+            with translateX/translateY that anchors the transform origin
+            to the popup's bottom-right corner (the bubble's position),
+            producing the requested "scale-up from the button" effect.
+            Springs with different stiffness/damping for open vs close
+            (open feels punchy, close feels snappy).
+          - Ghost-User sync verified end-to-end: typed "Add party 
+            GhostFromPopup in Ahmedabad as customer" in the popup while
+            on the Dashboard → background page navigated to /party/new,
+            all fields typed by the ghost engine, save banner appeared,
+            AND the chat popup stayed visible with the transcript intact.
+          - Also verified: input auto-focuses on open, mic button
+            toggles listening state, close-X + bubble-toggle both work,
+            proactive blocker greet still fires when applicable,
+            streaming TTS (shimmer) still plays with visible orb
+            envelope.
