@@ -38,6 +38,18 @@ export interface BullionTxn {
   // Optional — currency carries usually leave this blank / 0.
   weight_kg?: number;
 
+  // ---- Vault location ----
+  /**
+   * Where the physical asset currently sits.
+   *   vault_in    — bought in India, in the India safe / on-hand
+   *   vault_th    — bought in Bangkok, in the BKK safe / on-hand
+   *   in_transit  — assigned to a carrier trip, currently moving
+   *   delivered   — trip completed, out of the vault system
+   * When absent (legacy rows), we derive it in code from trip_id + status
+   * so the Asset Map keeps working without a data migration.
+   */
+  location?: "vault_in" | "vault_th" | "in_transit" | "delivered";
+
   // ---- Ledger sync tracking ----
   /** ID of the ledger entry we auto-posted for the carrier fee (once). */
   ledger_entry_id?: string | null;
@@ -189,3 +201,28 @@ export function tripCapacityKg(t: Pick<CarrierTrip, "available_weight_kg" | "ava
   }
   return 0;
 }
+
+export type BullionLocation = "vault_in" | "vault_th" | "in_transit" | "delivered";
+
+export const LOCATION_LABEL: Record<BullionLocation, string> = {
+  vault_in: "Vault (India)",
+  vault_th: "Vault (Bangkok)",
+  in_transit: "In transit",
+  delivered: "Delivered",
+};
+
+/**
+ * Derive the physical location for a bullion txn. Explicit `location` on
+ * the row wins; otherwise we infer from status + trip_id + type so legacy
+ * rows still show up on the Asset Map correctly.
+ */
+export function txnLocation(t: BullionTxn): BullionLocation {
+  if (t.location) return t.location;
+  if (t.status === "completed") return "delivered";
+  if (t.trip_id) return "in_transit";
+  // No trip yet, not completed → sits in the vault. Currency carries
+  // start in India (bought there), gold carries start in Bangkok
+  // (bought there). Operator can override on the form.
+  return t.type === "gold" ? "vault_th" : "vault_in";
+}
+

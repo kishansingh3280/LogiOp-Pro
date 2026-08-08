@@ -8,7 +8,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { subscribeQueue, getQueue, flushQueue } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { DashboardStats, LedgerEntry, LedgerSummary, Shipment, WarehouseSummary } from "@/src/api/types";
+import { computeAssetTotals } from "@/src/bullion/AssetMap";
 import { useTrips, useTxns, usedWeightKgFor } from "@/src/bullion/store";
+import type { BullionTxn } from "@/src/bullion/types";
 import { tripCapacityKg } from "@/src/bullion/types";
 import { FYPicker } from "@/src/components/fy-picker";
 import { Card } from "@/src/components/ui";
@@ -150,6 +152,11 @@ export default function DashboardScreen() {
             </View>
           </ScrollView>
         )}
+
+        {/* Assets on hand — bullion pocket-book that shows how much
+            currency + gold is physically sitting in India, Bangkok, and
+            in-transit right now. Tapping opens the Asset Map. */}
+        <AssetsOnHandCard txns={batches.data} onPress={() => router.push("/bullion" as never)} />
 
         {/* Warehouse card */}
         <TouchableOpacity
@@ -456,6 +463,132 @@ function countBy<T>(arr: T[], fn: (x: T) => boolean) {
   return n;
 }
 
+/**
+ * Compact "Assets on hand" widget for the dashboard. Shows Gold + top
+ * currencies broken down by physical location so the operator can
+ * eyeball where the money is without diving into the Bullion tab.
+ */
+function AssetsOnHandCard({ txns, onPress }: { txns: BullionTxn[]; onPress: () => void }) {
+  const totals = computeAssetTotals(txns);
+  const totalGoldBaht =
+    totals.vault_in.gold_baht + totals.vault_th.gold_baht + totals.in_transit.gold_baht;
+  const allCurrencies = new Set<string>();
+  (["vault_in", "vault_th", "in_transit"] as const).forEach((loc) => {
+    Object.keys(totals[loc].currencies).forEach((c) => allCurrencies.add(c));
+  });
+  const currencyList = [...allCurrencies];
+  const anyCurrency = currencyList.some(
+    (c) =>
+      (totals.vault_in.currencies[c] || 0) +
+        (totals.vault_th.currencies[c] || 0) +
+        (totals.in_transit.currencies[c] || 0) >
+      0,
+  );
+  const hasAny = totalGoldBaht > 0 || anyCurrency;
+
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={onPress} testID="assets-on-hand-card">
+      <Card>
+        <View style={styles.aohHead}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.aohEyebrow}>Assets on hand</Text>
+            <Text style={styles.aohTitle}>Vault snapshot</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
+        </View>
+        {!hasAny ? (
+          <Text style={styles.aohEmpty}>
+            No bullion in play yet. Log a currency or gold trade to see it here.
+          </Text>
+        ) : (
+          <View style={styles.aohBody}>
+            {/* Gold row */}
+            {totalGoldBaht > 0 ? (
+              <View style={styles.aohGroup}>
+                <View style={styles.aohGroupHead}>
+                  <Ionicons name="diamond" size={13} color="#F5C518" />
+                  <Text style={styles.aohGroupTitle}>Gold on hand</Text>
+                  <Text style={styles.aohGroupTotal}>
+                    {formatBaht(totalGoldBaht)} baht
+                  </Text>
+                </View>
+                <View style={styles.aohSplitRow}>
+                  <SplitPill
+                    label="India"
+                    value={`${formatBaht(totals.vault_in.gold_baht)} baht`}
+                    tint={colors.warn}
+                  />
+                  <SplitPill
+                    label="Bangkok"
+                    value={`${formatBaht(totals.vault_th.gold_baht)} baht`}
+                    tint={colors.info}
+                  />
+                  <SplitPill
+                    label="In transit"
+                    value={`${formatBaht(totals.in_transit.gold_baht)} baht`}
+                    tint={colors.lime}
+                  />
+                </View>
+              </View>
+            ) : null}
+            {/* Currency rows — one per ccy so USD/AED etc. don't collide */}
+            {currencyList.map((c) => {
+              const totalForCcy =
+                (totals.vault_in.currencies[c] || 0) +
+                (totals.vault_th.currencies[c] || 0) +
+                (totals.in_transit.currencies[c] || 0);
+              if (totalForCcy <= 0) return null;
+              return (
+                <View key={c} style={styles.aohGroup}>
+                  <View style={styles.aohGroupHead}>
+                    <Ionicons name="cash-outline" size={13} color={colors.lime} />
+                    <Text style={styles.aohGroupTitle}>{c} on hand</Text>
+                    <Text style={styles.aohGroupTotal}>
+                      {totalForCcy.toLocaleString()} {c}
+                    </Text>
+                  </View>
+                  <View style={styles.aohSplitRow}>
+                    <SplitPill
+                      label="India"
+                      value={(totals.vault_in.currencies[c] || 0).toLocaleString()}
+                      tint={colors.warn}
+                    />
+                    <SplitPill
+                      label="Bangkok"
+                      value={(totals.vault_th.currencies[c] || 0).toLocaleString()}
+                      tint={colors.info}
+                    />
+                    <SplitPill
+                      label="In transit"
+                      value={(totals.in_transit.currencies[c] || 0).toLocaleString()}
+                      tint={colors.lime}
+                    />
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </Card>
+    </TouchableOpacity>
+  );
+}
+
+function SplitPill({ label, value, tint }: { label: string; value: string; tint: string }) {
+  return (
+    <View style={[styles.splitPill, { borderColor: tint }]}>
+      <Text style={[styles.splitPillLbl, { color: tint }]}>{label}</Text>
+      <Text style={styles.splitPillVal}>{value}</Text>
+    </View>
+  );
+}
+
+function formatBaht(n: number): string {
+  if (n === 0) return "0";
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xl, gap: spacing.md },
@@ -580,4 +713,78 @@ const styles = StyleSheet.create({
   recDim: { color: colors.textDim, fontSize: 11, marginTop: 2 },
   trackMini: { height: 4, backgroundColor: "#1c1c1c", borderRadius: 2, overflow: "hidden", marginTop: 10 },
   trackFillMini: { height: "100%", backgroundColor: colors.lime, borderRadius: 2 },
+  // Assets on hand widget
+  aohHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  aohEyebrow: {
+    color: colors.textDim,
+    fontSize: 10,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  aohTitle: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  aohEmpty: {
+    color: colors.textDim,
+    fontSize: 12,
+    fontStyle: "italic",
+    marginTop: 12,
+  },
+  aohBody: {
+    marginTop: spacing.md,
+    gap: spacing.md,
+  },
+  aohGroup: {
+    gap: 8,
+  },
+  aohGroupHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  aohGroupTitle: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    flex: 1,
+  },
+  aohGroupTotal: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  aohSplitRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  splitPill: {
+    flex: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radii.md,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: colors.chipBg,
+    alignItems: "center",
+  },
+  splitPillLbl: {
+    fontSize: 9,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  splitPillVal: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 2,
+  },
 });

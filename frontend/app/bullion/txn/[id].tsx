@@ -59,6 +59,13 @@ export default function TxnScreen() {
   const [weightKg, setWeightKg] = useState(existing?.weight_kg?.toString() || "");
   const [status, setStatus] = useState<TxnStatus>(existing?.status || "open");
   const [notes, setNotes] = useState(existing?.notes || "");
+  // Vault location — user picks India / Bangkok when creating. When a
+  // trip is assigned later the txn flips to in_transit automatically.
+  const [vaultLocation, setVaultLocation] = useState<"vault_in" | "vault_th">(
+    (existing?.location === "vault_th" || existing?.location === "vault_in")
+      ? existing.location
+      : (existing?.type === "gold" ? "vault_th" : "vault_in"),
+  );
   const [pickTrip, setPickTrip] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -126,11 +133,18 @@ export default function TxnScreen() {
   const save = async () => {
     setBusy(true);
     try {
+      // Derive current physical location: trip assigned → in_transit,
+      // completed → delivered, otherwise the vault the user picked.
+      const effectiveLocation =
+        (status === "completed")
+          ? "delivered"
+          : (tripId ? "in_transit" : vaultLocation);
       const basePayload = {
         type,
         trip_id: tripId,                       // fully optional — trip can be null
         weight_kg: draft.weight_kg,
         notes,
+        location: effectiveLocation,
         currency: type === "currency" ? currency : undefined,
         currency_amount: draft.currency_amount,
         purchase_rate_inr: draft.purchase_rate_inr,
@@ -249,6 +263,51 @@ export default function TxnScreen() {
               </TouchableOpacity>
             ) : null}
           </Field>
+
+          {/* Vault location — where the asset physically sits when it's
+              NOT on a trip. Auto-flips to "in transit" whenever the user
+              assigns a trip above; hidden entirely once assigned. */}
+          {!trip ? (
+            <Field label="Vault location">
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {([
+                  { key: "vault_in" as const, label: "🇮🇳 India Vault" },
+                  { key: "vault_th" as const, label: "🇹🇭 Bangkok Vault" },
+                ]).map((opt) => {
+                  const active = vaultLocation === opt.key;
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      onPress={() => setVaultLocation(opt.key)}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 999,
+                        alignItems: "center",
+                        backgroundColor: active ? colors.lime : colors.chipBg,
+                        borderColor: active ? colors.lime : colors.border,
+                        borderWidth: 1,
+                      }}
+                      testID={`vault-${opt.key}`}
+                    >
+                      <Text
+                        style={{
+                          color: active ? colors.bg : colors.text,
+                          fontWeight: "800",
+                          fontSize: 12,
+                        }}
+                      >
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={{ color: colors.textDim, fontSize: 11, marginTop: 6 }}>
+                This is where the physical asset sits right now. Flips to &ldquo;In transit&rdquo; when you assign a trip.
+              </Text>
+            </Field>
+          ) : null}
 
           <Field label="Weight consumed on trip (kg, optional)">
             <TextInput

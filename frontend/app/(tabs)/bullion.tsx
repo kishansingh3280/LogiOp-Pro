@@ -25,6 +25,7 @@ import { defaultAirports } from "@/src/bullion/airports";
 import { FlightMap } from "@/src/bullion/FlightMap";
 import { MarketTickerSlim } from "@/src/bullion/MarketTickerSlim";
 import { getRateHistory, setRates, useRates, type BullionRateHistoryEntry } from "@/src/bullion/rates";
+import { AssetMap } from "@/src/bullion/AssetMap";
 import { usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import { FYPicker } from "@/src/components/fy-picker";
 import { useFY } from "@/src/context/fy-context";
@@ -39,7 +40,7 @@ import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
 import { isInFY } from "@/src/utils/fy";
 
-type View_ = "trades" | "trips";
+type View_ = "trades" | "trips" | "map";
 type Filter = "all" | "currency" | "gold" | "open" | "completed";
 
 export default function BullionScreen() {
@@ -127,11 +128,14 @@ export default function BullionScreen() {
       </View>
 
       <View style={styles.segRow}>
-        <SegBtn label="Trading history" active={view === "trades"} onPress={() => setView("trades")} testID="bullion-tab-trades" />
-        <SegBtn label="Carrier trips" active={view === "trips"} onPress={() => setView("trips")} testID="bullion-tab-trips" />
+        <SegBtn label="Trades" active={view === "trades"} onPress={() => setView("trades")} testID="bullion-tab-trades" />
+        <SegBtn label="Trips" active={view === "trips"} onPress={() => setView("trips")} testID="bullion-tab-trips" />
+        <SegBtn label="Asset map" active={view === "map"} onPress={() => setView("map")} testID="bullion-tab-map" />
       </View>
 
-      {view === "trades" ? (
+      {view === "map" ? (
+        <AssetMap txns={txns.data} />
+      ) : view === "trades" ? (
         <FlatList
           data={filtered}
           keyExtractor={(t) => t.id}
