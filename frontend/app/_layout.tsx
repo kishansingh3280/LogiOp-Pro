@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from "@/src/auth/context";
 import { ToastHost } from "@/src/components/toast";
 import { FYProvider } from "@/src/context/fy-context";
 import { ScreenContextProvider } from "@/src/context/screen-context";
+import { GhostUserProvider } from "@/src/ghost/ghost-user";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { colors } from "@/src/theme";
 
@@ -59,17 +60,19 @@ export default function RootLayout() {
         <AuthProvider>
           <FYProvider>
             <ScreenContextProvider>
-              <StatusBar style="light" />
-              <AuthGate>
-                <Stack
-                  screenOptions={{
-                    headerShown: false,
-                    contentStyle: { backgroundColor: colors.bg },
-                    animation: "slide_from_right",
-                  }}
-                />
-              </AuthGate>
-              <ToastHost />
+              <GhostUserProvider>
+                <StatusBar style="light" />
+                <AuthGate>
+                  <Stack
+                    screenOptions={{
+                      headerShown: false,
+                      contentStyle: { backgroundColor: colors.bg },
+                      animation: "slide_from_right",
+                    }}
+                  />
+                </AuthGate>
+                <ToastHost />
+              </GhostUserProvider>
             </ScreenContextProvider>
           </FYProvider>
         </AuthProvider>

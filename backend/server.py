@@ -30,6 +30,7 @@ from auth import (  # noqa: E402
     require_roles,
     audit_stamp,
 )
+from lalamove import router as lalamove_router  # noqa: E402
 from bson import ObjectId
 from jwt.exceptions import InvalidTokenError
 
@@ -373,6 +374,10 @@ async def bullion_create_txn(txn: BullionTransaction, request: Request):
                 except (ValueError, IndexError):
                     pass
         doc["txn_no"] = f"TXN-{str(max_n + 1).zfill(3)}"
+    # Initialise `remaining_weight_kg` for partial-split tracking. On create,
+    # nothing is allocated yet so remaining == weight.
+    if "remaining_weight_kg" not in doc or doc.get("remaining_weight_kg") is None:
+        doc["remaining_weight_kg"] = float(doc.get("weight_kg") or 0)
     doc.update(audit_stamp(request, creating=True, source=request.state.audit_source))
     await db.bullion_transactions.insert_one(doc.copy())
     return _clean_mongo_id(doc)
@@ -395,6 +400,97 @@ async def bullion_delete_txn(txn_id: str):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Transaction not found")
     return {"ok": True}
+
+
+class BullionSplitPayload(BaseModel):
+    split_weight_kg: float
+    trip_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@api_router.post("/bullion/transactions/{txn_id}/split")
+async def bullion_split_txn(txn_id: str, payload: BullionSplitPayload, request: Request):
+    """Split a parent bullion transaction — carve off `split_weight_kg` into
+    a NEW child transaction (linked via `parent_id`) and reduce the parent's
+    `remaining_weight_kg`.
+
+    The parent retains its full historical rate snapshot (immutable audit
+    trail). The child inherits the parent's rate snapshot and metadata, and
+    is tagged with `trip_id` so the asset-map / trip aggregation picks it up.
+
+    Rules:
+    - `split_weight_kg` must be > 0 and ≤ current remaining.
+    - A parent with `remaining_weight_kg == 0` is fully allocated and
+      further splits are rejected.
+    """
+    parent = await db.bullion_transactions.find_one({"id": txn_id})
+    if not parent:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if parent.get("parent_id"):
+        raise HTTPException(status_code=400, detail="Cannot split a child transaction; split the parent")
+
+    original_weight = float(parent.get("weight_kg") or 0)
+    remaining = float(parent.get("remaining_weight_kg", original_weight))
+    if remaining <= 0:
+        raise HTTPException(status_code=400, detail="Transaction is fully allocated already")
+    split = float(payload.split_weight_kg)
+    if split <= 0 or split > remaining + 1e-9:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Split weight must be between 0 and remaining ({remaining})",
+        )
+
+    # Verify the trip exists (soft check — allow None for unassigned splits).
+    trip_doc = None
+    if payload.trip_id:
+        trip_doc = await db.bullion_trips.find_one({"id": payload.trip_id})
+        if not trip_doc:
+            raise HTTPException(status_code=404, detail="Trip not found")
+
+    # Auto-generate a child txn_no from the parent's txn_no.
+    parent_txn_no = str(parent.get("txn_no") or "").strip()
+    existing_children = await db.bullion_transactions.count_documents({"parent_id": txn_id})
+    child_suffix = chr(ord("a") + existing_children)  # a, b, c…
+    child_txn_no = f"{parent_txn_no}-{child_suffix}" if parent_txn_no else None
+
+    child_doc = {
+        **{k: v for k, v in parent.items() if k not in ("_id", "id", "txn_no", "remaining_weight_kg", "splits")},
+        "id": str(uuid.uuid4()),
+        "parent_id": txn_id,
+        "trip_id": payload.trip_id,
+        "weight_kg": split,
+        "remaining_weight_kg": split,  # a child is fully allocated to itself
+        "txn_no": child_txn_no,
+        "notes": (payload.notes or parent.get("notes") or ""),
+    }
+    child_doc.update(audit_stamp(request, creating=True, source=request.state.audit_source))
+    await db.bullion_transactions.insert_one(child_doc.copy())
+
+    # Update parent's remaining + split log.
+    new_remaining = round(remaining - split, 6)
+    split_entry = {
+        "child_id": child_doc["id"],
+        "child_txn_no": child_txn_no,
+        "weight_kg": split,
+        "trip_id": payload.trip_id,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "by": getattr(request.state, "audit_username", None) or "system",
+    }
+    parent_updates = {
+        "remaining_weight_kg": new_remaining,
+        "modified_at": datetime.now(timezone.utc).isoformat(),
+        "modified_by": getattr(request.state, "audit_username", None) or "system",
+    }
+    await db.bullion_transactions.update_one(
+        {"id": txn_id},
+        {"$set": parent_updates, "$push": {"splits": split_entry}},
+    )
+
+    fresh_parent = await db.bullion_transactions.find_one({"id": txn_id})
+    return {
+        "parent": _clean_mongo_id(fresh_parent or {}),
+        "child": _clean_mongo_id(child_doc),
+    }
 
 
 @api_router.get("/bullion/rates")
@@ -756,12 +852,20 @@ _ASSISTANT_SYSTEM_HI = """
 6. यदि screen_context दिया गया है, तो पहला जवाब उसी संदर्भ से शुरू करें
    (उदा. "सर, मैं देख रहा हूँ आप Invoice INV-042 पर हैं जहाँ ABC Trader का ₹5.2 लाख pending है। क्या मदद करूँ?")
 
-उपलब्ध कार्रवाइयाँ (JSON action names):
-- navigate — {"action":"navigate","route":"/invoices"}
-- add_bag — {"action":"add_bag","party_name":"...","weight_kg":5}
-- update_ledger — {"action":"update_ledger","party_name":"...","debit":1000,"credit":0,"description":"..."}
-- carrier_update — {"action":"carrier_update","consignment_no":"...","status":"delivered"}
-- create_party — {"action":"create_party","name":"...","role":"buyer|seller|carrier"}
+उपलब्ध कार्रवाइयाँ (JSON action names) — केवल एक JSON action per reply:
+- navigate — {"action":"navigate","route":"/invoices"}     (auto-execute)
+- create_party — {"action":"create_party","name":"Ramesh","role":"customer","city":"Chennai","phone":"+91..","notes":"..."}
+  (role must be one of: customer, supplier, end_customer, carrier)
+- create_item — {"action":"create_item","name":"Chana","unit":"kg","hsn_code":"0713"}
+- update_ledger — {"action":"update_ledger","party_name":"ABC Trader","debit":50000,"credit":0,"description":"Advance"}
+- carrier_update — {"action":"carrier_update","consignment_no":"CN-042","status":"delivered","notes":"handed over"}
+- add_bag — {"action":"add_bag","shipment_ref":"CN-042","weight_kg":5,"notes":"..."}
+
+महत्वपूर्ण:
+- write actions (create_party / update_ledger / carrier_update / add_bag / create_item) पर app एक confirmation dialog दिखाएगा — इसलिए action के बाद 
+  "किशन सर, confirm करें?" जैसी लाइन जोड़ें।
+- navigate auto-execute होता है, बस routing action + एक शांत confirmation line दें।
+- यदि पूरा data नहीं है (जैसे party role नहीं पता), तो पहले सर से पूछें, action बाद में करें।
 """
 
 
@@ -998,6 +1102,9 @@ async def assistant_stt(request: Request):
 
 
 app.include_router(api_router)
+# Lalamove endpoints — mounted under /api/lalamove/*. Registered BEFORE the
+# catch-all proxy so its paths don't get forwarded to the remote backend.
+app.include_router(lalamove_router)
 
 app.add_middleware(
     CORSMiddleware,

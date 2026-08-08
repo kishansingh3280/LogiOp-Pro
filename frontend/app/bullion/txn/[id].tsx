@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { maybePostCarrierFee } from "@/src/bullion/ledger-sync";
 import { useRates } from "@/src/bullion/rates";
+import { SplitSheet } from "@/src/bullion/SplitSheet";
 import { createTxn, deleteTxn, updateTxn, usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import {
   computeTxn,
@@ -68,6 +69,7 @@ export default function TxnScreen() {
   );
   const [pickTrip, setPickTrip] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
 
   useEffect(() => {
     // Sync all form fields from the loaded transaction when it arrives async.
@@ -433,6 +435,52 @@ export default function TxnScreen() {
             </TouchableOpacity>
           )}
 
+          {/* Split / partial allocation section — only when editing an existing
+              PARENT transaction with weight remaining. Children (`parent_id`)
+              cannot be further split. */}
+          {!isNew && existing && !existing.parent_id && (existing.weight_kg || 0) > 0 && (
+            <View style={styles.splitSection}>
+              <View style={styles.splitHead}>
+                <Ionicons name="cut-outline" size={16} color={colors.lime} />
+                <Text style={styles.splitTitle}>Partial split</Text>
+              </View>
+              <SplitSummary txn={existing} />
+              {(existing.remaining_weight_kg ?? existing.weight_kg ?? 0) > 0 && trips.data.length > 0 ? (
+                <TouchableOpacity
+                  onPress={() => setSplitOpen(true)}
+                  style={styles.splitCta}
+                  testID="split-open"
+                >
+                  <Ionicons name="git-branch-outline" size={16} color="#000" />
+                  <Text style={styles.splitCtaText}>Split &amp; assign to another trip</Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.splitLocked}>
+                  {(existing.remaining_weight_kg ?? 0) <= 0
+                    ? "Fully allocated — no more splits possible."
+                    : "Add at least one trip before splitting."}
+                </Text>
+              )}
+              {existing.splits && existing.splits.length > 0 && (
+                <View style={styles.splitLog}>
+                  <Text style={styles.splitLogTitle}>SPLIT HISTORY</Text>
+                  {existing.splits.map((s, i) => {
+                    const trip = trips.data.find((t) => t.id === s.trip_id);
+                    return (
+                      <View key={i} style={styles.splitLogRow}>
+                        <Ionicons name="return-down-forward" size={12} color={colors.textDim} />
+                        <Text style={styles.splitLogText}>
+                          {s.child_txn_no || "child"} · {s.weight_kg} {existing.gold_unit || "kg"}
+                          {trip ? ` → ${trip.carrier_name || "trip"} · ${shortDate(trip.date)}` : ""}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          )}
+
           <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={busy} testID="save-txn-btn">
             <Text style={styles.saveText}>{busy ? "Saving…" : isNew ? "Create trade" : "Save changes"}</Text>
           </TouchableOpacity>
@@ -440,6 +488,18 @@ export default function TxnScreen() {
           <View style={{ height: 40 }} />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <SplitSheet
+        txn={existing}
+        trips={trips.data}
+        visible={splitOpen}
+        onClose={() => setSplitOpen(false)}
+        onDone={async () => {
+          setSplitOpen(false);
+          await txns.refresh();
+          await trips.refresh();
+        }}
+      />
 
       {pickTrip && (
         <Pressable style={styles.backdrop} onPress={() => setPickTrip(false)}>
@@ -484,6 +544,40 @@ export default function TxnScreen() {
   );
 }
 
+function SplitSummary({ txn }: { txn: BullionTxn }) {
+  const original = txn.weight_kg || 0;
+  const remaining =
+    typeof txn.remaining_weight_kg === "number" ? txn.remaining_weight_kg : original;
+  const assigned = Math.max(0, original - remaining);
+  const pct = original > 0 ? Math.round((assigned / original) * 100) : 0;
+  const unit = txn.gold_unit || "kg";
+  return (
+    <View style={{ gap: 6 }}>
+      <View style={styles.splitStats}>
+        <View>
+          <Text style={styles.splitStatLbl}>ORIGINAL</Text>
+          <Text style={styles.splitStatVal}>{original} {unit}</Text>
+        </View>
+        <View>
+          <Text style={styles.splitStatLbl}>ASSIGNED</Text>
+          <Text style={[styles.splitStatVal, { color: colors.info }]}>
+            {assigned} {unit}
+          </Text>
+        </View>
+        <View>
+          <Text style={styles.splitStatLbl}>REMAINING</Text>
+          <Text style={[styles.splitStatVal, { color: remaining > 0 ? colors.warn : colors.ok }]}>
+            {remaining} {unit}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.splitBar}>
+        <View style={[styles.splitBarFill, { width: `${pct}%` }]} />
+      </View>
+    </View>
+  );
+}
+
 function parseFloatOrUndef(s: string): number | undefined {
   const n = parseFloat(s);
   return Number.isFinite(n) && n > 0 ? n : undefined;
@@ -522,6 +616,52 @@ function Row({ label, value, tint, bold, muted }: { label: string; value: string
 }
 
 const styles = StyleSheet.create({
+  splitSection: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radii.lg,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(255,255,255,0.02)",
+    gap: 10,
+  },
+  splitHead: { flexDirection: "row", alignItems: "center", gap: 6 },
+  splitTitle: { color: colors.text, fontSize: 14, fontWeight: "800" },
+  splitStats: { flexDirection: "row", justifyContent: "space-between" },
+  splitStatLbl: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+  },
+  splitStatVal: { color: colors.text, fontSize: 14, fontWeight: "700", marginTop: 2 },
+  splitBar: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    overflow: "hidden",
+  },
+  splitBarFill: { height: "100%", backgroundColor: colors.info },
+  splitCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: radii.pill,
+    backgroundColor: colors.lime,
+  },
+  splitCtaText: { color: "#000", fontWeight: "800", fontSize: 13 },
+  splitLocked: {
+    color: colors.textDim,
+    fontSize: 11,
+    textAlign: "center",
+    fontStyle: "italic",
+  },
+  splitLog: { gap: 4, marginTop: 6, paddingTop: 8, borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth },
+  splitLogTitle: { color: colors.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 0.6 },
+  splitLogRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  splitLogText: { color: colors.textMuted, fontSize: 11 },
   safe: { flex: 1, backgroundColor: colors.bg },
   headBar: {
     flexDirection: "row", alignItems: "center",

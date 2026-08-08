@@ -26,6 +26,7 @@ import { FlightMap } from "@/src/bullion/FlightMap";
 import { MarketTickerSlim } from "@/src/bullion/MarketTickerSlim";
 import { getRateHistory, setRates, useRates, type BullionRateHistoryEntry } from "@/src/bullion/rates";
 import { AssetMap } from "@/src/bullion/AssetMap";
+import { SplitSheet } from "@/src/bullion/SplitSheet";
 import { usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import { FYPicker } from "@/src/components/fy-picker";
 import { useFY } from "@/src/context/fy-context";
@@ -52,6 +53,7 @@ export default function BullionScreen() {
   const [filter, setFilter] = useState<Filter>("all");
   const [fabOpen, setFabOpen] = useState(false);
   const [editRates, setEditRates] = useState(false);
+  const [splitTarget, setSplitTarget] = useState<BullionTxn | null>(null);
   const rates = useRates();
 
   const partyMap = useMemo(() => {
@@ -253,6 +255,50 @@ export default function BullionScreen() {
                       ? `${shortDate(trip.date)} · ${partyMap[trip.carrier_party_id || ""]?.name || trip.carrier_name || "Carrier"}`
                       : "No trip assigned"}
                   </Text>
+                  {/* Partial-split state chip + inline split button */}
+                  {(() => {
+                    const isChild = !!item.parent_id;
+                    const original = item.weight_kg || 0;
+                    const remaining =
+                      typeof item.remaining_weight_kg === "number"
+                        ? item.remaining_weight_kg
+                        : original;
+                    const wasSplit = original > 0 && remaining < original;
+                    const canSplit = !isChild && remaining > 0 && trips.data.length > 0 && original > 0;
+                    const unit = (item.gold_unit as string | undefined) || "kg";
+                    return (
+                      <View style={styles.splitInline}>
+                        {isChild ? (
+                          <View style={styles.childChip}>
+                            <Ionicons name="git-branch-outline" size={10} color={colors.info} />
+                            <Text style={styles.childChipText}>SPLIT CHILD</Text>
+                          </View>
+                        ) : wasSplit ? (
+                          <View style={styles.remainChip}>
+                            <Ionicons name="pie-chart-outline" size={10} color={colors.warn} />
+                            <Text style={styles.remainChipText}>
+                              {remaining} {unit} left
+                            </Text>
+                          </View>
+                        ) : null}
+                        {canSplit ? (
+                          <Pressable
+                            onPress={(e) => {
+                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                              (e as any).stopPropagation?.();
+                              setSplitTarget(item as BullionTxn);
+                            }}
+                            hitSlop={6}
+                            style={styles.splitBtn}
+                            testID={`split-btn-${item.txn_no}`}
+                          >
+                            <Ionicons name="cut-outline" size={12} color={colors.lime} />
+                            <Text style={styles.splitBtnText}>Split</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    );
+                  })()}
                 </View>
               </TouchableOpacity>
             );
@@ -367,6 +413,18 @@ export default function BullionScreen() {
           }}
         />
       )}
+
+      <SplitSheet
+        txn={splitTarget}
+        trips={trips.data}
+        visible={!!splitTarget}
+        onClose={() => setSplitTarget(null)}
+        onDone={async () => {
+          setSplitTarget(null);
+          await txns.refresh();
+          await trips.refresh();
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -755,7 +813,29 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 4,
     marginTop: 6, paddingTop: 6, borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth,
   },
-  txnFootText: { color: colors.textDim, fontSize: 11 },
+  txnFootText: { color: colors.textDim, fontSize: 11, flex: 1 },
+  splitInline: { flexDirection: "row", alignItems: "center", gap: 6 },
+  remainChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: radii.pill,
+    backgroundColor: "rgba(255,176,32,0.12)",
+    borderColor: "rgba(255,176,32,0.35)", borderWidth: StyleSheet.hairlineWidth,
+  },
+  remainChipText: { color: colors.warn, fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
+  childChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: radii.pill,
+    backgroundColor: "rgba(125,249,255,0.10)",
+    borderColor: "rgba(125,249,255,0.30)", borderWidth: StyleSheet.hairlineWidth,
+  },
+  childChipText: { color: colors.info, fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
+  splitBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: radii.pill,
+    borderColor: colors.lime, borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(198,255,0,0.08)",
+  },
+  splitBtnText: { color: colors.lime, fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
   tripCard: {
     backgroundColor: colors.surface, borderRadius: radii.lg,
     borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth,

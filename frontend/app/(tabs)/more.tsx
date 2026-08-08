@@ -58,6 +58,22 @@ export default function MoreScreen() {
         { key: "lalamove", label: "Lalamove orders", icon: "bicycle-outline", href: "/lalamove" },
       ],
     },
+    ...(user?.role === "Admin"
+      ? [
+          {
+            title: "Admin",
+            rows: [
+              {
+                key: "admin",
+                label: "Admin console",
+                icon: "shield-checkmark-outline" as const,
+                href: "/admin",
+                hint: "Users · audit · health",
+              },
+            ] as Row[],
+          },
+        ]
+      : []),
     {
       title: "Data",
       rows: [

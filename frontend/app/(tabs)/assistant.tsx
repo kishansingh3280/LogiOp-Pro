@@ -36,6 +36,7 @@ import { API_BASE } from "@/src/api/client";
 import { useAuth } from "@/src/auth/context";
 import { LiveOrb, type LiveOrbMode } from "@/src/components/live-orb";
 import { useScreenContext } from "@/src/context/screen-context";
+import { useGhostUser } from "@/src/ghost/ghost-user";
 import { useMicLevel } from "@/src/hooks/use-mic-level";
 import { colors, radii, spacing } from "@/src/theme";
 
@@ -50,6 +51,7 @@ export default function AssistantScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const { describeForAI, route } = useScreenContext();
+  const ghost = useGhostUser();
   const mic = useMicLevel();
 
   const [mode, setMode] = useState<LiveOrbMode>("idle");
@@ -234,8 +236,9 @@ export default function AssistantScreen() {
         }
         setMessages((prev) => [...prev, { role: "assistant", text: full, at: Date.now() }]);
         setStreaming("");
-        // Trigger a Ghost-User execution flow if the AI emitted a JSON tool call.
-        maybeHandleAction(full, router);
+        // Dispatch to the Ghost-User engine — read actions auto-execute,
+        // writes get a confirmation modal with a ghost cursor pantomime.
+        ghost.parseAndRun(full).catch(() => undefined);
         // Speak the reply (strips JSON blocks).
         speak(full).catch(() => undefined);
       } catch (e) {
@@ -245,7 +248,7 @@ export default function AssistantScreen() {
         setMode("idle");
       }
     },
-    [describeForAI, router, speak, user],
+    [describeForAI, ghost, speak, user],
   );
 
   // Hold-to-talk. On press we start mic; on release we stop, POST the
@@ -413,20 +416,9 @@ export default function AssistantScreen() {
  * navigation. Full ghost-user form-fill is coming in the next phase; for
  * now `navigate` and simple no-ops are handled.
  */
-function maybeHandleAction(reply: string, router: ReturnType<typeof useRouter>) {
-  const match = reply.match(/```json\s*([\s\S]*?)```/);
-  if (!match) return;
-  try {
-    const obj = JSON.parse(match[1].trim());
-    if (!obj || typeof obj !== "object") return;
-    if (obj.action === "navigate" && typeof obj.route === "string") {
-      // Small delay so the user sees the confirmation line first.
-      setTimeout(() => router.push(obj.route as never), 400);
-    }
-    // TODO: ghost-fill / carrier_update / ledger_entry etc. — Phase D.
-  } catch {
-    /* not valid JSON — ignore */
-  }
+function _legacyMaybeHandleAction(_reply: string, _router: ReturnType<typeof useRouter>) {
+  // Superseded by useGhostUser().parseAndRun in AssistantScreen. Retained as
+  // a no-op stub in case any external caller is still referencing it.
 }
 
 /** Strip ```json``` code fences so TTS doesn't read curly braces aloud. */

@@ -38,6 +38,30 @@ export interface BullionTxn {
   // Optional — currency carries usually leave this blank / 0.
   weight_kg?: number;
 
+  // ---- Partial-split tracking ----
+  /**
+   * When set, this txn is a CHILD split off from another (`parent_id`).
+   * Children are always fully allocated to a single trip (or unassigned)
+   * and cannot be split again.
+   */
+  parent_id?: string | null;
+  /**
+   * Weight still available for further splits. On a fresh txn this equals
+   * `weight_kg`. After a split of `w` kg, it decreases by `w`. When it
+   * reaches 0 the txn is fully allocated and no more splits are allowed.
+   * Absent on legacy rows — the UI treats missing as "== weight_kg".
+   */
+  remaining_weight_kg?: number;
+  /** Audit log of every split carved off this parent. */
+  splits?: {
+    child_id: string;
+    child_txn_no?: string | null;
+    weight_kg: number;
+    trip_id?: string | null;
+    at: string;   // ISO
+    by: string;   // username
+  }[];
+
   // ---- Vault location ----
   /**
    * Where the physical asset currently sits.

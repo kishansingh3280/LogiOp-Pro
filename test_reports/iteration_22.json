@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 22 — 4-phase feature run (A: Users Admin CRUD, B: Bullion partial-split, C: Ghost-User proxy + assistant reply, D: Lalamove graceful degradation) plus auth regression and audit-stamp verification. Created /app/backend/tests/test_iter22_admin_bullion_ghost_lalamove.py with 27 tests across 6 classes. Result: 27/27 pass (100%). Highlights: (1) Auth regression clean — kishan login returns honorific=Sir + JWT; /auth/me works; /auth/users returns all 3 seeded users for Admin, 403 for Staff/Carrier. (2) Users Admin CRUD full flow: register testuser22 → 409 on dup → PATCH renames display_name+role Staff→Carrier (verified via GET) → delete-self returns 400 ('Cannot delete yourself') → Staff DELETE returns 403 → Admin DELETE returns 200 and GET confirms gone. (3) Bullion split parent(10kg): first split 4kg → parent.remaining=6, splits.len=1, child.txn_no ends '-a', child has parent_id + trip_id + weight=4 + audit stamps; second split 6kg → parent.remaining=0, splits.len=2, child suffix '-b'; third split → 400 ('fully allocated'); over-split (6kg on a 5kg parent) → 400 'must be between 0 and remaining'; split on a child → 400 'Cannot split a child…'. All split test data cleaned up. (4) Ghost-User via proxy: POST /api/parties with header X-Entry-Source: ai + Bearer kishan token + role='customer' returned 200 with name/role/id from the remote backend — audit-injection middleware works on proxied writes. (5) Assistant SSE reply for 'Anita Sharma… party banao': fenced JSON block parsed with {action:create_party, name:Anita Sharma, role:customer, city:Bangalore}; honorific 'किशन सर' present in reply. (6) Lalamove graceful degradation: /config returns configured:false + sandbox:true; POST /quote returns 503 with detail.error='lalamove_not_configured'; GET /orders returns 200 list; HMAC signature helper produces well-formed 'hmac K:<ts>:<sha256hex>' output. (7) Audit stamps on bullion writes: POST /transactions stamps created_by=kishan/modified_by=kishan/entry_source=manual by default, entry_source=ai when X-Entry-Source: ai; remaining_weight_kg equals weight_kg on create. NOTE on SSE-framing bug tracked in iter21: server.py now emits per-line `data:` frames (fix applied at server.py:965-968), so the assistant response IS reachable by proper SSE clients. However the LLM occasionally pretty-prints JSON with embedded newlines that fragment across chunks; the frontend's parser (src/ghost/ghost-user.tsx) must therefore strip control chars inside fenced JSON before json.parse — flagged as an action item.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/assistant/chat",
+        "issue": "Claude occasionally streams a fenced JSON block as multi-chunk TextDeltas where the raw newline inside the JSON body (e.g. `{\\n\"action\":\"create_party\"…`) ends up split across two adjacent `data:` frames. Server-side SSE framing is correct after the iter21 fix, but a naive client json.parse of the fenced block will hit 'Invalid control character' unless it strips \\n/\\r/\\t inside the fenced body first. Not a server bug per-se — file this against the frontend parser in src/ghost/ghost-user.tsx."
+      },
+      {
+        "endpoint": "/api/auth/users PATCH",
+        "issue": "PATCH accepts arbitrary role strings. Should validate against Role enum (Admin/Staff/Carrier). Same finding as iter21 — still not fixed."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Ghost-User create_party JSON tool-call parsing",
+        "issue": "Once the LLM emits create_party JSON with pretty-printing (newlines inside body), a strict JSON.parse in the frontend confirmation flow will fail. Recommend stripping [\\n\\r\\t] between `{` and matching `}` (after extracting the fenced block) before JSON.parse in src/ghost/ghost-user.tsx.",
+        "affected_testIDs": ["ghost-confirm-modal", "ghost-user-json-preview"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter22_admin_bullion_ghost_lalamove.py",
+    "/app/test_reports/pytest/iter22_results.xml"
+  ],
+  "action_items": [
+    "Frontend (src/ghost/ghost-user.tsx): before JSON.parse on the fenced ```json``` block, strip \\n / \\r / \\t chars inside the body to survive pretty-printed model output — otherwise the confirmation modal will silently drop legitimate create_party payloads.",
+    "server.py PATCH /auth/users: validate `role` value against Role enum to prevent an admin from accidentally setting a bogus role that locks the account out of RBAC checks.",
+    "Optional: expand test_c1_create_party_via_proxy_ai to assert the remote party record carries created_by=kishan / modified_by=kishan / entry_source=ai (requires a GET verification). Skipped in this run because the remote GET /api/parties/{id} shape isn't documented and this would flake if the remote suppresses those fields."
+  ],
+  "critical_code_review_comments": [
+    "server.py is still 1240+ lines — exceeds the 700-line guideline. Split into routers/ (auth, bullion, wingman, assistant, proxy) for maintainability.",
+    "bullion split endpoint (server.py:411-493): child inherits `trip_id` from payload but the trip's `available_weight_kg` is NEVER decremented. Aggregations that trust trip.available_weight_kg will drift as splits accumulate. Consider either decrementing on split or documenting that trip.available_weight_kg is a soft cap only.",
+    "server.py:453 child_suffix uses ord('a') + count_documents — if a child is later deleted then a new split happens, the new child re-uses the deleted letter and can duplicate a txn_no. Prefer computing from max(existing suffix)+1 or use uuid-based suffix.",
+    "lalamove._auth_header uses `int(time.time()*1000)` — Lalamove v3 requires ms epoch. Correct. But the KEY/SECRET are read at import time so hot-reloading .env keys requires backend restart — worth documenting or reading env on each call."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter22_admin_bullion_ghost_lalamove.py (new)",
+    "/app/test_reports/pytest/iter22_results.xml (new)",
+    "/app/test_reports/iteration_22.json (new)"
+  ],
+  "success_rate": {"backend": "100% (27/27)", "frontend": "not tested (backend-only run)"},
+  "seed_data_creation": "No new seed data. Test-created data: testuser22 user (register/patch/delete cycle) — cleaned up in test_a6. Bullion trip + parent txn + 2 child splits + 1 over-test parent — all deleted in test_b9_cleanup. 2 audit-stamp bullion txns — deleted in-test. 1 remote party TEST_iter22_ghost_party — deleted in test_c2.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "iter22 features are all green server-side. If iter23 touches the Ghost-User frontend parser or Bullion SplitSheet.tsx, focus regression on: (1) frontend JSON.parse of Claude fenced blocks with embedded newlines (see minor issues), (2) the split-child suffix collision after deletion, (3) trip.available_weight_kg drift after splits. Lalamove endpoints will keep returning 503 on /quote until real keys land in backend/.env — that's expected.",
+  "rca_of_issue": "N/A — no critical bug this iteration. The single test-run failure encountered mid-run was a test-side reassembly artifact (my SSE line-joiner inserted \\n between adjacent chunks, corrupting a fenced JSON body). Fixed by stripping control chars inside the extracted block before json.loads and normalizing key whitespace. The same care will be needed in the frontend parser."
+}
