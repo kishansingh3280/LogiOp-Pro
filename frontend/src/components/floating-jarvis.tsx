@@ -55,10 +55,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { API_BASE } from "@/src/api/client";
 import { getAuthTokenSync, useAuth } from "@/src/auth/context";
 import { getCachedBlockers, useBlockers } from "@/src/components/blocker-bell";
+import { setCloud, subscribeCloud, type CloudMsg } from "@/src/components/jarvis-store";
 import { LiveOrb, type LiveOrbMode } from "@/src/components/live-orb";
 import { useScreenContext } from "@/src/context/screen-context";
 import { useGhostUser } from "@/src/ghost/ghost-user";
 import { useMicLevel } from "@/src/hooks/use-mic-level";
+import { useWakeWord } from "@/src/hooks/use-wake-word";
 import { colors, radii, spacing } from "@/src/theme";
 import { speakStreaming, type StreamingTtsHandle } from "@/src/utils/tts-stream";
 
@@ -76,9 +78,9 @@ const BUBBLE_MARGIN_RIGHT = 14;
 
 type Msg = { role: "user" | "assistant"; text: string; at: number };
 
-// Where NOT to show the bubble (assistant tab has its own big orb; sign-in
-// is pre-auth so there's no assistant to talk to yet).
-const HIDE_ON = new Set<string>(["/assistant", "/sign-in", "/(tabs)/assistant"]);
+// Where NOT to show the bubble. Only the sign-in gate — the Assistant
+// tab was removed and this floater IS the assistant now.
+const HIDE_ON = new Set<string>(["/sign-in"]);
 
 export function FloatingJarvis() {
   const pathname = usePathname();
@@ -86,6 +88,38 @@ export function FloatingJarvis() {
   const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
+  // Message-Cloud: subscribes to the module-level store so it stays fresh
+  // even after the popup unmounts. When the popup / live-mode is OPEN we
+  // suppress the cloud (they already show the message inline).
+  const [cloudMsg, setCloudMsgState] = useState<CloudMsg | null>(null);
+  useEffect(() => {
+    const unsub = subscribeCloud((m) => setCloudMsgState(m));
+    return unsub;
+  }, []);
+  // Auto-dismiss stale cloud messages after 8s.
+  useEffect(() => {
+    if (!cloudMsg) return;
+    const stale = 8_000 - (Date.now() - cloudMsg.at);
+    if (stale <= 0) {
+      setCloud(null);
+      return;
+    }
+    const t = setTimeout(() => setCloud(null), stale);
+    return () => clearTimeout(t);
+  }, [cloudMsg]);
+
+  // Wake-word listener (web-only). Say "Assistant" / "Wingman" and the
+  // floater opens Live Mode automatically. Paused while any modal /
+  // popup is active so we don't fight the recorder for the mic stream.
+  useWakeWord({
+    enabled: !!user && !expanded && !liveMode,
+    onWake: () => {
+      // eslint-disable-next-line no-console
+      console.log("[jarvis] wake-word detected — entering Live Mode");
+      setExpanded(false);
+      setLiveMode(true);
+    },
+  });
 
   // Bubble breath pulse.
   const pulse = useRef(new Animated.Value(0)).current;
@@ -214,6 +248,43 @@ export function FloatingJarvis() {
           { bottom: bubbleBottom, right: BUBBLE_MARGIN_RIGHT },
         ]}
       >
+        {/* Message Cloud — appears when Jarvis has a fresh reply and no
+            popup / live-mode is open. Chirps up from the bubble as a
+            small glassmorphic pill with the latest text. Tapping it
+            opens the full popup so the operator can read the transcript
+            or reply. */}
+        {cloudMsg && !expanded && !liveMode ? (
+          <Pressable
+            style={styles.cloudWrap}
+            onPress={() => {
+              setCloud(null);
+              setExpanded(true);
+            }}
+            hitSlop={4}
+            testID="jarvis-cloud"
+          >
+            <View style={styles.cloud}>
+              <Text style={styles.cloudText} numberOfLines={3}>
+                {cloudMsg.text.replace(/```json[\s\S]*?```/g, "").trim()}
+              </Text>
+              <Pressable
+                style={styles.cloudDismiss}
+                onPress={(e) => {
+                  // Prevent parent Pressable from firing.
+                  e.stopPropagation?.();
+                  setCloud(null);
+                }}
+                hitSlop={6}
+                testID="jarvis-cloud-dismiss"
+              >
+                <Ionicons name="close" size={12} color={colors.textMuted} />
+              </Pressable>
+            </View>
+            {/* Tail arrow pointing down toward the bubble. */}
+            <View style={styles.cloudTail} pointerEvents="none" />
+          </Pressable>
+        ) : null}
+
         <Pressable
           onPress={() => setExpanded((prev) => !prev)}
           style={styles.bubbleBtn}
@@ -397,6 +468,9 @@ function JarvisPopup({ onClose, onGoLive }: { onClose: () => void; onGoLive: () 
         setMessages((prev) => [...prev, { role: "assistant", text: full, at: Date.now() }]);
         setStreaming("");
         scrollToEnd();
+        // Publish to the cloud store so if the operator closes the popup
+        // the bubble can still chirp the reply as a speech bubble.
+        setCloud({ text: full, at: Date.now() });
         // Ghost-user dispatches on the background page (which is fully
         // interactive because this popup isn't a Modal).
         void ghost.parseAndRun(full).catch(() => undefined);
@@ -686,6 +760,9 @@ function LiveMode({ onClose }: { onClose: () => void }) {
         }
       }
       messagesRef.current = [...messagesRef.current, { role: "assistant", text: full, at: Date.now() }];
+      // Publish to cloud store — if the operator ends Live Mode while the
+      // reply is still on screen, the bubble chirps it as a cloud.
+      setCloud({ text: full, at: Date.now() });
       // Ghost dispatches happen on the background page — user hears the
       // spoken confirmation while the ghost fills the form.
       void ghost.parseAndRun(full).catch(() => undefined);
@@ -876,6 +953,63 @@ const styles = StyleSheet.create({
     shadowOpacity: 1,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 0 },
+  },
+
+  // ------------------- Message Cloud -------------------
+  cloudWrap: {
+    position: "absolute",
+    // Anchored to the bubble; sits just above and slightly to the left
+    // so the tail visually connects to the bubble's top.
+    right: 6,
+    bottom: BUBBLE_SIZE + 6,
+    alignItems: "flex-end",
+    maxWidth: 260,
+    zIndex: 1000,
+  },
+  cloud: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radii.lg,
+    borderBottomRightRadius: 4,
+    backgroundColor: "rgba(6, 12, 24, 0.94)",
+    borderColor: colors.borderStrong,
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 12,
+  },
+  cloudText: {
+    color: colors.text,
+    fontSize: 12,
+    lineHeight: 16,
+    flex: 1,
+  },
+  cloudDismiss: {
+    width: 16,
+    height: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  cloudTail: {
+    // Little downward-pointing triangle glued to the cloud's bottom-right
+    // corner, aimed at the bubble beneath.
+    position: "absolute",
+    right: 12,
+    bottom: -6,
+    width: 12,
+    height: 12,
+    backgroundColor: "rgba(6, 12, 24, 0.94)",
+    borderRightColor: colors.borderStrong,
+    borderBottomColor: colors.borderStrong,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    transform: [{ rotate: "45deg" }],
   },
 
   // ------------------- Popup shell -------------------

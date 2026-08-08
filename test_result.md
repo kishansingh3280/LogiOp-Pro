@@ -1641,3 +1641,63 @@ agent_communication:
               - Tap orb to end phrase early; tap × to exit
               - Ghost-User dispatches still work on the background
                 page while Live Mode is showing
+
+  - task: "Iter30 · Floating-first Assistant refactor (tab removed + cloud + wake word)"
+    implemented: true
+    working: true
+    file: "frontend/app/(tabs)/{_layout,assistant}.tsx (tab removed + redirect), frontend/src/components/floating-jarvis.tsx (message cloud + wake word wiring), frontend/src/components/jarvis-store.ts (new), frontend/src/hooks/use-wake-word.ts (new)"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Restructured all AI interaction to be floater-first.
+          
+          1) Removed the /assistant tab entirely.
+             - (tabs)/_layout.tsx TABS array no longer includes it
+             - (tabs)/assistant.tsx now just <Redirect href="/" />
+             - FloatingJarvis HIDE_ON set trimmed to just /sign-in so the
+               bubble shows on every authenticated screen
+             - Tab bar now shows 5 tabs (Overview/Shipments/Invoices/
+               Bullion/More) — cleaner and more thumb-friendly
+          
+          2) Message Cloud (speech bubble). New module-level pub/sub in
+             src/components/jarvis-store.ts stores the last AI reply so
+             the cloud can render even after the popup unmounts. Cloud:
+             - Small glassmorphic pill anchored just above the bubble
+               with a downward-pointing tail
+             - Chirps up on every new AI reply from either the popup
+               or Live Mode (setCloud is called after full response)
+             - Auto-dismisses after 8s from generation timestamp
+             - Suppressed while popup or Live Mode is open
+             - Tap the cloud → opens the full popup
+             - Little × on the cloud dismisses it early
+          
+          3) Wake-word listener. New src/hooks/use-wake-word.ts:
+             - Web: SpeechRecognition (webkitSpeechRecognition) in
+               continuous mode, listening for "assistant" / "wingman" /
+               "hey jarvis" / "hey wingman"
+             - Only starts if mic permission is already 'granted' so we
+               never nag for permission just to poll for a wake word
+             - Auto-restarts on recogniser 'end' with a fallback 1s
+               retry if start() throws
+             - Paused while popup / Live Mode is open (they need the mic)
+             - Native: no-op — porcupine/vosk libraries add too much
+               bundle weight for MVP; press-to-open still works
+             - On detection → opens Live Mode automatically
+          
+          4) Ghost-User narration unchanged and still works because the
+             popup + Live Mode both dispatch ghost actions on the
+             background page (they're not blocking Modals for the popup;
+             LiveMode is a Modal but ghost.parseAndRun runs BEFORE
+             speakStreaming so navigation + typing happens while TTS is
+             narrating the confirmation).
+          
+          Verified via Playwright:
+          - Tab bar has 5 tabs (no Assistant)
+          - Floating bubble visible on Dashboard/Shipments/Invoices/
+            Bullion/More
+          - Sending a chat → closing the popup → cloud pops up with the
+            latest reply ("Sab badhiya hai Sir, aapki seva mein …")
+          - Cloud has a close X and auto-dismisses after 8s

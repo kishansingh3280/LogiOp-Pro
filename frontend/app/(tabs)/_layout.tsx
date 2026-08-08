@@ -17,7 +17,7 @@ import { colors, radii } from "@/src/theme";
 // under the sticky glassmorphic tab bar.
 export const TAB_BAR_BOTTOM_PAD = 96;
 
-type TabName = "index" | "shipments" | "invoices" | "assistant" | "bullion" | "more";
+type TabName = "index" | "shipments" | "invoices" | "bullion" | "more";
 
 interface TabDef {
   name: TabName;
@@ -25,10 +25,13 @@ interface TabDef {
   icon: keyof typeof Ionicons.glyphMap;
 }
 
+// The Assistant tab was removed — all AI interactions now live in the
+// FloatingJarvis bubble which is rendered globally at the app root and
+// visible on every screen. The tab bar reads cleaner at 5 items and the
+// Assistant is always one thumb-tap away.
 const TABS: TabDef[] = [
   { name: "index", title: "Overview", icon: "grid-outline" },
   { name: "shipments", title: "Shipments", icon: "cube-outline" },
-  { name: "assistant", title: "Assistant", icon: "hardware-chip-outline" }, // centre brain
   { name: "invoices", title: "Invoices", icon: "document-text-outline" },
   { name: "bullion", title: "Bullion", icon: "diamond-outline" },
   { name: "more", title: "More", icon: "ellipsis-horizontal" },
