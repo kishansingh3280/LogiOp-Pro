@@ -1,0 +1,98 @@
+{
+  "totals": {
+    "shipments": 35,
+    "invoices": 20,
+    "bullion_trips": 8,
+    "bullion_txns": 43,
+    "created_records": 191
+  },
+  "ytd_fy_2026_27": {
+    "shipments": 35,
+    "invoices": 20,
+    "bullion_records": 43
+  },
+  "asset_map": {
+    "counts_by_location": {
+      "vault_in": 20,
+      "vault_th": 5,
+      "in_transit": 18,
+      "delivered": 0
+    },
+    "gold_baht_by_location": {
+      "vault_in": 0.0,
+      "vault_th": 29.0,
+      "in_transit": 6.0
+    },
+    "usd_by_location": {
+      "vault_in": 29600.0,
+      "vault_th": 0.0,
+      "in_transit": 22400.0
+    }
+  },
+  "dashboard_snapshot": {
+    "pending": null,
+    "in_transit": null,
+    "delivered": null,
+    "warehouse_arrived": null
+  },
+  "ledger_summary": {
+    "receivable": {
+      "inr": 1900.0,
+      "thb": 747970.0
+    },
+    "payable": {
+      "inr": 118470.0,
+      "thb": 35225.0
+    },
+    "top_get": [
+      {
+        "id": "1da2a72a-f8f7-4271-809a-9be99c36aa14",
+        "name": "jirawat",
+        "inr": 0.0,
+        "thb": 191830.0
+      },
+      {
+        "id": "654c516b-34a2-4434-804d-f0ebfc04e3e7",
+        "name": "Aashna Exports",
+        "inr": 0.0,
+        "thb": 169800.0
+      },
+      {
+        "id": "c142229b-fa3b-4453-95f3-8cf476cc45eb",
+        "name": "Vinod Jaipur",
+        "inr": 0.0,
+        "thb": 138460.0
+      }
+    ],
+    "top_give": [
+      {
+        "id": "afad2068-6d96-433e-ab1d-1f1a0d81cef6",
+        "name": "Raj Hand-Carrier",
+        "inr": -54740.0,
+        "thb": 0.0
+      },
+      {
+        "id": "5b5e8b02-acfa-4e62-b397-a70e2abad908",
+        "name": "Suresh Carrier",
+        "inr": -50480.0,
+        "thb": 0.0
+      },
+      {
+        "id": "fbead648-0d4d-4779-8ed7-83d8b36e29be",
+        "name": "Somchai",
+        "inr": 0.0,
+        "thb": -35225.0
+      }
+    ]
+  },
+  "calc_freight_carrier_check": true,
+  "errors_during_run": [],
+  "created_by_this_run": {
+    "shipments": 35,
+    "bags": 85,
+    "invoices": 20,
+    "bullion_trips": 8,
+    "bullion_txns_vault": 25,
+    "bullion_txns_split": 18
+  }
+}

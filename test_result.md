@@ -467,3 +467,149 @@ agent_communication:
       testIDs on invoice/new + party/new (flagged in report). Report:
       /app/test_reports/iteration_17.json
 
+
+# --- FY 2026-27 Stress Test & Data Reset (iteration 18) -------------------
+# The operator asked for a full DB reset + 100 diverse linked transactions
+# scoped to FY 2026-27, followed by an end-to-end verification sweep.
+#
+# What the main agent executed via /app/tests/stress_test_fy26_27.py:
+#   1. Deleted 3 invoices, 9 shipments, 3 bullion txns, 1 bullion trip, and
+#      any lingering shipment/invoice/bullion ledger entries.
+#   2. Preserved all parties (7 customers, 3 end customers, 3 carriers, 3 suppliers).
+#   3. Generated 191 fresh records dated within 2026-04-01 to 2027-03-31:
+#         35 shipments (each with 1-4 bags, distinct bill-to per bag)
+#         85 bags
+#         20 invoices (70% linked to a shipment)
+#         8 bullion carrier trips
+#         25 bullion vault-buy transactions (currency in India, gold in BKK)
+#         18 bullion split transactions (partial qty from a vault buy →
+#            trip, parent qty reduced accordingly)
+#   4. Wrote /app/tests/stress_report_fy26_27.json summarising totals,
+#      YTD counts, asset map buckets, ledger summary, dashboard snapshot.
+#
+# Stress test rules encoded:
+#   - Currency carrier fee: 500 INR per $1,000 (snapshotted onto each txn)
+#   - Gold carrier fee:     2,500 INR per baht (snapshotted onto each txn)
+#   - Hand-carry shipments: 200 INR/kg carrier pay, 1.5× markup to bill
+#   - Ledger fan-out per bag when bill_to differs from shipment party_id
+#
+# The testing agent is being invoked next to independently confirm.
+
+backend:
+  - task: "FY 2026-27 stress test — DB reset + 100 linked txns + calc verify"
+    implemented: true
+    working: true
+    file: "tests/stress_test_fy26_27.py, tests/stress_report_fy26_27.json"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Iteration 18 verification complete. 9/10 backend checks PASS (1
+          skipped, see below). All 3 frontend checks PASS.
+          (a) DATA STATE — PASS. /api/shipments=35 (all within 2026-04-01
+              …2027-03-31), /api/invoices=20 (all in-FY), /api/bullion/
+              transactions=43 with 18 having parent_id (splits), /api/
+              bullion/trips=8.
+          (b) CALCULATIONS — PASS. Every txn has
+              rate_snapshot_currency_per_1000=500.0 and rate_snapshot_gold_
+              per_baht=2500.0. 3 currency + 3 gold sample fees verified
+              (amount/1000*500 & baht*2500).
+          (c) LEDGER — PASS. receivable.thb=747,970.0 (matches sim
+              report exactly), top_get has 3 customers (jirawat 191,830,
+              Aashna Exports 169,800, Vinod Jaipur 138,460).
+          (d) FIFO WAREHOUSE — SKIPPED / SCHEMA MISMATCH. /api/dashboard/
+              warehouse returns aggregate KPIs only (current_bags=0,
+              capacity_kg=5000, by_end_customer=[]) — no chronological
+              bag list to verify FIFO ordering. The 14 warehouse_arrived
+              shipments do carry warehouse_arrived_at at the shipment
+              level; endpoint just doesn't surface them here. Non-blocking.
+          (e) DASHBOARD YTD — PASS. shipments.total=35, in_transit=8,
+              pending=13, warehouse_arrived=14, delivered=0. 3 of 4
+              non-zero buckets (meets ≥3 threshold).
+          (f) FRONTEND ASSET MAP — PASS. /bullion → Asset map segment:
+              Vault (India) 20 assets, Vault (Bangkok) 5 assets / 29 baht
+              gold, In transit 18 assets / 6 baht + 22,400 USD.
+          (g) FRONTEND DASHBOARD WIDGET — PASS. ASSETS ON HAND card
+              renders after stats carousel with Gold on hand (35 baht =
+              0 India + 29 Bangkok + 6 in-transit), USD on hand (52,000
+              = 29,600 India + 0 Bangkok + 22,400 in-transit), plus SGD
+              & AED rows. Tapping card navigates to /bullion.
+          Performance — all endpoints <500ms (budget was 2s); full
+          10-test suite executed in 1.37s.
+          Report: /app/test_reports/iteration_18.json,
+          pytest xml: /app/test_reports/pytest/iter18_results.xml.
+          Only action item for main agent: consider surfacing a
+          FIFO-ordered bag list on /api/dashboard/warehouse (or sibling
+          endpoint) so criterion (d) can be programmatically verified.
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Ran /app/tests/stress_test_fy26_27.py successfully (0 errors)
+          against the preview URL. Please verify independently:
+
+          (a) DATA STATE — /api/shipments has exactly 35 records dated
+              inside FY 2026-27; /api/invoices has 20 records dated inside
+              FY 2026-27; /api/bullion/transactions has 43 total (25 vault
+              + 18 split, verifiable by presence of parent_id on 18); /api/
+              bullion/trips has 8. All 3 pre-existing bullion txns and 9
+              pre-existing shipments are gone.
+
+          (b) CALCULATIONS — for any currency txn returned by /api/bullion/
+              transactions, rate_snapshot_currency_per_1000 must equal 500
+              and the implied carrier fee (currency_amount / 1000 * 500)
+              matches what the frontend would render. Same check for gold
+              with rate_snapshot_gold_per_baht = 2500.
+
+          (c) LEDGER — /api/dashboard/ledger-summary must return non-zero
+              receivable.thb (should be ~747,970 THB from the sim) and the
+              top_get list must include at least 3 customers.
+
+          (d) FIFO — /api/dashboard/warehouse must report 14 warehouse-
+              arrived bags in FIFO order (oldest first).
+
+          (e) DASHBOARD YTD — /api/dashboard/stats must reflect
+              shipments.total=35 (or higher if other test runs left rows),
+              at minimum non-zero in_transit + pending + warehouse_arrived
+              buckets.
+
+          (f) ASSET MAP — the frontend Asset Map view on /bullion (tab
+              'Asset map') must render:
+                 Vault (India): 20 assets, USD totals visible
+                 Vault (Bangkok): 5 assets, gold ~29 baht total
+                 In transit: 18 assets
+
+          (g) DASHBOARD WIDGET — the 'Assets on hand' card on the main
+              dashboard tab must show Gold on hand (India / Bangkok /
+              In transit pills) and USD on hand splits matching (f).
+
+          Preview URL:
+          https://native-logistics-hub.preview.emergentagent.com/
+          Backend: same host + /api
+
+metadata:
+  created_by: "main_agent"
+  version: "4.0"
+  test_sequence: 18
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "FY 2026-27 stress test — DB reset + 100 linked txns + calc verify"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Executed the FY 2026-27 stress test at
+      /app/tests/stress_test_fy26_27.py. All 191 records created without
+      errors. Report at /app/tests/stress_report_fy26_27.json.
+      Please independently verify (a) - (g) above via the backend REST
+      layer AND the frontend UI (Asset Map + Dashboard widget).
+      Feel free to write additional pytest smoke tests but the primary
+      goal is end-to-end verification, not exhaustive coverage.
+
