@@ -1,0 +1,56 @@
+{
+  "summary": "Iteration 21 — Auth (JWT+RBAC) + Audit stamping + Assistant honorifics/screen-context/navigation. Created /app/backend/tests/test_iter21_auth_audit_assistant.py with 25 tests across 8 classes covering every item in the review request. Result: 25/25 pass (100%). All 3 seed users authenticate correctly, RBAC works (Staff/Carrier get 403 on /auth/users and /auth/register), Admin-only PATCH/DELETE gated, admin-cannot-delete-self returns 400, change-password 401 on wrong current + full roundtrip works. Bullion writes stamp created_by=kishan/modified_by=kishan/entry_source=manual by default and 'ai' via X-Entry-Source header; PUT correctly preserves created_by while updating modified_by (verified staff editing a kishan-created trip). Bullion transactions auto-generate TXN-### and carry audit fields. Proxy audit injection: POST /api/parties (remote) succeeds as kishan (role fixed to 'customer' — remote schema didn't accept 'buyer'). Assistant chat honors both Sir and Boss honorifics, echoes screen_context (referenced 'INV-042' and 'Lalit'), and emits a JSON action=navigate block with route=/invoices for nav intent. /api/wingman/health still returns ok. IMPORTANT bug discovered while parsing SSE: /api/assistant/chat emits multi-line Claude content via `yield f\"data: {content}\\n\\n\"` — when content itself contains `\\n\\n` (e.g. around ```json ... ``` blocks) the SSE frame terminator gets injected mid-frame, so standard SSE parsers on the client see the JSON tool-call as an orphan message body outside any data frame. The frontend tool-call parser will therefore fail to extract navigate/add_bag/etc. blocks reliably.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/assistant/chat",
+        "issue": "SSE-framing bug: server yields `data: {event.content}\\n\\n` but Claude's text chunks can contain embedded `\\n\\n` (e.g. around fenced ```json``` tool blocks). The embedded blank line terminates the SSE frame prematurely, so subsequent content leaks outside any `data:` frame. Standard SSE parsers (EventSource in the browser, Expo's fetch-based reader) will drop the JSON tool-call block entirely. Fix: escape newlines in event.content (replace \\n with a placeholder or emit one `data:` line per newline-split segment) OR base64-encode chunks. Reference: /app/backend/server.py:851 `yield f\"data: {event.content}\\n\\n\"`",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/assistant/chat",
+        "issue": "Claude occasionally splits Devanagari characters across multiple TextDelta frames (e.g. 'स' and 'र' as separate frames). Works fine for text rendering (client concatenates) but combined with the SSE-framing bug means the JSON block is even more fragile."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Assistant navigation tool call",
+        "issue": "Because of the SSE-framing bug above, the frontend cannot reliably receive/parse the {\"action\":\"navigate\",\"route\":\"/invoices\"} JSON block emitted by Claude. Ghost-User navigation via voice/chat will therefore silently fail on multi-line tool blocks even though the LLM is producing correct output. Backend testing agent did not test the UI here (backend-only run), but flagging for frontend regression once the SSE bug is fixed.",
+        "affected_testIDs": []
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter21_auth_audit_assistant.py",
+    "/app/test_reports/pytest/iter21_results.xml"
+  ],
+  "action_items": [
+    "Fix SSE framing in /app/backend/server.py::assistant_chat (line ~851). Recommended: for each TextDelta, emit each newline-separated segment as its own SSE frame, e.g. `for seg in event.content.split('\\n'): yield f'data: {seg}\\n'; yield '\\n'` (SSE spec: multiple data: lines then blank terminator). This preserves multi-line JSON tool blocks and keeps existing clients working.",
+    "After fixing SSE framing, re-run test_iter21_auth_audit_assistant.py::TestAssistantChat::test_navigation_intent_returns_json_action against the frontend Assistant screen to confirm the Ghost-User navigation flow works end-to-end.",
+    "Optional: Add a `X-Entry-Source` echo in bullion PUT responses (currently only stamped on create, not preserved on update) — low priority, review request only mandates it on create."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1123 lines — exceeds the 700-line guideline. Consider splitting auth/bullion/assistant/wingman/proxy routers into modules under /app/backend/routers/.",
+    "auth.py:81 — the module-level `_DUMMY_HASH` is computed at import time (bcrypt rounds=default). Fine for now but note: `auth_login` at server.py:134 hashes `\"dummy-timing\"` on every failed login (not using _DUMMY_HASH), which does extra work and slightly leaks timing when the user doesn't exist. Consider `_DUMMY_HASH` reuse.",
+    "server.py:1080-1095 — proxy audit injection silently swallows json.JSONDecodeError. Good defensive coding, but a warning log would help debug why some proxied requests don't get audit stamps.",
+    "server.py:189-190 — PATCH /auth/users allows updating `role` field; the code accepts any string. Should validate against Role enum to avoid accidentally setting an unknown role that then locks the user out of RBAC checks.",
+    "MongoDB `_id` correctly excluded from bullion responses via `_clean_mongo_id` (server.py:247)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter21_auth_audit_assistant.py (new)",
+    "/app/test_reports/pytest/iter21_results.xml (new)"
+  ],
+  "success_rate": {"backend": "100% (25/25)", "frontend": "not tested (backend-only run)"},
+  "seed_data_creation": "Ran `python /app/backend/seed_users.py` — idempotent seed of kishan/staff/carrier users. Created a temporary registered user during test_register_staff_by_admin_and_cleanup and cleaned it up. Created 2 bullion trips + 1 transaction with TEST_iter21_* prefix — all deleted in test_zzz_cleanup. Created a proxied party with TEST_iter21_party_* name; DELETE was attempted best-effort (remote may not honor delete).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auth/audit/assistant surface is solid (25/25 tests green). The one open issue is the SSE-framing bug on /api/assistant/chat (see backend_issues.critical) — it breaks JSON tool-block delivery to any spec-compliant SSE client. Once the main agent applies the fix suggested in action_items, re-run test_iter21_auth_audit_assistant.py to confirm nothing regresses. The test file's `_consume_sse` helper is intentionally lenient (concats all bytes) so it will KEEP passing even before the fix — but a proper SSE-compliant client on the frontend won't. Consider adding a separate UI/Playwright test that uses a spec-compliant EventSource once the fix is in.",
+  "rca_of_issue": "SSE-framing bug on /api/assistant/chat: root cause is line `yield f\"data: {event.content}\\n\\n\"` in server.py::assistant_chat.event_gen. Claude Sonnet's TextDelta.content can contain arbitrary characters including `\\n\\n`. Per SSE spec (https://html.spec.whatwg.org/#server-sent-events), an empty line terminates the current message. Injecting the model's newlines directly into the wire format therefore produces malformed multi-message frames. Reproduction: POST /api/assistant/chat with `{\"session_id\":\"x\",\"message\":\"मुझे invoices पर ले चलो\",\"honorific\":\"Sir\"}` and observe the raw stream — the ```json ... ``` block sits between two blank lines, outside any `data:` prefix. Mitigation options: (a) split content on '\\n' and emit one `data:` line per segment then a single blank terminator; (b) JSON-encode the content: `yield f'data: {json.dumps({\"t\":event.content})}\\n\\n'` (client decodes); (c) base64 the payload."
+}

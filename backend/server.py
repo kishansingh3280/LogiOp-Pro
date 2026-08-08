@@ -1,15 +1,37 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import json
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import Any, List, Optional, Dict
+from typing import Any, List, Optional, Dict, Annotated
 import uuid
 from datetime import datetime, timezone
 import httpx
+
+# Auth: JWT + RBAC + audit stamping. Imported early so the auth router can be
+# registered on api_router alongside the existing endpoints.
+from auth import (  # noqa: E402
+    Role,
+    UserPublic,
+    TokenResponse,
+    LoginPayload,
+    RegisterPayload,
+    hash_password,
+    verify_password,
+    create_access_token,
+    decode_token,
+    user_public,
+    get_current_user,
+    optional_current_user,
+    require_roles,
+    audit_stamp,
+)
+from bson import ObjectId
+from jwt.exceptions import InvalidTokenError
 
 
 ROOT_DIR = Path(__file__).parent
@@ -34,8 +56,43 @@ WINGMAN_API_KEY = os.environ.get("WINGMAN_API_KEY", "").strip()
 # Create the main app without a prefix
 app = FastAPI()
 
+# Expose db and JWT metadata on app.state so auth dependencies can reach them
+# without a circular import.
+app.state.db = db
+
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
+
+
+# ---------------------------------------------------------------------------
+# Audit middleware — decodes the bearer token (if any) and stashes the actor
+# username/role/id on request.state so every write can stamp created_by /
+# modified_by / entry_source without every endpoint doing it manually.
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def audit_actor_middleware(request: Request, call_next):
+    request.state.audit_user_id = None
+    request.state.audit_username = None
+    request.state.audit_role = None
+    request.state.audit_source = request.headers.get("x-entry-source", "manual")
+
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        try:
+            payload = decode_token(auth_header[7:])
+            uid = payload.get("sub")
+            if uid:
+                try:
+                    user_doc = await db.users.find_one({"_id": ObjectId(uid)})
+                except Exception:
+                    user_doc = None
+                if user_doc and not user_doc.get("disabled", False):
+                    request.state.audit_user_id = str(user_doc["_id"])
+                    request.state.audit_username = user_doc.get("username")
+                    request.state.audit_role = user_doc.get("role")
+        except InvalidTokenError:
+            pass
+    return await call_next(request)
 
 
 # Define Models
@@ -63,6 +120,121 @@ async def create_status_check(input: StatusCheckCreate):
 async def get_status_checks():
     status_checks = await db.status_checks.find().to_list(1000)
     return [StatusCheck(**status_check) for status_check in status_checks]
+
+
+# --------------------------------------------------------------------------
+# AUTH — JWT login + user management. All app screens gate on a token stored
+# in expo-secure-store. RBAC: Admin, Staff, Carrier.
+# --------------------------------------------------------------------------
+@api_router.post("/auth/login", response_model=TokenResponse)
+async def auth_login(payload: LoginPayload):
+    username = (payload.username or "").strip().lower()
+    user = await db.users.find_one({"username": username})
+    # Always run bcrypt to keep the response time constant (no user-enum leak).
+    stored_hash = user["password_hash"] if user else hash_password("dummy-timing")
+    if not user or not verify_password(payload.password, stored_hash) or user.get("disabled", False):
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+    token = create_access_token(str(user["_id"]))
+    return TokenResponse(access_token=token, user=user_public(user))
+
+
+@api_router.get("/auth/me", response_model=UserPublic)
+async def auth_me(user: Annotated[dict, Depends(get_current_user)]):
+    return user_public(user)
+
+
+@api_router.post("/auth/register", response_model=UserPublic)
+async def auth_register(
+    payload: RegisterPayload,
+    admin: Annotated[dict, Depends(require_roles(Role.ADMIN))],
+):
+    """Admin-only: create a new Staff / Carrier / Admin account."""
+    username = payload.username.strip().lower()
+    if await db.users.find_one({"username": username}):
+        raise HTTPException(status_code=409, detail="Username already exists")
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "username": username,
+        "password_hash": hash_password(payload.password),
+        "display_name": payload.display_name.strip(),
+        "role": payload.role.value,
+        "honorific": payload.honorific or "Sir",
+        "disabled": False,
+        "created_at": now,
+        "modified_at": now,
+        "created_by": admin.get("username", "system"),
+    }
+    result = await db.users.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return user_public(doc)
+
+
+@api_router.get("/auth/users", response_model=List[UserPublic])
+async def auth_list_users(admin: Annotated[dict, Depends(require_roles(Role.ADMIN))]):
+    docs = await db.users.find().sort("username", 1).to_list(500)
+    return [user_public(d) for d in docs]
+
+
+@api_router.patch("/auth/users/{user_id}")
+async def auth_update_user(
+    user_id: str,
+    patch: Dict[str, Any],
+    admin: Annotated[dict, Depends(require_roles(Role.ADMIN))],
+):
+    """Admin-only: update display_name, role, honorific, disabled, or password."""
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    allowed = {"display_name", "role", "honorific", "disabled"}
+    updates: Dict[str, Any] = {k: v for k, v in patch.items() if k in allowed}
+    if "password" in patch and patch["password"]:
+        updates["password_hash"] = hash_password(str(patch["password"]))
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    updates["modified_at"] = datetime.now(timezone.utc).isoformat()
+    updates["modified_by"] = admin.get("username", "system")
+    res = await db.users.update_one({"_id": oid}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}
+
+
+@api_router.delete("/auth/users/{user_id}")
+async def auth_delete_user(
+    user_id: str,
+    admin: Annotated[dict, Depends(require_roles(Role.ADMIN))],
+):
+    if str(admin.get("_id")) == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    res = await db.users.delete_one({"_id": oid})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}
+
+
+@api_router.post("/auth/change-password")
+async def auth_change_password(
+    payload: Dict[str, Any],
+    user: Annotated[dict, Depends(get_current_user)],
+):
+    current = str(payload.get("current_password") or "")
+    new_pw = str(payload.get("new_password") or "")
+    if len(new_pw) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 chars")
+    if not verify_password(current, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"password_hash": hash_password(new_pw),
+                  "modified_at": datetime.now(timezone.utc).isoformat(),
+                  "modified_by": user.get("username")}},
+    )
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------
@@ -149,20 +321,22 @@ async def bullion_list_trips():
 
 
 @api_router.post("/bullion/trips")
-async def bullion_create_trip(trip: BullionTrip):
+async def bullion_create_trip(trip: BullionTrip, request: Request):
     # Pydantic v1: use .dict() so `extra="allow"` fields are preserved.
     doc = trip.dict()
     # If the client sent the older `available_slots` but not `available_weight_kg`,
     # mirror the value so downstream aggregations keep working.
     if not doc.get("available_weight_kg") and doc.get("available_slots"):
         doc["available_weight_kg"] = float(doc["available_slots"])
+    doc.update(audit_stamp(request, creating=True, source=request.state.audit_source))
     await db.bullion_trips.insert_one(doc.copy())
     return _clean_mongo_id(doc)
 
 
 @api_router.put("/bullion/trips/{trip_id}")
-async def bullion_update_trip(trip_id: str, patch: Dict[str, Any]):
+async def bullion_update_trip(trip_id: str, patch: Dict[str, Any], request: Request):
     patch.pop("id", None)
+    patch.update(audit_stamp(request, creating=False))
     res = await db.bullion_trips.update_one({"id": trip_id}, {"$set": patch})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Trip not found")
@@ -185,7 +359,7 @@ async def bullion_list_txns():
 
 
 @api_router.post("/bullion/transactions")
-async def bullion_create_txn(txn: BullionTransaction):
+async def bullion_create_txn(txn: BullionTransaction, request: Request):
     doc = txn.dict()
     # Auto-generate TXN-### if missing.
     if not doc.get("txn_no"):
@@ -199,13 +373,15 @@ async def bullion_create_txn(txn: BullionTransaction):
                 except (ValueError, IndexError):
                     pass
         doc["txn_no"] = f"TXN-{str(max_n + 1).zfill(3)}"
+    doc.update(audit_stamp(request, creating=True, source=request.state.audit_source))
     await db.bullion_transactions.insert_one(doc.copy())
     return _clean_mongo_id(doc)
 
 
 @api_router.put("/bullion/transactions/{txn_id}")
-async def bullion_update_txn(txn_id: str, patch: Dict[str, Any]):
+async def bullion_update_txn(txn_id: str, patch: Dict[str, Any], request: Request):
     patch.pop("id", None)
+    patch.update(audit_stamp(request, creating=False))
     res = await db.bullion_transactions.update_one({"id": txn_id}, {"$set": patch})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -548,18 +724,44 @@ import asyncio
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
+# The Assistant's persona is hard-coded here so no client can weaken it.
+# Rules Kishan Sir explicitly asked for:
+#   1. Always address the operator as "Kishan Sir", "Sir", or "Boss". NEVER
+#      by first name alone.
+#   2. Polite / soft tone with customers (buyers, sellers).
+#   3. Direct / no-nonsense tone with carriers.
+#   4. Screen-aware — the client passes `screen_context` on every turn and
+#      the assistant must open a fresh greeting with what the user is
+#      currently looking at (e.g. "Sir, I see you are on Invoice INV-042 for
+#      ABC Trader — ₹5.2L pending. Kya karna hai?").
+#   5. Native Hindi (Devanagari) by default, code-switch to English for
+#      technical fields / numbers is fine.
+#   6. When the user asks for an action (e.g. "ललित के लिए बैग जोड़ो"), reply
+#      with a small JSON tool-call block wrapped in ```json ... ``` followed
+#      by a one-line spoken confirmation.
 _ASSISTANT_SYSTEM_HI = """
-आप एक विशेषज्ञ लॉजिस्टिक्स सहायक हैं जो एक भारतीय-थाई हैंड-कैरी बिज़नेस चलाने वाले
-ऑपरेटर के लिए काम करते हैं। हमेशा शुद्ध हिंदी (देवनागरी) में जवाब दें, संक्षिप्त
-और व्यावसायिक टोन में। दो-लाइन के भीतर उत्तर देने की कोशिश करें ताकि वॉइस पर सुनने
-में स्वाभाविक लगे।
+आप श्री किशन सर के निजी लॉजिस्टिक्स सहायक हैं। यह एक भारतीय-थाई हैंड-कैरी बिज़नेस है।
 
-जब उपयोगकर्ता कोई कार्रवाई माँगे (जैसे "ललित के लिए बैग जोड़ो"), तो केवल एक JSON
-ब्लॉक भी दें, जैसे:
-```json
-{"action":"add_bag","party_name":"ललित","weight_kg":5,"notes":"..."}
-```
-JSON के बाहर एक छोटी पुष्टि लाइन दें।
+अनिवार्य नियम:
+1. ऑपरेटर को हमेशा "किशन सर", "सर", या "बॉस" कहकर संबोधित करें। कभी भी सिर्फ पहला नाम ("Kishan") अकेला मत बोलिए।
+2. ग्राहकों / पार्टियों के साथ बात करते समय विनम्र और सम्मानजनक टोन। कैरियर से बात करते समय सीधी, नपी-तुली टोन।
+3. जवाब शुद्ध हिंदी (देवनागरी) में दें — तकनीकी शब्द (invoice, bag, kg) रह सकते हैं।
+4. संक्षिप्त रहें — दो-लाइन से ज़्यादा नहीं, ताकि आवाज़ पर सुनने में स्वाभाविक लगे।
+5. जब कार्रवाई माँगी जाए (bag जोड़ो, ledger update, party create) — एक JSON tool-call ब्लॉक दें
+   और नीचे एक छोटी confirmation लाइन:
+   ```json
+   {"action":"add_bag","party_name":"ललित","weight_kg":5,"notes":"..."}
+   ```
+   उसके बाद कहें "किशन सर, कर दिया?" या "बॉस, confirm करें?"
+6. यदि screen_context दिया गया है, तो पहला जवाब उसी संदर्भ से शुरू करें
+   (उदा. "सर, मैं देख रहा हूँ आप Invoice INV-042 पर हैं जहाँ ABC Trader का ₹5.2 लाख pending है। क्या मदद करूँ?")
+
+उपलब्ध कार्रवाइयाँ (JSON action names):
+- navigate — {"action":"navigate","route":"/invoices"}
+- add_bag — {"action":"add_bag","party_name":"...","weight_kg":5}
+- update_ledger — {"action":"update_ledger","party_name":"...","debit":1000,"credit":0,"description":"..."}
+- carrier_update — {"action":"carrier_update","consignment_no":"...","status":"delivered"}
+- create_party — {"action":"create_party","name":"...","role":"buyer|seller|carrier"}
 """
 
 
@@ -572,6 +774,13 @@ class AssistantChatRequest(BaseModel):
     session_id: str
     message: str
     history: List[AssistantMessage] = Field(default_factory=list)
+    # Optional: what the user is currently looking at. Sent on the FIRST
+    # turn of a session (and any turn after a navigation) so the assistant
+    # can open with a context-aware greeting.
+    screen_context: Optional[str] = None
+    # Operator's chosen honorific ("Sir" / "Boss" / "Ji"). Falls back to "Sir".
+    honorific: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 @api_router.post("/assistant/chat")
@@ -608,11 +817,24 @@ async def assistant_chat(req: AssistantChatRequest):
         _mem_cache_at = now_ts
     memory_block = ("\nरिकॉर्ड पैटर्न्स:\n" + "\n".join(_mem_cache)) if _mem_cache else ""
 
+    # Personal-address block — hard-wire the honorific into the system prompt
+    # for every turn so the assistant never slips back to first-name-only.
+    honorific = (req.honorific or "Sir").strip()
+    address_line = f"\nऑपरेटर का पूरा संबोधन: '{req.display_name or 'Kishan'} {honorific}'. हमेशा 'सर' / 'बॉस' / '{honorific}' का उपयोग करें।\n"
+
+    # Screen-context block — only sent when the client provided one.
+    ctx_block = ""
+    if req.screen_context:
+        ctx_block = (
+            f"\nस्क्रीन कॉन्टेक्स्ट (अभी उपयोगकर्ता क्या देख रहे हैं): {req.screen_context}\n"
+            "इस turn का पहला वाक्य इसी संदर्भ से शुरू करें।\n"
+        )
+
     chat = (
         LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=req.session_id,
-            system_message=_ASSISTANT_SYSTEM_HI + memory_block,
+            system_message=_ASSISTANT_SYSTEM_HI + address_line + ctx_block + memory_block,
         )
         .with_model("anthropic", "claude-sonnet-4-6")
     )
@@ -820,6 +1042,11 @@ async def proxy_to_remote_backend(path: str, request: Request):
     remote backend the Expo app is actually configured to hit. This keeps the
     deployment container's `/api/*` contract in sync with the mobile client
     without duplicating business logic locally.
+
+    Audit fields (`created_by`, `modified_by`, `entry_source`) are injected
+    into JSON bodies for mutating verbs so the remote backend can persist
+    them without any client cooperation. The acting user's id/role are also
+    forwarded as `X-Actor-*` headers.
     """
     if not REMOTE_BACKEND_URL:
         logger.error("REMOTE_BACKEND_URL is not configured; cannot proxy %s", path)
@@ -832,7 +1059,40 @@ async def proxy_to_remote_backend(path: str, request: Request):
     fwd_headers = {
         k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
     }
+    # Add actor identity for the remote backend to see (and log if it wants).
+    actor_username = getattr(request.state, "audit_username", None)
+    actor_role = getattr(request.state, "audit_role", None)
+    actor_id = getattr(request.state, "audit_user_id", None)
+    entry_source = getattr(request.state, "audit_source", "manual")
+    if actor_username:
+        fwd_headers["X-Actor-Username"] = actor_username
+    if actor_role:
+        fwd_headers["X-Actor-Role"] = actor_role
+    if actor_id:
+        fwd_headers["X-Actor-Id"] = actor_id
+    fwd_headers["X-Entry-Source"] = entry_source
+
     body = await request.body()
+
+    # For mutating verbs with JSON bodies, inject audit fields directly into
+    # the payload so the remote backend persists them even if it doesn't
+    # inspect our custom headers. Silent no-op on malformed / non-JSON.
+    if request.method in {"POST", "PUT", "PATCH"} and body:
+        try:
+            payload = json.loads(body)
+            if isinstance(payload, dict):
+                now_iso = datetime.now(timezone.utc).isoformat()
+                stamper = actor_username or "system"
+                if request.method == "POST":
+                    payload.setdefault("created_by", stamper)
+                    payload.setdefault("created_at", now_iso)
+                    payload.setdefault("entry_source", entry_source)
+                payload["modified_by"] = stamper
+                payload["modified_at"] = now_iso
+                body = json.dumps(payload).encode()
+                fwd_headers.pop("content-length", None)
+        except (json.JSONDecodeError, ValueError):
+            pass
 
     try:
         resp = await _proxy_client.request(

@@ -5,6 +5,7 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-nati
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { API_BASE, flushQueue, getQueue, subscribeQueue } from "@/src/api/client";
+import { useAuth } from "@/src/auth/context";
 import { colors, radii, spacing } from "@/src/theme";
 
 type Row = {
@@ -19,6 +20,7 @@ type Row = {
 
 export default function MoreScreen() {
   const router = useRouter();
+  const { user, signOut } = useAuth();
   const [pending, setPending] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<Date | null>(null);
@@ -68,6 +70,26 @@ export default function MoreScreen() {
         },
       ],
     },
+    {
+      title: "Account",
+      rows: [
+        {
+          key: "profile",
+          label: user ? `${user.display_name} ${user.honorific}` : "Guest",
+          icon: "person-circle-outline",
+          hint: user ? `${user.role} · @${user.username}` : undefined,
+        },
+        {
+          key: "signout",
+          label: "Sign out",
+          icon: "log-out-outline",
+          onPress: () => {
+            signOut().catch(() => undefined);
+          },
+          danger: true,
+        },
+      ],
+    },
   ];
 
   return (
@@ -93,11 +115,11 @@ export default function MoreScreen() {
                   ]}
                   testID={`more-${r.key}`}
                 >
-                  <View style={styles.rowIcon}>
-                    <Ionicons name={r.icon} size={18} color={colors.lime} />
+                  <View style={[styles.rowIcon, r.danger && styles.rowIconDanger]}>
+                    <Ionicons name={r.icon} size={18} color={r.danger ? colors.danger : colors.lime} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.rowLabel}>{r.label}</Text>
+                    <Text style={[styles.rowLabel, r.danger && { color: colors.danger }]}>{r.label}</Text>
                     {r.hint ? <Text style={styles.rowHint}>{r.hint}</Text> : null}
                   </View>
                   <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
@@ -155,6 +177,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  rowIconDanger: { backgroundColor: "rgba(248,113,113,0.12)" },
   rowLabel: { color: colors.text, fontSize: 15, fontWeight: "600" },
   rowHint: { color: colors.textDim, fontSize: 11, marginTop: 2 },
   about: {

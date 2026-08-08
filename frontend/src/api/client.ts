@@ -1,6 +1,7 @@
 // Minimal fetch client backed by AsyncStorage cache + offline mutation queue.
 import NetInfo from "@react-native-community/netinfo";
 
+import { getAuthTokenSync, getAuthUserSync } from "@/src/auth/context";
 import { storage } from "@/src/utils/storage";
 
 // Backend base URL — sourced exclusively from EXPO_PUBLIC_BACKEND_URL.
@@ -80,11 +81,25 @@ async function rawRequest<T>(method: Method, path: string, body?: unknown): Prom
   // stall.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20_000);
+  // Auth + audit headers — read fresh on every request so token rotation /
+  // sign-out is picked up without touching any callers.
+  const token = getAuthTokenSync();
+  const actor = getAuthUserSync();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Entry-Source": "manual",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (actor) {
+    headers["X-Actor-Username"] = actor.username;
+    headers["X-Actor-Role"] = actor.role;
+    headers["X-Actor-Id"] = actor.id;
+  }
   let res: Response;
   try {
     res = await fetch(url, {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
     });

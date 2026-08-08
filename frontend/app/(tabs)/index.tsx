@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { subscribeQueue, getQueue, flushQueue } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { DashboardStats, LedgerEntry, LedgerSummary, Shipment, WarehouseSummary } from "@/src/api/types";
+import { useAuth } from "@/src/auth/context";
 import { computeAssetTotals } from "@/src/bullion/AssetMap";
 import { useTrips, useTxns, usedWeightKgFor } from "@/src/bullion/store";
 import type { BullionTxn, CarrierTrip } from "@/src/bullion/types";
@@ -24,6 +25,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const tablet = useIsTablet();
   const { fy } = useFY();
+  const { user } = useAuth();
   const stats = useApi<DashboardStats>("/api/dashboard/stats");
   const warehouse = useApi<WarehouseSummary>("/api/dashboard/warehouse");
   const ledger = useApi<LedgerSummary>("/api/dashboard/ledger-summary");
@@ -104,7 +106,9 @@ export default function DashboardScreen() {
         {/* Header */}
         <View style={styles.header} testID="overview-header">
           <View style={{ flex: 1 }}>
-            <Text style={styles.eyebrow}>Welcome back, Admin</Text>
+            <Text style={styles.eyebrow}>
+              Welcome back, {user ? `${user.display_name} ${user.honorific}` : "Sir"}
+            </Text>
             <Text style={styles.title}>India <Text style={styles.lime}>⇄</Text> Thailand</Text>
             <Text style={styles.subtitle}>Live view of shipments, ledger and warehouse.</Text>
           </View>
