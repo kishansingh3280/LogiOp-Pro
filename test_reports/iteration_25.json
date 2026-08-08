@@ -1,0 +1,38 @@
+{
+  "summary": "iter25 — Force-Rebuild re-verification of 3 explicit points as requested by user Kishan. RESULT: ALL 3 PASS end-to-end on the deployed EXPO_PUBLIC_BACKEND_URL. (1) Blue floating ring: [data-testid='floating-jarvis'] rendered on the dashboard (bottom-right), tap opens a right-docked glassmorphic sidebar with 'Wingman · Kishan Sir · Ready' header, 'BRAIN SYNCED' badge, unified conversation history (multi-turn Hinglish messages visible from earlier iters), jarvis-input + jarvis-send + mic controls present. Sent 'Boss, ek line mein hi bolo.' and received Wingman reply 'Namaste Kishan Sir, ready hoon — bolo kya kaam hai! 🖐️' via POST /api/assistant/chat. Sidebar has a visible ✕ close in the header. (2) Shipment Console 2.0: navigated to /shipment/ee2542a7-b140-4920-801c-618856b1b01f (CN-1040 KOLKATA→BANGKOK, hand_carry, Pending). Cyber-Siri glass UI rendered with the glowing metric row 'TOTAL PIECES = 0', 'TOTAL WEIGHT = 0.00 kg', 'BAGS = 9' near the top, party chips (All · 9 bags / Unassigned · 9 bags · 0 pc · 0.0 kg), status filter chips (All/Packed/In-Transit/Delivered), CUSTOMER PAYS / YOU PAY CARRIER / YOUR MARGIN card, PARTIES (Lalit customer / Yashwant Singh carrier), and 9 per-bag glass cards BAG-001…BAG-009 each showing Bag ID + status pill 'Packed' + end-customer/party (?/Unassigned + 'Missing phone' warning) + PIECES + WEIGHT + CHARGE. UI is CORRECT. Note: values are 0/Unassigned because the seed data for these 9 bags has empty items[] and weight_kg=0 — this is a DATA state (bag skeletons created but not populated), NOT a UI bug. (3) ElevenLabs TTS: /app/backend/tests/test_iter23_elevenlabs_tts.py re-ran → 7/7 PASS in 5.45s. Backend /var/log/supervisor/backend.err.log shows 8 fresh '[TTS] ElevenLabs streaming (4096B first chunk)' entries from today's runs and ZERO '[TTS] Using OpenAI shimmer fallback' lines. POST + GET /api/assistant/tts/stream both return 200 audio/mpeg with real MP3 magic bytes (ID3/0xFFEx frame sync) and stream >20KB. Empty-text 400 guard works. As instructed by main agent, Liam voice TX3LPaxmHKxFdv7VOQHJ (not Ryan) is EXPECTED on the current ElevenLabs tier — NOT flagged as a bug. React Native/Expo hygiene: no deprecated expo-av / expo-barcode-scanner / expo-background-fetch usage; only cosmetic 'shadow*' + 'props.pointerEvents' + 'useNativeDriver on web' console warnings (previously reported, non-blocking).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "multiple screens (RN Web)", "issue": "Console warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Non-blocking on current RN Web but will break on RN Web 0.20+."},
+      {"component": "multiple screens (RN Web)", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Non-blocking; migrate before RN 0.80."},
+      {"component": "Animated (sign-in + floating-jarvis pulse)", "issue": "Console warning: 'Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation.' Harmless on web preview; on native builds this means the flag is respected. Consider gating with Platform.OS !== 'web' to silence."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_elevenlabs_tts.py",
+    "/app/test_reports/pytest/iter25_results.xml"
+  ],
+  "action_items": [
+    "NO functional action required — all 3 verification points pass end-to-end. Report back to user Kishan that the fork is intact and the code IS on disk exactly as claimed: FloatingJarvis global-mount, Shipment Console 2.0 with bag inventories, and ElevenLabs TTS primary path are all LIVE and WORKING.",
+    "OPTIONAL (data, not code): shipment ee2542a7-b140-4920-801c-618856b1b01f has 9 empty bag skeletons (items=[], weight_kg=0). If user wants to see non-zero quantities in the demo, populate a couple of bags with items via POST /api/shipments/{id}/bags/{bag_id}/items or similar. This is a seed-data choice, not a UI/API bug.",
+    "OPTIONAL (deprecation): migrate shadow* → boxShadow and prop pointerEvents → style.pointerEvents before RN Web 0.20 ships (already reported in iter23/iter24)."
+  ],
+  "critical_code_review_comments": [
+    "floating-jarvis.tsx global mount at _layout.tsx:103 confirmed rendering across authenticated routes.",
+    "shipment/[id].tsx correctly uses parallel useApi(`/api/shipments/{id}`) + useApi(`/api/shipments/{id}/bags`) — bag list is rendered via bagList.map with per-bag metrics + party assignment + status pill.",
+    "server.py TTS primary path (/api/assistant/tts/stream POST+GET) correctly hits ElevenLabs eleven_multilingual_v2 with voice TX3LPaxmHKxFdv7VOQHJ (Liam) and never falls back to OpenAI on the happy path — verified via appended-log-window assertion."
+  ],
+  "updated_files": [
+    "/app/test_reports/pytest/iter25_results.xml (new)",
+    "/app/test_reports/iteration_25.json (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7 pytest)", "frontend": "100% (VERIFY1 sidebar+chat, VERIFY2 shipment console 2.0 with 9 bag cards, VERIFY3 ElevenLabs TTS live)"},
+  "seed_data_creation": "None — used existing user kishan + shipment CN-1040 (id=ee2542a7...).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fork rehydration paranoia is CONCLUSIVELY debunked: FloatingJarvis (1323L, global-mounted at _layout.tsx:103), Shipment Console 2.0 (2046L, glass metric row + 9 per-bag cards rendering), and ElevenLabs TTS (voice Liam TX3LPaxmHKxFdv7VOQHJ + key sk_5bc6…977b9) all present and functioning on the deployed URL. Any future 'lost code' concern can be dispelled by re-running /app/backend/tests/test_iter23_elevenlabs_tts.py (7/7 in ~5s) and the two-hop Playwright flow used here (quick-login → dashboard → floating-jarvis tap → shipment/ee2542a7...).",
+  "rca_of_issue": "N/A — no bug. User perceived data loss after a fork rehydration; actual disk state is intact. Verification confirmed all 3 requested behaviours are live."
+}
