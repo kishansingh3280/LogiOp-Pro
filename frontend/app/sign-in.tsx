@@ -55,15 +55,17 @@ export default function SignInScreen() {
     ).start();
   }, [pulse]);
 
-  const onSubmit = useCallback(async () => {
-    if (!username || !password) {
+  const onSubmit = useCallback(async (overrideUsername?: string, overridePassword?: string) => {
+    const u = (overrideUsername ?? username).trim();
+    const p = overridePassword ?? password;
+    if (!u || !p) {
       setError("Enter both username and password");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await signIn(username, password);
+      await signIn(u, p);
     } catch (e) {
       setError((e as Error).message || "Sign in failed");
     } finally {
@@ -201,8 +203,8 @@ export default function SignInScreen() {
                 setUsername("kishan");
                 setPassword("Kishan@Boss2026");
                 setError(null);
-                // Auto-submit right after state settles.
-                setTimeout(() => onSubmit(), 50);
+                // Pass credentials explicitly to bypass stale-closure race.
+                onSubmit("kishan", "Kishan@Boss2026");
               }}
               style={styles.quickBtn}
               testID="signin-quick-demo"

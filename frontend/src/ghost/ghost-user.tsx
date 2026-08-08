@@ -368,32 +368,43 @@ export function GhostUserProvider({ children }: { children: React.ReactNode }) {
             id: string;
             consignment_no?: string;
           }>;
-          const ship = shipments.find(
-            (s) => (s.consignment_no || "").toLowerCase() === a.consignment_no.toLowerCase(),
-          );
-          if (!ship) throw new Error(`Shipment ${a.consignment_no} not found`);
+          const ship = _findShipment(shipments, a.consignment_no);
+          if (!ship) {
+            const near = _closestShipments(shipments, a.consignment_no, 3);
+            const hint = near.length
+              ? ` Did you mean: ${near.map((s) => s.consignment_no || s.id).join(", ")}?`
+              : "";
+            throw new Error(`Shipment "${a.consignment_no}" not found.${hint}`);
+          }
           await jsonRequest("PATCH", `/api/shipments/${ship.id}`, {
             status: a.status,
             notes: a.notes,
           });
-          showToast(`Shipment ${a.consignment_no} updated`);
+          showToast(`Shipment ${ship.consignment_no || ship.id} updated`);
           return;
         }
 
         case "add_bag": {
-          const shipments = (await jsonRequest("GET", "/api/shipments")) as Array<{
+          const shipments = (await jsonRequest("GET", "/api/shipments")) as {
             id: string;
             consignment_no?: string;
-          }>;
-          const ship = shipments.find(
-            (s) => (s.consignment_no || "").toLowerCase() === a.shipment_ref.toLowerCase(),
-          );
-          if (!ship) throw new Error(`Shipment ${a.shipment_ref} not found`);
+          }[];
+          const ship = _findShipment(shipments, a.shipment_ref);
+          if (!ship) {
+            const near = _closestShipments(shipments, a.shipment_ref, 3);
+            const hint = near.length
+              ? ` Try: ${near.map((s) => s.consignment_no || s.id).join(", ")}.`
+              : "";
+            throw new Error(`Shipment "${a.shipment_ref}" not found.${hint}`);
+          }
+          // Remote requires shipment_id in the body AND in the path — send
+          // both so either wiring succeeds.
           await jsonRequest("POST", `/api/shipments/${ship.id}/bags`, {
+            shipment_id: ship.id,
             weight_kg: a.weight_kg,
             notes: a.notes,
           });
-          showToast(`Bag added to ${a.shipment_ref}`);
+          showToast(`Bag added to ${ship.consignment_no || ship.id}`);
           return;
         }
       }
@@ -585,6 +596,71 @@ function _sanitizeJsonBlock(raw: string): string {
   }
   return out;
 }
+
+/**
+ * Normalise a consignment-number-ish string for fuzzy matching.
+ * Real IDs look like "SE/26-27/035" but the AI often produces variants
+ * like "CN-S/01", "SE 26-27 35", or "se2627035". We strip everything but
+ * alphanumerics and lower-case so all of those collapse to `se2627035`
+ * (or similar) for comparison.
+ */
+function _norm(s: string | undefined | null): string {
+  return String(s || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+type ShipmentLike = { id: string; consignment_no?: string };
+
+/**
+ * Try to match a shipment by (in order):
+ *   1. Exact id
+ *   2. Exact consignment_no (case-insensitive)
+ *   3. Normalised consignment_no equality
+ *   4. Normalised prefix or suffix match — e.g. "035" resolves to
+ *      "SE/26-27/035" because the numeric tail matches.
+ */
+function _findShipment(shipments: ShipmentLike[], ref: string): ShipmentLike | undefined {
+  if (!ref) return undefined;
+  const refN = _norm(ref);
+  const refLower = ref.toLowerCase();
+  const byId = shipments.find((s) => s.id === ref);
+  if (byId) return byId;
+  const byCn = shipments.find((s) => (s.consignment_no || "").toLowerCase() === refLower);
+  if (byCn) return byCn;
+  const byNorm = shipments.find((s) => _norm(s.consignment_no) === refN);
+  if (byNorm) return byNorm;
+  if (refN.length >= 3) {
+    const bySuffix = shipments.find((s) => {
+      const n = _norm(s.consignment_no);
+      return n.endsWith(refN) || n.startsWith(refN);
+    });
+    if (bySuffix) return bySuffix;
+  }
+  return undefined;
+}
+
+/**
+ * Return the top-N shipments whose consignment_no shares the longest
+ * common prefix (or contains the numeric tail) with `ref`. Used to build
+ * a "did you mean X, Y, Z?" hint when the AI supplies a bad ID.
+ */
+function _closestShipments(shipments: ShipmentLike[], ref: string, n: number): ShipmentLike[] {
+  const refN = _norm(ref);
+  if (!refN) return shipments.slice(0, n);
+  const scored = shipments.map((s) => {
+    const sN = _norm(s.consignment_no);
+    let score = 0;
+    for (let i = 0; i < Math.min(refN.length, sN.length); i++) {
+      if (refN[i] === sN[i]) score++;
+      else break;
+    }
+    const tail = refN.match(/\d+$/)?.[0] || "";
+    if (tail && sN.includes(tail)) score += tail.length;
+    return { s, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.filter((x) => x.score > 0).slice(0, n).map((x) => x.s);
+}
+
 
 const styles = StyleSheet.create({
   cursorDot: {

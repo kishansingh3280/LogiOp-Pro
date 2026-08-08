@@ -868,8 +868,10 @@ _ASSISTANT_SYSTEM_HI = """
   (role must be one of: customer, supplier, end_customer, carrier)
 - create_item — {"action":"create_item","name":"Chana","unit":"kg","hsn_code":"0713"}
 - update_ledger — {"action":"update_ledger","party_name":"ABC Trader","debit":50000,"credit":0,"description":"Advance"}
-- carrier_update — {"action":"carrier_update","consignment_no":"CN-042","status":"delivered","notes":"handed over"}
-- add_bag — {"action":"add_bag","shipment_ref":"CN-042","weight_kg":5,"notes":"..."}
+- carrier_update — {"action":"carrier_update","consignment_no":"SE/26-27/035","status":"delivered","notes":"handed over"}
+  (consignment_no MUST come from the real Shipments list above)
+- add_bag — {"action":"add_bag","shipment_ref":"SE/26-27/035","weight_kg":5,"notes":"..."}
+  (shipment_ref MUST be a consignment_no from the real Shipments list above — never invent)
 
 महत्वपूर्ण:
 - write actions (create_party / update_ledger / carrier_update / add_bag / create_item) पर app एक confirmation dialog दिखाएगा — इसलिए action के बाद 
@@ -895,6 +897,62 @@ class AssistantChatRequest(BaseModel):
     # Operator's chosen honorific ("Sir" / "Boss" / "Ji"). Falls back to "Sir".
     honorific: Optional[str] = None
     display_name: Optional[str] = None
+
+
+@api_router.get("/assistant/context")
+async def assistant_context():
+    """Return a compact snapshot of real entity IDs the assistant is
+    allowed to reference — shipments, parties, items, active carrier trips.
+    Injected into the system prompt on every chat turn so Claude never
+    hallucinates a consignment number or party name.
+    """
+    global _ctx_cache, _ctx_cache_at
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if _ctx_cache and (now_ts - _ctx_cache_at) < 15:
+        return _ctx_cache
+
+    ctx: Dict[str, Any] = {"generated_at": datetime.now(timezone.utc).isoformat()}
+    # Pull the remote-proxied lists through httpx directly so we can
+    # populate context even when the frontend hasn't yet called them.
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            async def _get(path: str) -> Any:
+                if not REMOTE_BACKEND_URL:
+                    return []
+                r = await client.get(REMOTE_BACKEND_URL + path)
+                if r.status_code >= 400:
+                    return []
+                return r.json() if r.content else []
+
+            shipments = await _get("/api/shipments")
+            parties = await _get("/api/parties")
+            items = await _get("/api/items")
+    except Exception:
+        shipments, parties, items = [], [], []
+
+    def _pick(d: dict, keys: List[str]) -> dict:
+        return {k: d.get(k) for k in keys if k in d}
+
+    # Latest 30 shipments (assumed newest-first from remote).
+    ctx["shipments"] = [
+        _pick(s, ["id", "consignment_no", "party_name", "status", "total_weight_kg", "created_at"])
+        for s in (shipments or [])[:30]
+    ]
+    ctx["parties"] = [
+        _pick(p, ["id", "name", "role", "city"]) for p in (parties or [])[:60]
+    ]
+    ctx["items"] = [
+        _pick(i, ["id", "name", "unit"]) for i in (items or [])[:40]
+    ]
+    # Local: active carrier trips + open bullion transactions.
+    trips = await db.bullion_trips.find(
+        {}, {"_id": 0, "id": 1, "route": 1, "carrier_name": 1, "date": 1, "status": 1}
+    ).sort("date", -1).limit(20).to_list(20)
+    ctx["carrier_trips"] = trips
+
+    _ctx_cache = ctx
+    _ctx_cache_at = now_ts
+    return ctx
 
 
 @api_router.post("/assistant/chat")
@@ -944,11 +1002,48 @@ async def assistant_chat(req: AssistantChatRequest):
             "इस turn का पहला वाक्य इसी संदर्भ से शुरू करें।\n"
         )
 
+    # ------------------------------------------------------------------
+    # Real-data block — the assistant MUST only quote consignment numbers,
+    # party names, and item names that actually exist. We fetch a fresh
+    # snapshot (cached ≤15s) and embed it in the system prompt so Claude
+    # can pick real IDs instead of hallucinating like "CN-S/01".
+    # ------------------------------------------------------------------
+    try:
+        real_ctx = await assistant_context()
+    except Exception:
+        real_ctx = {}
+    real_block = ""
+    ships = (real_ctx.get("shipments") or [])[:15]
+    parties = (real_ctx.get("parties") or [])[:20]
+    items = (real_ctx.get("items") or [])[:15]
+    if ships or parties or items:
+        real_block = "\n=== वास्तविक डेटाबेस snapshot (केवल इन IDs का उपयोग करें) ===\n"
+        if ships:
+            real_block += "\nसक्रिय Shipments (consignment_no · status · party):\n"
+            for s in ships:
+                cn = s.get("consignment_no") or s.get("id") or "?"
+                p = s.get("party_name") or "—"
+                st = s.get("status") or "—"
+                real_block += f"  • {cn} · {st} · {p}\n"
+        if parties:
+            real_block += "\nParties (name · role):\n"
+            for p in parties:
+                real_block += f"  • {p.get('name')} · {p.get('role') or '—'}\n"
+        if items:
+            real_block += "\nItems (name):\n"
+            for it in items:
+                real_block += f"  • {it.get('name')}\n"
+        real_block += (
+            "\nमहत्वपूर्ण: यदि उपयोगकर्ता कोई ID बताए जो ऊपर सूची में नहीं है, "
+            "तो पहले सूची में से मिलती-जुलती suggest करें। कभी भी fake / random "
+            "IDs ('CN-S/01' आदि) मत बनाएँ।\n"
+        )
+
     chat = (
         LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=req.session_id,
-            system_message=_ASSISTANT_SYSTEM_HI + address_line + ctx_block + memory_block,
+            system_message=_ASSISTANT_SYSTEM_HI + address_line + ctx_block + real_block + memory_block,
         )
         .with_model("anthropic", "claude-sonnet-4-6")
     )
@@ -1008,6 +1103,10 @@ async def assistant_chat(req: AssistantChatRequest):
 # repeatedly hit Mongo for the same top-N pattern set.
 _mem_cache: List[str] = []
 _mem_cache_at: float = 0.0
+# Real-entity snapshot cache — refreshed at most every 15s by
+# /api/assistant/context, injected into every chat system prompt.
+_ctx_cache: Optional[Dict[str, Any]] = None
+_ctx_cache_at: float = 0.0
 
 
 class AssistantMemoryEntry(BaseModel):

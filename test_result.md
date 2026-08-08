@@ -1296,3 +1296,50 @@ agent_communication:
           Tested visually via browser automation — all 3 screens
           screenshot-verified (see /tmp/final_signin.png,
           /tmp/final_dash.png, /tmp/final_assist.png).
+
+  - task: "Iter24 · AI Context Sync — fix hallucinated shipment IDs"
+    implemented: true
+    working: true
+    file: "backend/server.py (new /api/assistant/context + real_block in system prompt), frontend/src/ghost/ghost-user.tsx (fuzzy shipment match + suggest closest)"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          User reported: "Assistant is failing — trying to add bags to
+          shipment IDs that don't exist (error: 'Shipment CN-S/01 not
+          found')". Root cause: the AI had no live database context and
+          hallucinated consignment numbers like "CN-S/01" (real format
+          is "SE/26-27/035").
+          
+          Three-layer fix:
+          
+          1) Real-data context endpoint — new /api/assistant/context
+             returns a compact snapshot (30 shipments · 60 parties · 40
+             items · 20 carrier trips) with a 15s TTL cache.
+          
+          2) Every /assistant/chat turn now embeds a "वास्तविक डेटाबेस
+             snapshot" block inside the system prompt listing real
+             consignment numbers, party names, and item names — plus
+             hard instruction: "यदि उपयोगकर्ता कोई ID बताए जो सूची में
+             नहीं है, पहले सूची से मिलती-जुलती suggest करें। कभी भी
+             fake IDs मत बनाएँ।"
+          
+          3) Fuzzy shipment lookup in ghost-user.tsx — _findShipment()
+             tries (a) exact id, (b) exact consignment_no case-insens,
+             (c) normalised equality (strips /-_ spaces), (d) normalised
+             prefix/suffix match. If still not found, _closestShipments()
+             returns the top-3 nearest matches so the error message
+             offers "Did you mean: SE/26-27/035, SE/26-27/034?".
+          
+          Also fixed: remote /api/shipments/{id}/bags endpoint requires
+          `shipment_id` in the body (not just the URL path) — the
+          add_bag executor now sends both.
+          
+          E2E verified: prompt "SE/26-27/035 mein 5kg ka bag add karo"
+          → AI now correctly picks the real ID → confirmation modal
+          shows "Add 5 kg bag to SE/26-27/035" → confirm → bag
+          BAG-001 (5kg) created on the real shipment. Older prompt
+          "latest shipment mein 5kg bag" also works — AI picks the
+          newest real ID from the injected context.
