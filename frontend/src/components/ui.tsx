@@ -34,7 +34,7 @@ export function StatusPill({ status, testID }: { status: string; testID?: string
   const map: Record<string, { bg: string; fg: string; label: string }> = {
     pending: { bg: "#3a2a00", fg: "#F59E0B", label: "Pending" },
     in_transit: { bg: "#0b2540", fg: "#60A5FA", label: "In transit" },
-    warehouse_arrived: { bg: "#1a1a1a", fg: "#C6FF00", label: "Warehouse" },
+    warehouse_arrived: { bg: "#1a1a1a", fg: "#00D1FF", label: "Warehouse" },
     delivered: { bg: "#0f2a1c", fg: "#34D399", label: "Delivered" },
     draft: { bg: "#1c1c1c", fg: "#9CA3AF", label: "Draft" },
     sent: { bg: "#0b2540", fg: "#60A5FA", label: "Sent" },

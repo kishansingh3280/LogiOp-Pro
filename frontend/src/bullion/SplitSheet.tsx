@@ -335,7 +335,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: colors.surface,
   },
-  tripRowActive: { borderColor: colors.lime, backgroundColor: "rgba(198,255,0,0.06)" },
+  tripRowActive: { borderColor: colors.lime, backgroundColor: "rgba(0, 209, 255, 0.06)" },
   tripIcon: {
     width: 28,
     height: 28,

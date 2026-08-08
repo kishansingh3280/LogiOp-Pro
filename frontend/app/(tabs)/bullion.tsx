@@ -833,7 +833,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: 8, paddingVertical: 4, borderRadius: radii.pill,
     borderColor: colors.lime, borderWidth: StyleSheet.hairlineWidth,
-    backgroundColor: "rgba(198,255,0,0.08)",
+    backgroundColor: "rgba(0, 209, 255, 0.08)",
   },
   splitBtnText: { color: colors.lime, fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
   tripCard: {

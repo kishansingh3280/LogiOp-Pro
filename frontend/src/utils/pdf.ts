@@ -26,7 +26,7 @@ export const PDF_CSS = `
     print-color-adjust: exact;
   }
   h1 { font-size: 20px; margin: 0 0 4px 0; color: #FFFFFF; letter-spacing: 0.3px; }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: #C6FF00; margin: 20px 0 8px 0; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; color: #00D1FF; margin: 20px 0 8px 0; }
   .eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: 1.4px; color: #9CA3AF; }
   .head-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #262626; }
   .kv { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #262626; font-size: 12px; }
@@ -34,12 +34,12 @@ export const PDF_CSS = `
   .kv .v { color: #FFFFFF; font-weight: 700; }
   table { width: 100%; border-collapse: collapse; margin-top: 4px; }
   th, td { padding: 8px 6px; text-align: left; font-size: 11px; border-bottom: 1px solid #262626; }
-  th { color: #C6FF00; text-transform: uppercase; letter-spacing: 0.8px; font-size: 10px; font-weight: 700; }
+  th { color: #00D1FF; text-transform: uppercase; letter-spacing: 0.8px; font-size: 10px; font-weight: 700; }
   td.num, th.num { text-align: right; }
-  tfoot td { border-top: 2px solid #C6FF00; border-bottom: none; font-weight: 800; font-size: 12px; padding-top: 10px; }
-  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; border: 1px solid #C6FF00; background: rgba(198, 255, 0, 0.12); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: #C6FF00; font-weight: 800; }
+  tfoot td { border-top: 2px solid #00D1FF; border-bottom: none; font-weight: 800; font-size: 12px; padding-top: 10px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; border: 1px solid #00D1FF; background: rgba(0, 209, 255, 0.12); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: #00D1FF; font-weight: 800; }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #262626; font-size: 9px; color: #6B7280; text-align: center; }
-  .lime { color: #C6FF00; }
+  .lime { color: #00D1FF; }
   .muted { color: #9CA3AF; font-size: 11px; }
 `;
 

@@ -301,7 +301,7 @@ export default function AssistantScreen() {
     <View style={styles.wrap}>
       {/* Ambient background gradient — very dark base with a subtle tint */}
       <LinearGradient
-        colors={["#000000", "#050a05", "#000000"]}
+        colors={["#020202", "#050820", "#020202"]}
         style={StyleSheet.absoluteFill}
       />
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
@@ -501,11 +501,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     borderRadius: radii.pill,
-    borderColor: "rgba(198,255,0,0.35)",
+    borderColor: "rgba(0, 209, 255, 0.35)",
     borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "rgba(198,255,0,0.06)",
+    backgroundColor: "rgba(0, 209, 255, 0.06)",
   },
   pillText: { color: colors.lime, fontSize: 11, fontWeight: "700" },
   ctxChip: {
@@ -587,7 +587,7 @@ const styles = StyleSheet.create({
     borderRadius: 39,
     borderColor: colors.lime,
     borderWidth: 2,
-    backgroundColor: "rgba(198,255,0,0.08)",
+    backgroundColor: "rgba(0, 209, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
     shadowColor: colors.lime,

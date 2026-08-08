@@ -966,7 +966,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "rgba(198,255,0,0.20)",
+    backgroundColor: "rgba(0, 209, 255, 0.20)",
     borderColor: colors.lime,
     borderWidth: 1,
   },
@@ -993,7 +993,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderBottomColor: colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    backgroundColor: "rgba(198,255,0,0.05)",
+    backgroundColor: "rgba(0, 209, 255, 0.05)",
   },
   cardIcon: {
     width: 32,

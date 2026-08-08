@@ -333,7 +333,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 10,
     borderWidth: 2,
-    borderColor: "rgba(198,255,0,0.35)",
+    borderColor: "rgba(0, 209, 255, 0.35)",
   },
   buttonText: {
     color: "#000",
@@ -375,7 +375,7 @@ const styles = StyleSheet.create({
     gap: 6,
     borderColor: colors.lime,
     borderWidth: StyleSheet.hairlineWidth,
-    backgroundColor: "rgba(198,255,0,0.08)",
+    backgroundColor: "rgba(0, 209, 255, 0.08)",
   },
   quickBtnText: {
     color: colors.lime,

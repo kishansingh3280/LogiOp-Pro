@@ -786,7 +786,7 @@ const styles = StyleSheet.create({
   quoteBox: {
     marginTop: spacing.md,
     padding: spacing.md,
-    backgroundColor: "rgba(198,255,0,0.06)",
+    backgroundColor: "rgba(0, 209, 255, 0.06)",
     borderColor: colors.lime,
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: radii.md,

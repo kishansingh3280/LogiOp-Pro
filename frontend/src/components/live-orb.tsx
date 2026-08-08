@@ -1,10 +1,11 @@
 /**
- * LiveOrb v2 — a Siri-style nebula sphere.
+ * LiveOrb v3 — Cyber-Siri pulsing blue-ring sphere.
  *
- * Five overlapping SVG blobs drift and pulse in different colours (Deep
- * Purple, Ocean Blue, Cyan, Lime, Magenta accent) driven by an amplitude
- * value from 0..1 supplied by the parent. The core is a soft radial white
- * highlight so the sphere reads as luminous rather than flat.
+ * Four overlapping SVG blobs drift and pulse in the Cyber-Siri palette
+ * (Deep Purple, Electric Blue, Cyan, and a bright white core) driven by
+ * an amplitude value from 0..1 supplied by the parent. The core is a
+ * soft radial white highlight so the sphere reads as luminous rather
+ * than flat.
  *
  * All animation happens on the UI thread via react-native-reanimated so
  * we hit the 120fps target even during voice metering.
@@ -126,30 +127,30 @@ export function LiveOrb({
 
   return (
     <View style={[styles.wrap, { width: size, height: size }]} pointerEvents="none">
-      {/* Outer nebula — purple / blue */}
+      {/* Outer nebula — deep purple ↔ electric blue */}
       <Animated.View style={[StyleSheet.absoluteFill, layerA]}>
         <LinearGradient
-          colors={["rgba(159,122,234,0.85)", "rgba(59,130,246,0.65)", "rgba(159,122,234,0.0)"]}
+          colors={["rgba(124,58,237,0.85)", "rgba(0,209,255,0.65)", "rgba(124,58,237,0.0)"]}
           start={{ x: 0.1, y: 0.1 }}
           end={{ x: 0.9, y: 0.9 }}
           style={[styles.blob, { width: size, height: size, borderRadius: R }]}
         />
       </Animated.View>
 
-      {/* Middle ring — cyan / lime */}
+      {/* Middle ring — electric blue ↔ cyan */}
       <Animated.View style={[StyleSheet.absoluteFill, layerB, { padding: size * 0.09 }]}>
         <LinearGradient
-          colors={["rgba(34,211,238,0.75)", "rgba(198,255,0,0.55)", "rgba(34,211,238,0.0)"]}
+          colors={["rgba(0,209,255,0.80)", "rgba(0,255,255,0.60)", "rgba(0,209,255,0.0)"]}
           start={{ x: 0, y: 1 }}
           end={{ x: 1, y: 0 }}
           style={{ flex: 1, borderRadius: size }}
         />
       </Animated.View>
 
-      {/* Inner ring — magenta accent */}
+      {/* Inner ring — bright cyan spotlight */}
       <Animated.View style={[StyleSheet.absoluteFill, layerC, { padding: size * 0.20 }]}>
         <LinearGradient
-          colors={["rgba(236,72,153,0.60)", "rgba(198,255,0,0.20)", "rgba(236,72,153,0.0)"]}
+          colors={["rgba(0,255,255,0.55)", "rgba(0,209,255,0.30)", "rgba(0,255,255,0.0)"]}
           start={{ x: 0.4, y: 0 }}
           end={{ x: 0.6, y: 1 }}
           style={{ flex: 1, borderRadius: size }}
@@ -168,7 +169,7 @@ export function LiveOrb({
           <Defs>
             <RadialGradient id="core" cx="50%" cy="45%" rx="50%" ry="50%" fx="45%" fy="40%">
               <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="1" />
-              <Stop offset="30%" stopColor={colors.lime} stopOpacity="0.8" />
+              <Stop offset="30%" stopColor={colors.cyan} stopOpacity="0.85" />
               <Stop offset="70%" stopColor={colors.purple} stopOpacity="0.35" />
               <Stop offset="100%" stopColor="#000000" stopOpacity="0" />
             </RadialGradient>

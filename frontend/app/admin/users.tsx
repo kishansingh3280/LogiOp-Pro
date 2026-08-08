@@ -599,7 +599,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     backgroundColor: colors.limeGlow,
   },
-  role_Admin: { backgroundColor: "rgba(198,255,0,0.18)" },
+  role_Admin: { backgroundColor: "rgba(0, 209, 255, 0.18)" },
   role_Staff: { backgroundColor: "rgba(125,249,255,0.12)" },
   role_Carrier: { backgroundColor: "rgba(255,176,32,0.14)" },
   roleChipText: { color: colors.text, fontSize: 10, fontWeight: "800", letterSpacing: 0.4 },

@@ -1,14 +1,15 @@
 /**
- * AmbientBackground — three softly-glowing orbs drifting behind everything.
+ * AmbientBackground — four softly-glowing orbs drifting behind everything.
  *
  * Sits at the root of the app, `pointerEvents="none"`, and uses radial
- * gradients (SVG on native + CSS on web) to bloom the Purple / Blue / Lime
- * palette against a `#050505` base. Each orb runs its own long-period
- * Reanimated worklet loop so the animation is 120fps on the UI thread.
+ * gradients (SVG on native + CSS on web) to bloom the Purple / Electric-Blue /
+ * Cyan / Deep-Indigo palette against a `#020202` deep-space base. Each orb
+ * runs its own long-period Reanimated worklet loop so the animation is
+ * 120fps on the UI thread.
  *
- * This component is deliberately expensive-looking but cheap: only 3 View
+ * This component is deliberately expensive-looking but cheap: only 4 View
  * layers + gradient fill. It's the single biggest visual lift of the
- * "Siri 2.0" theme.
+ * "Cyber-Siri" theme.
  */
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect } from "react";
@@ -42,37 +43,48 @@ type Orb = {
 
 const ORBS: Orb[] = [
   {
-    // Deep purple — top-left drift (subtle)
-    size: Math.max(SW, SH) * 0.9,
-    colors: ["rgba(124, 58, 237, 0.35)", "rgba(124, 58, 237, 0.0)"],
+    // Purple — top-left drift (deep space cosmos vibe)
+    size: Math.max(SW, SH) * 0.95,
+    colors: ["rgba(124, 58, 237, 0.42)", "rgba(124, 58, 237, 0.0)"],
     x0: -0.35,
     y0: -0.25,
     dx: 0.15,
     dy: 0.12,
     period: 22000,
-    opacity: 0.45,
+    opacity: 0.55,
   },
   {
-    // Ocean blue — mid-right drift
-    size: Math.max(SW, SH) * 0.95,
-    colors: ["rgba(37, 99, 235, 0.30)", "rgba(37, 99, 235, 0.0)"],
+    // Electric blue — mid-right drift (Jarvis primary)
+    size: Math.max(SW, SH) * 1.0,
+    colors: ["rgba(0, 209, 255, 0.36)", "rgba(0, 209, 255, 0.0)"],
     x0: 0.55,
     y0: 0.25,
     dx: -0.18,
     dy: 0.10,
     period: 27000,
-    opacity: 0.4,
+    opacity: 0.5,
   },
   {
-    // Lime — bottom-left drift (matches CTA colour)
-    size: Math.max(SW, SH) * 0.75,
-    colors: ["rgba(163, 230, 53, 0.22)", "rgba(198, 255, 0, 0.0)"],
+    // Cyan — bottom-left drift (secondary neon)
+    size: Math.max(SW, SH) * 0.85,
+    colors: ["rgba(0, 255, 255, 0.28)", "rgba(0, 255, 255, 0.0)"],
     x0: -0.15,
     y0: 0.65,
     dx: 0.22,
     dy: -0.14,
     period: 32000,
-    opacity: 0.35,
+    opacity: 0.42,
+  },
+  {
+    // Deep indigo — top-right accent (adds cosmic depth)
+    size: Math.max(SW, SH) * 0.7,
+    colors: ["rgba(30, 58, 138, 0.32)", "rgba(30, 58, 138, 0.0)"],
+    x0: 0.45,
+    y0: -0.15,
+    dx: -0.10,
+    dy: 0.18,
+    period: 36000,
+    opacity: 0.38,
   },
 ];
 
@@ -131,14 +143,15 @@ export function AmbientBackground() {
       ))}
       {/* Full-screen vignette that darkens the entire canvas so content
           on top reads clearly. Applied AFTER the orbs so they bloom
-          through a semi-opaque black scrim. */}
+          through a semi-opaque black scrim. Slightly lighter than before
+          so the blue/cyan/purple bloom stays visible. */}
       <View
         pointerEvents="none"
-        style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(5,5,5,0.68)" }]}
+        style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(2,2,2,0.60)" }]}
       />
       <LinearGradient
         pointerEvents="none"
-        colors={["rgba(5,5,5,0.10)", "rgba(5,5,5,0.05)", "rgba(5,5,5,0.35)"]}
+        colors={["rgba(2,2,2,0.08)", "rgba(2,2,2,0.04)", "rgba(2,2,2,0.30)"]}
         style={StyleSheet.absoluteFill}
         start={{ x: 0.5, y: 0.0 }}
         end={{ x: 0.5, y: 1 }}
