@@ -1402,6 +1402,74 @@ async def assistant_tts(req: TTSRequest):
     return Response(content=audio_bytes, media_type="audio/mpeg")
 
 
+# ---------------------------------------------------------------------------
+# Streaming TTS — Phase 4 low-latency voice
+# ---------------------------------------------------------------------------
+async def _stream_openai_tts(text: str, voice: str) -> Any:
+    """Proxy an OpenAI /audio/speech call chunk-by-chunk. Yields raw MP3
+    bytes as the model produces them. Time-to-first-chunk from the upstream
+    proxy is ~500-900ms, so the operator hears speech within a beat.
+
+    Uses the Emergent LLM proxy (same URL emergentintegrations targets).
+    """
+    proxy_url = (os.getenv("INTEGRATION_PROXY_URL") or "https://integrations.emergentagent.com") + "/llm"
+    headers = {
+        "Authorization": f"Bearer {EMERGENT_LLM_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": "tts-1",
+        "voice": voice or "shimmer",
+        "input": text[:4096],
+        "response_format": "mp3",
+    }
+    # NEW client per call — long-lived pooled clients occasionally choke on
+    # very quick request/response cycles when the pool is being torn down.
+    async with httpx.AsyncClient(timeout=30) as client:
+        async with client.stream("POST", proxy_url + "/audio/speech", json=body, headers=headers) as r:
+            if r.status_code >= 400:
+                # Read body once so we can surface a useful error line.
+                err_text = (await r.aread()).decode("utf-8", errors="ignore")[:200]
+                raise HTTPException(502, f"TTS upstream {r.status_code}: {err_text}")
+            async for chunk in r.aiter_bytes(chunk_size=4096):
+                if chunk:
+                    yield chunk
+
+
+@api_router.post("/assistant/tts/stream")
+async def assistant_tts_stream_post(req: TTSRequest):
+    """Chunked MP3 stream. Same input as /assistant/tts but returns the
+    upstream chunks as-they-arrive so the browser can `MediaSource.appendBuffer`
+    and start playing within ~300-500ms instead of waiting for the full mp3.
+    """
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+    if not req.text or not req.text.strip():
+        raise HTTPException(400, "text is required")
+    return StreamingResponse(
+        _stream_openai_tts(req.text, req.voice or "shimmer"),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@api_router.get("/assistant/tts/stream")
+async def assistant_tts_stream_get(text: str, voice: Optional[str] = "shimmer"):
+    """GET-flavour streaming TTS — text passed via query so native players
+    (`expo-audio createAudioPlayer({ uri })`) can pull the URL directly and
+    let the OS handle chunked playback. `voice` defaults to shimmer.
+    """
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+    if not text or not text.strip():
+        raise HTTPException(400, "text is required")
+    return StreamingResponse(
+        _stream_openai_tts(text, voice or "shimmer"),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @api_router.post("/assistant/stt")
 async def assistant_stt(request: Request):
     """Whisper-1 STT via the Emergent proxy. Accepts multipart/form-data

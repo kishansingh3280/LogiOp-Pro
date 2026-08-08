@@ -40,6 +40,7 @@ import { useScreenContext } from "@/src/context/screen-context";
 import { useGhostUser } from "@/src/ghost/ghost-user";
 import { useMicLevel } from "@/src/hooks/use-mic-level";
 import { colors, radii, spacing } from "@/src/theme";
+import { speakStreaming, type StreamingTtsHandle } from "@/src/utils/tts-stream";
 
 import { TAB_BAR_BOTTOM_PAD } from "./_layout";
 
@@ -66,7 +67,7 @@ export default function AssistantScreen() {
   // for MP3 buffers, so we simulate with a natural cadence).
   const ttsLevel = useRef(new Animated.Value(0)).current;
   const [ttsLevelNum, setTtsLevelNum] = useState(0);
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const ttsHandleRef = useRef<StreamingTtsHandle | null>(null);
 
   // Keep the polling loop alive so the bell badge stays fresh even on
   // this screen (the bell hides itself here, but the poll shares state).
@@ -136,59 +137,29 @@ export default function AssistantScreen() {
     return () => ttsLevel.stopAnimation();
   }, [mode, ttsLevel]);
 
-  // Fetch TTS mp3 for the given text, play it, and briefly enter speaking
-  // mode so the orb envelope pulses along with it.
+  // Streaming TTS — starts playback within ~300ms via MediaSource (web)
+  // or expo-audio streaming URL (native). Cancels any prior in-flight
+  // playback so back-to-back messages don't overlap.
   const speak = useCallback(
     async (text: string) => {
-      if (!text.trim()) return;
-      try {
-        setMode("speaking");
-        const res = await fetch(`${API_BASE}/api/assistant/tts`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: stripTools(text), voice: "shimmer" }),
-        });
-        if (!res.ok) throw new Error(`TTS ${res.status}`);
-        const blob = await res.blob();
-        if (Platform.OS === "web") {
-          const url = URL.createObjectURL(blob);
-          if (audioElRef.current) {
-            audioElRef.current.pause();
-            audioElRef.current.src = "";
-          }
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const audio = new (window as any).Audio(url) as HTMLAudioElement;
-          audioElRef.current = audio;
-          audio.onended = () => setMode("idle");
-          audio.onerror = () => setMode("idle");
-          await audio.play();
-        } else {
-          // Native playback via expo-audio player. Import lazily to
-          // avoid pulling native modules on web.
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const ExpoAudio = require("expo-audio") as typeof import("expo-audio");
-          // Save blob to a temp file first — native player can't play a
-          // browser Blob directly.
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const FS = require("expo-file-system") as typeof import("expo-file-system");
-          const path = `${FS.cacheDirectory}tts-${Date.now()}.mp3`;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const reader = new FileReader();
-          const base64 = await new Promise<string>((resolve, reject) => {
-            reader.onerror = () => reject(new Error("blob read failed"));
-            reader.onload = () => resolve((reader.result as string).split(",")[1] || "");
-            reader.readAsDataURL(blob);
-          });
-          await FS.writeAsStringAsync(path, base64, { encoding: FS.EncodingType.Base64 });
-          const player = ExpoAudio.createAudioPlayer({ uri: path });
-          player.play();
-          player.addListener("playbackStatusUpdate", (s: { didJustFinish?: boolean }) => {
-            if (s.didJustFinish) setMode("idle");
-          });
+      const clean = stripTools(text);
+      if (!clean.trim()) return;
+      ttsHandleRef.current?.stop();
+      const token = getAuthTokenSync();
+      const handle = speakStreaming({
+        text: clean,
+        voice: "shimmer",
+        authToken: token,
+        onStart: () => setMode("speaking"),
+        onError: () => setMode("idle"),
+      });
+      ttsHandleRef.current = handle;
+      handle.promise.finally(() => {
+        if (ttsHandleRef.current === handle) {
+          setMode("idle");
+          ttsHandleRef.current = null;
         }
-      } catch {
-        setMode("idle");
-      }
+      });
     },
     [],
   );

@@ -1408,3 +1408,90 @@ agent_communication:
           an invoice for a party that doesn't exist in the live parties
           list, it correctly refuses and asks the operator to create the
           party first (instead of hallucinating).
+
+  - task: "Iter26 · Cyber-Siri UI/UX Transformation (all 4 phases)"
+    implemented: true
+    working: true
+    file: "backend/server.py (memory + blockers + tts stream), frontend/src/theme, components/{ambient-background,live-orb,floating-jarvis,blocker-bell}.tsx, utils/tts-stream.ts, app/{_layout,(tabs)/assistant}.tsx"
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Complete visual + AI overhaul. Delivered in 4 confirmed phases:
+          
+          PHASE 1 · Cyber-Siri Theme Swap
+          - Base: #020202 deep space (was #050505)
+          - Primary accent: Electric Blue #00D1FF (was lime #C6FF00)
+          - Ambient orbs: Purple / Electric-Blue / Cyan / Deep-Indigo
+            (was Purple / Blue / Lime — 3 orbs → 4 orbs)
+          - Batch-replaced every rgba(198,255,0,*) / rgba(163,230,53,*) /
+            #C6FF00 across app/ + src/ (~15 files touched)
+          - LiveOrb re-tinted to Cyber-Siri palette; core radial highlight
+            switched from lime→cyan glow
+          - Verified across sign-in, dashboard, shipments, invoices,
+            bullion, assistant screens.
+          
+          PHASE 2 · Floating Jarvis Bubble
+          - New component `src/components/floating-jarvis.tsx`
+          - 56px pulsing blue-ring bubble anchored bottom-right, visible
+            on every non-assistant, non-signin screen
+          - Tap → full-screen nebula modal with:
+              • big LiveOrb (same reactive amplitude engine)
+              • auto-focused Hindi text input ("बोलिए या यहाँ टाइप कीजिए…")
+              • prominent cyan mic button (press-to-talk)
+              • Wingman header pill + close X
+          - Modal reuses the same /assistant/chat endpoint so ghost-user
+            actions dispatched from the bubble navigate + fill forms
+            exactly like the tab does. Verified end-to-end from /invoices
+            → floating bubble → "Add party in Pune" → /party/new with
+            ghost-fill banner ready to save.
+          
+          PHASE 3 · Server-Side Memory + Intelligent To-Do
+          - `/api/assistant/chat` extracts user_id via optional_current_user
+            and persists every turn to `assistant_messages` collection
+            keyed by user_id. When client history is empty, replays the
+            last 10 exchanges in a "पिछली बातचीत का सार" block appended
+            to the current user message.
+          - Verified persistence: told Jarvis "I like tea" via curl in
+            session A; asked "what do I like to drink?" in a fresh session
+            B from the frontend → answer "चाय, सर! 😊 यह तो याद है मुझे।"
+          - New GET `/api/assistant/history` (auth-gated, oldest-first).
+          - New DELETE `/api/assistant/history` for opt-in reset.
+          - New GET `/api/todo/blockers` — returns categorised issues:
+              bags without weight_kg
+              shipments missing freight OR bill-to party
+              invoices with amount = 0
+            plus a Hindi `summary_hi` one-liner for the proactive greet.
+          - New `<BlockerBell>` — floating top-right icon with red count
+            badge; hides on /sign-in. Auto-polls every 45s + on route
+            change.
+          - New `<BlockerPanel>` — glassmorphic right-side slide-in modal
+            with sections + tappable rows that deep-link to /shipment/{id}
+            or /invoice/{id}. Empty state shows green checkmark + Hindi
+            "सब कुछ अपडेट है".
+          - Proactive greet wired into BOTH the /assistant tab AND the
+            FloatingJarvis modal — reads cached blockers on open, adds
+            the Hindi summary to the opener greeting and speaks it.
+          
+          PHASE 4 · Streaming Voice (Shimmer + low-latency)
+          - Voice switched from `nova` → `shimmer` end-to-end.
+          - New backend endpoints:
+              POST `/api/assistant/tts/stream` — chunked audio/mpeg
+              GET  `/api/assistant/tts/stream?text=...` — same, GET-flavour
+                for native `<audio src=...>` playback
+          - Both proxy the Emergent LLM proxy `/audio/speech` via
+            `httpx.AsyncClient.stream()` and yield chunks (~4KB each)
+            straight to the client. TTFB measured at 24ms.
+          - New shared helper `src/utils/tts-stream.ts`:
+              Web (Chrome/Firefox): MediaSource + <audio> with
+                appendBuffer for each incoming chunk. Falls back to blob
+                playback if MediaSource lacks audio/mpeg support (Safari).
+              Native: passes GET URL to expo-audio's createAudioPlayer,
+                which lets the OS handle chunked HTTP streaming.
+          - Both the /assistant tab and FloatingJarvis's speak() now go
+            through the helper and cancel any in-flight playback before
+            starting a new one.
+          - Measured: assistant-tab open → "Speaking" mode reached at
+            t+1.34s (vs. prior 2-4s waiting on the full mp3 blob).

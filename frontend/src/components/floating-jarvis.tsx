@@ -53,6 +53,7 @@ import { useScreenContext } from "@/src/context/screen-context";
 import { useGhostUser } from "@/src/ghost/ghost-user";
 import { useMicLevel } from "@/src/hooks/use-mic-level";
 import { colors, radii, spacing } from "@/src/theme";
+import { speakStreaming, type StreamingTtsHandle } from "@/src/utils/tts-stream";
 
 // (Dimensions was only used for the removed absolute width — dropped.)
 
@@ -180,7 +181,7 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
   // TTS envelope — same 5-6Hz burst pattern as the main assistant.
   const ttsLevel = useRef(new Animated.Value(0)).current;
   const [ttsLevelNum, setTtsLevelNum] = useState(0);
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const ttsHandleRef = useRef<StreamingTtsHandle | null>(null);
 
   useEffect(() => {
     const id = ttsLevel.addListener(({ value }) => setTtsLevelNum(value));
@@ -259,50 +260,27 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
 
   const speak = useCallback(
     async (text: string) => {
-      if (!text.trim()) return;
-      try {
-        setMode("speaking");
-        const res = await fetch(`${API_BASE}/api/assistant/tts`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: stripTools(text), voice: "shimmer" }),
-        });
-        if (!res.ok) throw new Error(`TTS ${res.status}`);
-        const blob = await res.blob();
-        if (Platform.OS === "web") {
-          const url = URL.createObjectURL(blob);
-          if (audioElRef.current) {
-            audioElRef.current.pause();
-            audioElRef.current.src = "";
-          }
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const audio = new (window as any).Audio(url) as HTMLAudioElement;
-          audioElRef.current = audio;
-          audio.onended = () => setMode("idle");
-          audio.onerror = () => setMode("idle");
-          await audio.play();
-        } else {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const ExpoAudio = require("expo-audio") as typeof import("expo-audio");
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const FS = require("expo-file-system") as typeof import("expo-file-system");
-          const path = `${FS.cacheDirectory}nebula-tts-${Date.now()}.mp3`;
-          const reader = new FileReader();
-          const base64 = await new Promise<string>((resolve, reject) => {
-            reader.onerror = () => reject(new Error("blob read failed"));
-            reader.onload = () => resolve((reader.result as string).split(",")[1] || "");
-            reader.readAsDataURL(blob);
-          });
-          await FS.writeAsStringAsync(path, base64, { encoding: FS.EncodingType.Base64 });
-          const player = ExpoAudio.createAudioPlayer({ uri: path });
-          player.play();
-          player.addListener("playbackStatusUpdate", (s: { didJustFinish?: boolean }) => {
-            if (s.didJustFinish) setMode("idle");
-          });
+      const clean = stripTools(text);
+      if (!clean.trim()) return;
+      // Cancel any in-flight TTS before starting a new one.
+      ttsHandleRef.current?.stop();
+      const token = getAuthTokenSync();
+      const handle = speakStreaming({
+        text: clean,
+        voice: "shimmer",
+        authToken: token,
+        onStart: () => setMode("speaking"),
+        onError: () => setMode("idle"),
+      });
+      ttsHandleRef.current = handle;
+      // When playback finishes, drop back to idle. The onStart callback
+      // switched us to "speaking"; wait for the promise to resolve.
+      handle.promise.finally(() => {
+        if (ttsHandleRef.current === handle) {
+          setMode("idle");
+          ttsHandleRef.current = null;
         }
-      } catch {
-        setMode("idle");
-      }
+      });
     },
     [],
   );
@@ -409,15 +387,8 @@ function NebulaModal({ onClose }: { onClose: () => void }) {
 
   const close = useCallback(() => {
     // Stop any in-flight audio + release mic.
-    if (audioElRef.current) {
-      try {
-        audioElRef.current.pause();
-        audioElRef.current.src = "";
-      } catch {
-        /* ignore */
-      }
-      audioElRef.current = null;
-    }
+    ttsHandleRef.current?.stop();
+    ttsHandleRef.current = null;
     if (mic.listening) void mic.stop();
     onClose();
   }, [mic, onClose]);
