@@ -135,7 +135,7 @@ export default function AssistantScreen() {
         const res = await fetch(`${API_BASE}/api/assistant/tts`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: stripTools(text), voice: "nova" }),
+          body: JSON.stringify({ text: stripTools(text), voice: "shimmer" }),
         });
         if (!res.ok) throw new Error(`TTS ${res.status}`);
         const blob = await res.blob();
