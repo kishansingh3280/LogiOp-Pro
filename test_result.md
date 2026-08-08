@@ -984,12 +984,36 @@ frontend:
 backend:
   - task: "Assistant endpoints — /chat SSE, /memory, /tts, /stt"
     implemented: true
-    working: false
+    working: true
     file: "backend/server.py"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          Iteration 20b RETEST — 8/8 pytest PASS
+          (/app/backend/tests/test_iter20b_assistant_retest.py).
+          Both prior FAILs are RESOLVED:
+            (1) /api/assistant/tts now returns HTTP 200 audio/mpeg with
+                8832 bytes (>3KB) and valid MPEG frame sync header
+                (b"\\xff\\xf3\\xc4\\xc4") for "नमस्ते". Fix verified —
+                emergentintegrations.llm.openai.text_to_speech.
+                OpenAITextToSpeech is the correct path.
+            (2) /api/assistant/chat TTFT is now ~95–107ms over 3 probes
+                (was 2.65s). First frame received is ": ping" keep-alive
+                as designed, followed by "data:" Devanagari deltas and a
+                clean "event: done" terminator. Well under both the
+                500ms local and 2s preview SLA.
+          NEW: DELETE /api/assistant/memory/{key} returns 200 on hit,
+          removes the row, and is idempotent (repeat call OK).
+          Memory upsert + hits increment + list sort-by-hits-desc all
+          still pass. Regression: /invoices, /shipments, /bullion/rates
+          200 OK. Frontend Assistant E2E smoke: user sent "नमस्ते, कैसे
+          हो?" → Devanagari response streamed into an assistant bubble
+          within ~1.5s. Reports: /app/test_reports/iteration_20b.json,
+          xml: /app/test_reports/pytest/iter20b_results.xml
       - working: false
         agent: "testing"
         comment: |

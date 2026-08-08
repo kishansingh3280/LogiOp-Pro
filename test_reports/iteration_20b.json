@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 20b RETEST — both prior FAILs from iter20 are RESOLVED. TTS now returns real MP3 (8832 bytes, 0xFF 0xF3 MPEG frame sync, audio/mpeg) via emergentintegrations OpenAITextToSpeech. Chat TTFT dropped from 2.65s to ~95–107ms (well under 500ms local / 2s SLA) — first frame is the ': ping' keep-alive as designed. New DELETE /api/assistant/memory/{key} works and is idempotent. Frontend assistant chat streams Devanagari deltas end-to-end. 8/8 pytest PASS in 6.96s.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style props", "issue": "Deprecated 'shadow*' style props warning in console. Use 'boxShadow' per RN 0.76+. Reference: multiple screens."},
+      {"component": "props.pointerEvents", "issue": "props.pointerEvents is deprecated — move to style.pointerEvents. Reference: frontend/app/(tabs)/_layout.tsx (BlurView/overlay wrap)."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter20b_assistant_retest.py",
+    "/app/test_reports/pytest/iter20b_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional: migrate shadow* → boxShadow and props.pointerEvents → style.pointerEvents to clear RN deprecation warnings."
+  ],
+  "critical_code_review_comments": [
+    "TTS switch to emergentintegrations.llm.openai.text_to_speech.OpenAITextToSpeech is working and returns valid audio/mpeg with real MPEG frame sync (0xFFF3).",
+    "Streaming ': ping' keep-alive BEFORE LLM init is a clean fix — TTFT is now bounded by network only (~95ms observed).",
+    "asyncio.create_task on turn writes correctly decouples persistence from stream flow; no gating observed.",
+    "In-process 30s memory-tail cache is a pragmatic hot-path optimisation; consider a TTL sweeper if memory rows churn heavily."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "seed_data_creation": "Test memory row 'party:RetestRow' created and immediately cleaned up via the new DELETE endpoint. FY 26-27 data intact.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Assistant subsystem is fully green as of iter20b. TTS body ~8832 bytes for a 6-char Hindi prompt; TTFT ~95ms via preview URL over 3 probes. DELETE /api/assistant/memory/{key} returns 200 on hit, is idempotent on repeat. Frontend chat streams Devanagari deltas into a bubble within ~1.5s of tap.",
+  "rca_of_issue": "Prior FAIL 1 root cause: hardcoded https://integrations.emergentagent.com/openai/v1/audio/speech which returned 'fault filter abort' 404. Fixed by switching to emergentintegrations.llm.openai.text_to_speech.OpenAITextToSpeech. Prior FAIL 2 root cause: awaited MongoDB insert + 20-doc memory fetch + LlmChat init all ran before the first byte was streamed (2.65s TTFT). Fixed by emitting ': ping' keep-alive immediately when StreamingResponse opens, moving memory tail into a 30s in-process cache, and switching turn persistence to asyncio.create_task. Verified TTFT now ~95–107ms."
+}

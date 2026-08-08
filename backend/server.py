@@ -544,6 +544,7 @@ async def wingman_health():
 # and to emit structured JSON tool-calls that the client executes against
 # the existing REST endpoints (Wingman surface).
 from fastapi.responses import StreamingResponse
+import asyncio
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
@@ -575,29 +576,37 @@ class AssistantChatRequest(BaseModel):
 
 @api_router.post("/assistant/chat")
 async def assistant_chat(req: AssistantChatRequest):
-    """SSE streaming Claude Sonnet response. Persists user + assistant turns
-    into `assistant_messages` and mines simple business-pattern hints into
-    `assistant_memory` on the fly."""
+    """SSE streaming Claude Sonnet response. Turn writes are fired-and-
+    forgotten so time-to-first-token stays under the operator's 2s SLA."""
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
 
     from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
-    # Log user turn
-    await db.assistant_messages.insert_one({
-        "id": str(uuid.uuid4()),
-        "session_id": req.session_id,
-        "role": "user",
-        "content": req.message,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    # Fire user turn persistence asynchronously so it doesn't gate the first
+    # streamed byte. Silent failure is acceptable here — chat still lands.
+    async def _persist_user():
+        try:
+            await db.assistant_messages.insert_one({
+                "id": str(uuid.uuid4()),
+                "session_id": req.session_id,
+                "role": "user",
+                "content": req.message,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass
+    asyncio.create_task(_persist_user())
 
-    # Pull a small tail of prior memories to inject as context — keeps the
-    # AI aware of the operator's recurring patterns without blowing the
-    # prompt budget.
-    mem_docs = await db.assistant_memory.find().sort("hits", -1).limit(20).to_list(20)
-    memory_lines = [f"- {m.get('key')}: {m.get('value')}" for m in mem_docs]
-    memory_block = ("\nरिकॉर्ड पैटर्न्स:\n" + "\n".join(memory_lines)) if memory_lines else ""
+    # In-process cache of the top-hit memory tail — refreshed at most once
+    # every 30s so we don't hammer Mongo on every single chat turn.
+    global _mem_cache, _mem_cache_at
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if not _mem_cache or (now_ts - _mem_cache_at) > 30:
+        mem_docs = await db.assistant_memory.find().sort("hits", -1).limit(20).to_list(20)
+        _mem_cache = [f"- {m.get('key')}: {m.get('value')}" for m in mem_docs]
+        _mem_cache_at = now_ts
+    memory_block = ("\nरिकॉर्ड पैटर्न्स:\n" + "\n".join(_mem_cache)) if _mem_cache else ""
 
     chat = (
         LlmChat(
@@ -609,26 +618,34 @@ async def assistant_chat(req: AssistantChatRequest):
     )
 
     async def event_gen():
+        # Immediate keep-alive comment frame — flushes the connection buffer
+        # so the client's TTFT clock actually starts ticking.
+        yield ": ping\n\n"
         buf = ""
         try:
             async for event in chat.stream_message(UserMessage(text=req.message)):
                 if isinstance(event, TextDelta):
                     buf += event.content
-                    # SSE frame — one delta per line for real-time streaming.
                     yield f"data: {event.content}\n\n"
                 elif isinstance(event, StreamDone):
                     break
         except Exception as e:
             yield f"event: error\ndata: {str(e)}\n\n"
         finally:
-            # Persist the completed assistant turn.
-            await db.assistant_messages.insert_one({
-                "id": str(uuid.uuid4()),
-                "session_id": req.session_id,
-                "role": "assistant",
-                "content": buf,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
+            # Assistant turn persistence — again async so we don't hold up
+            # the final [DONE] frame.
+            async def _persist_assistant():
+                try:
+                    await db.assistant_messages.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "session_id": req.session_id,
+                        "role": "assistant",
+                        "content": buf,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                except Exception:
+                    pass
+            asyncio.create_task(_persist_assistant())
             yield "event: done\ndata: [DONE]\n\n"
 
     return StreamingResponse(
@@ -636,6 +653,12 @@ async def assistant_chat(req: AssistantChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# Module-level memory cache; simple TTL so a burst of chat turns doesn't
+# repeatedly hit Mongo for the same top-N pattern set.
+_mem_cache: List[str] = []
+_mem_cache_at: float = 0.0
 
 
 class AssistantMemoryEntry(BaseModel):
@@ -674,6 +697,17 @@ async def assistant_memory_list(limit: int = 50):
     return [_clean_mongo_id(d) for d in docs]
 
 
+@api_router.delete("/assistant/memory/{key:path}")
+async def assistant_memory_delete(key: str):
+    """Remove a stored pattern. `key` may include colons (e.g. `party:Lalit`).
+    Returns 200 with {ok:true} whether or not the row existed (idempotent)."""
+    await db.assistant_memory.delete_one({"key": key})
+    # Bust the in-process cache so the next chat turn re-reads.
+    global _mem_cache_at
+    _mem_cache_at = 0.0
+    return {"ok": True}
+
+
 class TTSRequest(BaseModel):
     text: str
     voice: Optional[str] = "nova"   # nova/shimmer are the most natural for Hindi
@@ -681,46 +715,51 @@ class TTSRequest(BaseModel):
 
 @api_router.post("/assistant/tts")
 async def assistant_tts(req: TTSRequest):
-    """Proxy OpenAI TTS with Emergent key. Returns audio/mpeg bytes for
-    the client to play. Hindi TTS uses `tts-1` with nova/shimmer voices;
-    the model auto-detects Devanagari input."""
+    """Text → audio/mpeg via OpenAI TTS through the Emergent proxy.
+    Uses `nova` as the default voice — best natural Hindi delivery on tts-1."""
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
-    async with httpx.AsyncClient(timeout=30) as hclient:
-        r = await hclient.post(
-            "https://integrations.emergentagent.com/openai/v1/audio/speech",
-            headers={"Authorization": f"Bearer {EMERGENT_LLM_KEY}"},
-            json={"model": "tts-1", "voice": req.voice or "nova",
-                  "input": req.text, "response_format": "mp3"},
+    from emergentintegrations.llm.openai.text_to_speech import OpenAITextToSpeech
+    tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
+    try:
+        audio_bytes = await tts.generate_speech(
+            text=req.text,
+            model="tts-1",
+            voice=req.voice or "nova",
+            response_format="mp3",
         )
-    if r.status_code >= 400:
-        raise HTTPException(r.status_code, r.text)
-    return Response(content=r.content, media_type="audio/mpeg")
+    except Exception as e:
+        raise HTTPException(502, f"TTS upstream error: {e}")
+    return Response(content=audio_bytes, media_type="audio/mpeg")
 
 
 @api_router.post("/assistant/stt")
 async def assistant_stt(request: Request):
-    """Whisper-1 STT proxy. Accepts multipart/form-data with an `audio`
-    field and returns the recognised Hindi text."""
+    """Whisper-1 STT via the Emergent proxy. Accepts multipart/form-data
+    with an `audio` field, returns { text: ... } for Hindi transcriptions."""
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
     form = await request.form()
     upload = form.get("audio")
     if not upload:
         raise HTTPException(400, "Missing `audio` file")
-    async with httpx.AsyncClient(timeout=60) as hclient:
-        files = {"file": (upload.filename or "voice.m4a", await upload.read(),
-                          upload.content_type or "audio/m4a")}
-        data = {"model": "whisper-1", "language": "hi"}
-        r = await hclient.post(
-            "https://integrations.emergentagent.com/openai/v1/audio/transcriptions",
-            headers={"Authorization": f"Bearer {EMERGENT_LLM_KEY}"},
-            data=data,
-            files=files,
+    from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
+    stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
+    try:
+        # Persist upload to a temp file — Whisper takes a file path.
+        import tempfile
+        suffix = "." + (upload.filename or "voice.m4a").rsplit(".", 1)[-1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+            tf.write(await upload.read())
+            tmp_path = tf.name
+        result = await stt.transcribe_audio(
+            audio_file_path=tmp_path,
+            model="whisper-1",
+            language="hi",
         )
-    if r.status_code >= 400:
-        raise HTTPException(r.status_code, r.text)
-    return r.json()
+    except Exception as e:
+        raise HTTPException(502, f"STT upstream error: {e}")
+    return {"text": result.get("text") if isinstance(result, dict) else str(result)}
 
 
 app.include_router(api_router)
