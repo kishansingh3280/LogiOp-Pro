@@ -1541,3 +1541,33 @@ agent_communication:
             proactive blocker greet still fires when applicable,
             streaming TTS (shimmer) still plays with visible orb
             envelope.
+
+  - task: "Iter28 · TTS calmer, clearer, slower voice"
+    implemented: true
+    working: true
+    file: "backend/server.py (_stream_openai_tts + _tts_prep_pauses + assistant system prompt)"
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          User feedback: assistant voice too fast + hard to understand.
+          Three fixes:
+          1) Speed 1.0 → 0.88 (default; clamped to [0.6, 1.2] server-side)
+          2) Model upgraded tts-1 → tts-1-hd for sharper Hindi consonants
+             (ka/kha/ga/ta/tha/da). +300ms upstream but streaming keeps
+             perceived latency ~1s from AI reply → voice start.
+          3) New `_tts_prep_pauses()` server-side text preprocessor that
+             inserts an ellipsis ("…") after Hindi danda (।) and any
+             sentence-ending punctuation followed by whitespace + capital
+             (works for both Devanagari + English mid-flow). The model
+             treats "…" as a longer breath → natural pauses between
+             sentences without changing content.
+          4) Updated system prompt to instruct Claude to write short
+             clean sentences with correct punctuation so TTS cadence
+             lands naturally.
+          Verified: sample "नमस्ते सर। बताइए। तीन shipments हैं। पहला Delhi से।"
+          → preprocessed to "नमस्ते सर। … बताइए। … तीन shipments हैं। … पहला Delhi से।"
+          End-to-end: /assistant/tts/stream still streams (TTFB=24ms) and
+          the popup UI shows "Speaking…" mode within ~500ms of first byte.

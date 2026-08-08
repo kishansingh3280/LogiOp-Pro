@@ -853,6 +853,9 @@ _ASSISTANT_SYSTEM_HI = """
 2. ग्राहकों / पार्टियों के साथ बात करते समय विनम्र और सम्मानजनक टोन। कैरियर से बात करते समय सीधी, नपी-तुली टोन।
 3. जवाब शुद्ध हिंदी (देवनागरी) में दें — तकनीकी शब्द (invoice, bag, kg) रह सकते हैं।
 4. संक्षिप्त रहें — दो-लाइन से ज़्यादा नहीं, ताकि आवाज़ पर सुनने में स्वाभाविक लगे।
+   बोलने की गति के लिए: छोटे clean वाक्य, सही जगह पर punctuation (। , .) —
+   इन्हें TTS pauses के लिए इस्तेमाल करेगा। लंबे compound sentences avoid करें —
+   दो short vaakya अच्छे लगते हैं। emoji minimal (max 1 per reply)।
 5. जब कार्रवाई माँगी जाए (bag जोड़ो, ledger update, party create) — एक JSON tool-call ब्लॉक दें
    और नीचे एक छोटी confirmation लाइन:
    ```json
@@ -1385,16 +1388,18 @@ class TTSRequest(BaseModel):
 @api_router.post("/assistant/tts")
 async def assistant_tts(req: TTSRequest):
     """Text → audio/mpeg via OpenAI TTS through the Emergent proxy.
-    Uses `shimmer` as the default voice — softest, most natural Hindi delivery."""
+    Uses `shimmer` at 0.88x speed on tts-1-hd — calm, professional Hindi
+    delivery with sharp consonant articulation."""
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
     from emergentintegrations.llm.openai.text_to_speech import OpenAITextToSpeech
     tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
     try:
         audio_bytes = await tts.generate_speech(
-            text=req.text,
-            model="tts-1",
-            voice=req.voice or "nova",
+            text=_tts_prep_pauses(req.text),
+            model="tts-1-hd",
+            voice=req.voice or "shimmer",
+            speed=0.88,
             response_format="mp3",
         )
     except Exception as e:
@@ -1405,27 +1410,65 @@ async def assistant_tts(req: TTSRequest):
 # ---------------------------------------------------------------------------
 # Streaming TTS — Phase 4 low-latency voice
 # ---------------------------------------------------------------------------
-async def _stream_openai_tts(text: str, voice: str) -> Any:
+def _tts_prep_pauses(text: str) -> str:
+    """Preprocess Hindi + English text to encourage the TTS model to add
+    brief, professional pauses.
+    
+    OpenAI TTS naturally reads punctuation as pause cues but its default
+    cadence is a touch too clipped for a "personal assistant" delivery.
+    We insert ellipses AFTER Hindi danda (।), colons and semicolons — the
+    model treats "…" as a longer breath — while leaving commas alone (they
+    already get a comfortable beat). Also condenses common Devanagari
+    emoji-like combos that upset the model's phrasing.
+    """
+    if not text:
+        return text
+    # 1. Danda (।) + space → danda + ellipsis + space (bigger breath).
+    out = text.replace("। ", "। … ")
+    # 2. Sentence-ending period followed by space + capital → short breath.
+    #    Uses a compiled regex for the "period + whitespace + uppercase"
+    #    pattern (common in English replies inside the Hindi flow).
+    import re as _re
+    out = _re.sub(r"([.!?])\s+(?=[A-Z\u0900-\u097F])", r"\1 … ", out)
+    # 3. Trim runaway ellipses ("… …" → "…").
+    out = _re.sub(r"(…\s*){2,}", "… ", out)
+    return out
+
+
+async def _stream_openai_tts(text: str, voice: str, speed: float = 0.88) -> Any:
     """Proxy an OpenAI /audio/speech call chunk-by-chunk. Yields raw MP3
     bytes as the model produces them. Time-to-first-chunk from the upstream
     proxy is ~500-900ms, so the operator hears speech within a beat.
 
     Uses the Emergent LLM proxy (same URL emergentintegrations targets).
+
+    Args:
+        text:  What to speak. Pre-processed to add natural pauses.
+        voice: Any of the OpenAI voices — `shimmer` is our default.
+        speed: 0.25-4.0. Default 0.88 for a calm, professional delivery.
+               Slowed just enough to be clearly audible without sounding
+               drunk. Clamped to [0.6, 1.2] server-side so a bad client
+               call can't produce unusable audio.
     """
     proxy_url = (os.getenv("INTEGRATION_PROXY_URL") or "https://integrations.emergentagent.com") + "/llm"
     headers = {
         "Authorization": f"Bearer {EMERGENT_LLM_KEY}",
         "Content-Type": "application/json",
     }
+    # Clamp so a stray query param can't slow speech to unusable levels.
+    safe_speed = max(0.6, min(1.2, float(speed or 0.88)))
     body = {
-        "model": "tts-1",
+        # tts-1-hd is worth the extra ~300ms latency at 0.88x — the
+        # Hindi consonants (क, ख, ग, ट, ठ, ड) come out much crisper.
+        "model": "tts-1-hd",
         "voice": voice or "shimmer",
-        "input": text[:4096],
+        "input": _tts_prep_pauses(text)[:4096],
         "response_format": "mp3",
+        "speed": safe_speed,
     }
     # NEW client per call — long-lived pooled clients occasionally choke on
     # very quick request/response cycles when the pool is being torn down.
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=45) as client:
         async with client.stream("POST", proxy_url + "/audio/speech", json=body, headers=headers) as r:
             if r.status_code >= 400:
                 # Read body once so we can surface a useful error line.
@@ -1436,8 +1479,14 @@ async def _stream_openai_tts(text: str, voice: str) -> Any:
                     yield chunk
 
 
+class _TTSStreamRequest(BaseModel):
+    text: str
+    voice: Optional[str] = "shimmer"
+    speed: Optional[float] = 0.88
+
+
 @api_router.post("/assistant/tts/stream")
-async def assistant_tts_stream_post(req: TTSRequest):
+async def assistant_tts_stream_post(req: _TTSStreamRequest):
     """Chunked MP3 stream. Same input as /assistant/tts but returns the
     upstream chunks as-they-arrive so the browser can `MediaSource.appendBuffer`
     and start playing within ~300-500ms instead of waiting for the full mp3.
@@ -1447,14 +1496,18 @@ async def assistant_tts_stream_post(req: TTSRequest):
     if not req.text or not req.text.strip():
         raise HTTPException(400, "text is required")
     return StreamingResponse(
-        _stream_openai_tts(req.text, req.voice or "shimmer"),
+        _stream_openai_tts(req.text, req.voice or "shimmer", req.speed or 0.88),
         media_type="audio/mpeg",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
 @api_router.get("/assistant/tts/stream")
-async def assistant_tts_stream_get(text: str, voice: Optional[str] = "shimmer"):
+async def assistant_tts_stream_get(
+    text: str,
+    voice: Optional[str] = "shimmer",
+    speed: Optional[float] = 0.88,
+):
     """GET-flavour streaming TTS — text passed via query so native players
     (`expo-audio createAudioPlayer({ uri })`) can pull the URL directly and
     let the OS handle chunked playback. `voice` defaults to shimmer.
@@ -1464,7 +1517,7 @@ async def assistant_tts_stream_get(text: str, voice: Optional[str] = "shimmer"):
     if not text or not text.strip():
         raise HTTPException(400, "text is required")
     return StreamingResponse(
-        _stream_openai_tts(text, voice or "shimmer"),
+        _stream_openai_tts(text, voice or "shimmer", speed or 0.88),
         media_type="audio/mpeg",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
