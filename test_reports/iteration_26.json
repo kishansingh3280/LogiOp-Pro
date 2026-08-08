@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration 26 — Trips (Bullion) module extension. Backend: 7/7 pytest cases pass (all new fields persist, direction↔route mirror is symmetric on POST and PUT, backcompat both ways, DELETE regression OK). Frontend (mobile 390×844 web preview): tab renamed 'Trips' with airplane icon at position 4 (Home · Shipments · Invoices · Trips · More), header title 'Trips' not 'Bullion Work', segmented 'Trips' is default (testID bullion-tab-trips), counter '43 trades · 8 trips' visible. All 8 new form testIDs (trip-cur-USD/SGD/THB/other, trip-cur-amount, trip-gold-baht, trip-carry-charge, trip-shipment-pick) render on /bullion/trip/new; shipment picker opens & lists shipments (pick-shipment-CN-1040 etc), picking one populates the button label with the consignment_no and reveals trip-shipment-clear. Detail screen renders trip-summary-card with all 4 SummaryRow entries — 'Currency carried 5,000 USD', 'Gold carried 25.5 baht', 'Carry charge ₹3,200', 'Linked shipment CN-1040' — and trip-shipment-link correctly deep-links to /shipment/ee2542a7-…. modify-trip-btn testID present.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "app/(tabs)/bullion.tsx FAB / floating-jarvis overlay",
+        "issue": "The floating Wingman/Jarvis chat auto-opens on tab focus and covers the entire viewport, making the FAB (testID bullion-fab) and its 'Carrier trip' menu unreachable via tap. Clicking the FAB via testID triggers Wingman opening. E2E users cannot reach /bullion/trip/new through the FAB path unless they explicitly close Jarvis first. Workaround used: direct URL nav.",
+        "testID": "bullion-fab, fab-new-trip",
+        "priority": "HIGH"
+      },
+      {
+        "component": "app/bullion/trip/new.tsx save-trip-btn",
+        "issue": "Tapping save-trip-btn after a fully-filled form (USD 5000, gold 25.5, carry 3200, shipment CN-1040 picked, carrier name typed) did NOT create a trip. URL stayed on /bullion/trip/new and API list showed no new record. Instead the header notification bell modal ('To-Do Inbox') opened — the Save button click may be routed to another element (possibly overlay hit-test with the bell/Jarvis mini icon which sits close by). Backend POST works fine when called via fetch() directly, so the fault is in the RN web-preview event handling / overlay stacking.",
+        "testID": "save-trip-btn",
+        "priority": "HIGH"
+      },
+      {
+        "component": "app/bullion/trip/[id].tsx modify-trip-btn",
+        "issue": "modify-trip-btn is present but tapping it did not navigate to an edit form during the test — URL remained /bullion/trip/{id} and the detail view was still shown. Could be same overlay/hit-test regression as save-trip-btn, or the edit flow renders as an inline mode toggled by state without a route change (couldn't verify pre-filled cur-amount/gold-baht/carry-charge inputs due to timeout).",
+        "testID": "modify-trip-btn",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Trips detail (bullion/trip/[id])",
+        "issues": [
+          "Header shows both 'Modify' text button and a notification bell in the top-right, with very tight touch spacing on a 390-wide viewport. Increases mis-tap risk (see save/modify hit-test regressions above)."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter26_trips_module.py",
+    "/app/test_reports/pytest/iter26_results.xml"
+  ],
+  "action_items": [
+    "Fix FAB / floating-jarvis overlay stacking on the Trips tab so tapping bullion-fab opens the FAB menu instead of Jarvis (verify z-index & pointerEvents, or auto-dismiss Jarvis when FAB is pressed).",
+    "Debug save-trip-btn tap on /bullion/trip/new — save handler does not fire in web preview. Check whether the save TouchableOpacity is being intercepted by the Jarvis mini bubble or the notification bell (both sit at the bottom-right / top-right of the same screen).",
+    "Verify modify-trip-btn opens the edit form (either route change or inline edit-mode) — the pre-fill of currency_amount/gold_baht/carry_charge inputs could not be observed in the test.",
+    "Consider adding testID='shipment-picker-row-{consignment_no}' as a consistent alias to the existing pick-shipment-* testIDs (spec mentioned the former)."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew past 700 lines — worth splitting the bullion + wingman + assistant modules into separate routers.",
+    "BullionTrip is Pydantic v1 style (Config.extra='allow'); if the project migrates to v2, this needs to become model_config = ConfigDict(extra='allow')."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter26_trips_module.py (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "70% (tab rename, form fields, picker, detail summary card, shipment link all verified; save & modify flows blocked by overlay)"},
+  "seed_data_creation": "Created 3 trips via POST during backend tests (all cleaned up in test_07). Created 1 trip via API from frontend test (id d93f1296-…, deleted at end).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The floating Jarvis/Wingman auto-opens on tab focus and blocks bottom-right FAB interactions. When you write Playwright scripts, close Jarvis (testID='jarvis-close') RIGHT after any navigation and BEFORE any tap in the lower half of the screen. Direct URL navigation to /bullion/trip/new works. For row selection in the shipment picker use testID='pick-shipment-{consignment_no}' (e.g. pick-shipment-CN-1040).",
+  "rca_of_issue": "Two related UI regressions on the new Trips form both stem from overlapping tap targets: (a) floating Jarvis bubble stacks over the FAB on the Trips tab; (b) the top-right header row on /bullion/trip/[id] fits both Modify + notification bell, and the notification bell modal opens instead of the save/modify handler when tapping near them. Fix by (1) hiding Jarvis mini bubble when the FAB menu is open, (2) increasing horizontal spacing between Modify button and bell (min 12px gap on 390-wide viewport), (3) ensuring TouchableOpacity's hitSlop doesn't overlap the bell's hitSlop."
+}

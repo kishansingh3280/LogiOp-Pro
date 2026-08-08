@@ -109,7 +109,7 @@ export default function BullionScreen() {
     <SafeAreaView edges={["top"]} style={styles.safe}>
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Bullion Work</Text>
+          <Text style={styles.title}>Trips</Text>
           <Text style={styles.subtitle}>
             {fyTxns.length} trade{fyTxns.length === 1 ? "" : "s"} · {fyTrips.length} trip{fyTrips.length === 1 ? "" : "s"}
           </Text>
@@ -326,6 +326,14 @@ export default function BullionScreen() {
             const carrier = item.carrier_party_id ? partyMap[item.carrier_party_id] : undefined;
             const airline = findAirline(item.airline_code);
             const airports = defaultAirports(item.route);
+            // ------- Trips-module column values -------
+            const cur = (item.currency_amount || 0) > 0
+              ? `${fmtCompact(item.currency_amount || 0)} ${item.currency_type || ""}`.trim()
+              : null;
+            const gold = (item.gold_baht || 0) > 0 ? `${fmtCompact(item.gold_baht || 0)} baht` : null;
+            const charge = (item.carry_charge_inr || 0) > 0
+              ? fmtCurrency(item.carry_charge_inr || 0, "INR")
+              : null;
             return (
               <TouchableOpacity
                 activeOpacity={0.85}
@@ -355,6 +363,38 @@ export default function BullionScreen() {
                   </View>
                   <Text style={styles.slotsText}>{fmtKgSmart(free)}/{fmtKgSmart(capacity)} kg free</Text>
                 </View>
+                {/* Trips-module compact info strip. Renders only fields that
+                    have a value so the card stays clean when nothing is set. */}
+                {(cur || gold || charge || item.shipment_ref?.consignment_no) ? (
+                  <View style={styles.tripStrip} testID={`trip-strip-${item.id}`}>
+                    {cur ? (
+                      <View style={styles.tripPill}>
+                        <Ionicons name="cash-outline" size={11} color={colors.lime} />
+                        <Text style={styles.tripPillText}>{cur}</Text>
+                      </View>
+                    ) : null}
+                    {gold ? (
+                      <View style={[styles.tripPill, { borderColor: "#F5C518", backgroundColor: "#3a2f0022" }]}>
+                        <Ionicons name="diamond-outline" size={11} color="#F5C518" />
+                        <Text style={[styles.tripPillText, { color: "#F5C518" }]}>{gold}</Text>
+                      </View>
+                    ) : null}
+                    {charge ? (
+                      <View style={[styles.tripPill, { borderColor: colors.warn, backgroundColor: "rgba(255,176,32,0.10)" }]}>
+                        <Ionicons name="wallet-outline" size={11} color={colors.warn} />
+                        <Text style={[styles.tripPillText, { color: colors.warn }]}>{charge}</Text>
+                      </View>
+                    ) : null}
+                    {item.shipment_ref?.consignment_no ? (
+                      <View style={[styles.tripPill, { borderColor: colors.info, backgroundColor: "rgba(0,209,255,0.10)" }]}>
+                        <Ionicons name="cube-outline" size={11} color={colors.info} />
+                        <Text style={[styles.tripPillText, { color: colors.info }]}>
+                          {item.shipment_ref.consignment_no}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
                 {/* Compact route-map thumbnail */}
                 <View style={{ marginTop: spacing.md }}>
                   <FlightMap from={airports.from} to={airports.to} size="sm" showLabels />
@@ -703,6 +743,16 @@ function fmtKgSmart(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
+/** Compact number formatter used by the Trips card strip:
+ *  1500  → "1.5K", 20000 → "20K", 1250000 → "1.3M". Falls back to
+ *  the raw integer for values under 1000 so tiny amounts stay legible. */
+function fmtCompact(n: number): string {
+  const v = Math.abs(n || 0);
+  if (v < 1000) return Number.isInteger(v) ? String(v) : v.toFixed(1);
+  if (v < 1_000_000) return `${(v / 1000).toFixed(v >= 10_000 ? 0 : 1).replace(/\.0$/, "")}K`;
+  return `${(v / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1).replace(/\.0$/, "")}M`;
+}
+
 
 function SegBtn({ label, active, onPress, testID }: { label: string; active: boolean; onPress: () => void; testID?: string }) {
   return (
@@ -886,6 +936,32 @@ const styles = StyleSheet.create({
   slotsFill: { height: "100%", backgroundColor: colors.lime, borderRadius: 4 },
   slotsText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
   tripNotes: { color: colors.textDim, fontSize: 12, marginTop: 8 },
+  tripStrip: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  tripPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radii.pill,
+    backgroundColor: colors.limeGlow,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  tripPillText: {
+    color: colors.lime,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
   emptyBox: { padding: spacing.xxl, alignItems: "center", gap: 8 },
   emptyTitle: { color: colors.text, fontSize: 15, fontWeight: "700", marginTop: 8 },
   emptySub: { color: colors.textDim, fontSize: 13, textAlign: "center" },

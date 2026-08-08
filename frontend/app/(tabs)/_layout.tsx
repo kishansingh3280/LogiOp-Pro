@@ -33,7 +33,7 @@ const TABS: TabDef[] = [
   { name: "index", title: "Overview", icon: "grid-outline" },
   { name: "shipments", title: "Shipments", icon: "cube-outline" },
   { name: "invoices", title: "Invoices", icon: "document-text-outline" },
-  { name: "bullion", title: "Bullion", icon: "diamond-outline" },
+  { name: "bullion", title: "Trips", icon: "airplane-outline" },
   { name: "more", title: "More", icon: "ellipsis-horizontal" },
 ];
 

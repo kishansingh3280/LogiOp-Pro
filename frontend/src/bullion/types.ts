@@ -14,6 +14,8 @@ export interface CarrierTrip {
   id: string;
   date: string;                       // YYYY-MM-DD
   route: BullionRoute;
+  /** Alias for `route`. Server mirrors one to the other. */
+  direction?: BullionRoute;
   carrier_party_id?: string | null;
   carrier_name?: string;
   airline_code?: string | null;       // IATA 2-letter code (e.g. "TG")
@@ -22,6 +24,12 @@ export interface CarrierTrip {
   /** @deprecated Legacy field – kept for backward compat with older stored trips. */
   available_slots?: number;
   notes?: string;
+  // ---- Trips-module fields (2026-02) ----
+  currency_type?: "USD" | "SGD" | "THB" | "other" | string | null;
+  currency_amount?: number | null;
+  gold_baht?: number | null;
+  carry_charge_inr?: number | null;
+  shipment_ref?: { id: string; consignment_no: string } | null;
   created_at: string;
 }
 

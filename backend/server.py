@@ -267,7 +267,8 @@ def _clean_mongo_id(doc: Dict[str, Any]) -> Dict[str, Any]:
 class BullionTrip(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     date: str
-    route: Optional[str] = None              # "IN_TO_TH" | "TH_TO_IN"
+    route: Optional[str] = None              # "IN_TO_TH" | "TH_TO_IN" (canonical)
+    direction: Optional[str] = None          # alias for `route` — accepts same values
     origin: Optional[str] = None
     destination: Optional[str] = None
     available_weight_kg: float = 0.0
@@ -279,6 +280,12 @@ class BullionTrip(BaseModel):
     flight_number: Optional[str] = None
     status: str = "planned"                  # planned / in_transit / completed / cancelled
     notes: Optional[str] = None
+    # ---- New Trips-module fields (2026-02) ----
+    currency_type: Optional[str] = None      # "USD" | "SGD" | "THB" | "other" | free-text
+    currency_amount: Optional[float] = None  # amount carried in the above currency
+    gold_baht: Optional[float] = None        # gold carried, measured in Thai baht (15.244g)
+    carry_charge_inr: Optional[float] = None # total carrier fee for this trip, in INR
+    shipment_ref: Optional[Dict[str, Any]] = None  # {id: uuid, consignment_no: "CN-…"}
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     # Allow the richer frontend schema to pass through without loss.
@@ -339,6 +346,13 @@ async def bullion_create_trip(trip: BullionTrip, request: Request):
     # mirror the value so downstream aggregations keep working.
     if not doc.get("available_weight_kg") and doc.get("available_slots"):
         doc["available_weight_kg"] = float(doc["available_slots"])
+    # Trips-module alias: accept `direction` from the client and mirror it to
+    # `route` (canonical) so all existing dispatcher / map / airline code
+    # keeps working. If both are sent, `route` wins.
+    if doc.get("direction") and not doc.get("route"):
+        doc["route"] = doc["direction"]
+    elif doc.get("route") and not doc.get("direction"):
+        doc["direction"] = doc["route"]
     doc.update(audit_stamp(request, creating=True, source=request.state.audit_source))
     await db.bullion_trips.insert_one(doc.copy())
     return _clean_mongo_id(doc)
@@ -347,6 +361,11 @@ async def bullion_create_trip(trip: BullionTrip, request: Request):
 @api_router.put("/bullion/trips/{trip_id}")
 async def bullion_update_trip(trip_id: str, patch: Dict[str, Any], request: Request):
     patch.pop("id", None)
+    # Same direction↔route mirroring on updates.
+    if patch.get("direction") and not patch.get("route"):
+        patch["route"] = patch["direction"]
+    elif patch.get("route") and not patch.get("direction"):
+        patch["direction"] = patch["route"]
     patch.update(audit_stamp(request, creating=False))
     res = await db.bullion_trips.update_one({"id": trip_id}, {"$set": patch})
     if res.matched_count == 0:

@@ -17,7 +17,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useApi } from "@/src/api/hooks";
-import type { Party } from "@/src/api/types";
+import type { Party, Shipment } from "@/src/api/types";
 import { AIRLINES, findAirline } from "@/src/bullion/airlines";
 import { AirlineBadge } from "@/src/bullion/AirlineBadge";
 import { createTrip, updateTrip, useTrips } from "@/src/bullion/store";
@@ -57,6 +57,7 @@ export default function NewTripScreen() {
   const editId = params.editId || null;
   const isEdit = !!editId;
   const parties = useApi<Party[]>("/api/parties");
+  const shipmentsApi = useApi<Shipment[]>("/api/shipments");
   const trips = useTrips();
   const existing = editId ? trips.data.find((t) => t.id === editId) : null;
 
@@ -69,6 +70,13 @@ export default function NewTripScreen() {
   const [flightNumber, setFlightNumber] = useState("");
   const [availableWeight, setAvailableWeight] = useState("20");
   const [notes, setNotes] = useState("");
+  // ---- Trips-module fields ----
+  const [currencyType, setCurrencyType] = useState<"USD" | "SGD" | "THB" | "other">("USD");
+  const [currencyAmount, setCurrencyAmount] = useState("");
+  const [goldBaht, setGoldBaht] = useState("");
+  const [carryChargeInr, setCarryChargeInr] = useState("");
+  const [shipmentRef, setShipmentRef] = useState<{ id: string; consignment_no: string } | null>(null);
+  const [pickShipment, setPickShipment] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [pickOpen, setPickOpen] = useState(false);
   const [pickAirline, setPickAirline] = useState(false);
@@ -92,6 +100,13 @@ export default function NewTripScreen() {
     setFlightNumber(existing.flight_number || "");
     setAvailableWeight(String(existing.available_weight_kg ?? existing.available_slots ?? 20));
     setNotes(existing.notes || "");
+    // Trips-module fields
+    const ct = (existing.currency_type as string | undefined) || "USD";
+    setCurrencyType(["USD", "SGD", "THB", "other"].includes(ct) ? (ct as "USD" | "SGD" | "THB" | "other") : "other");
+    setCurrencyAmount(existing.currency_amount ? String(existing.currency_amount) : "");
+    setGoldBaht(existing.gold_baht ? String(existing.gold_baht) : "");
+    setCarryChargeInr(existing.carry_charge_inr ? String(existing.carry_charge_inr) : "");
+    setShipmentRef(existing.shipment_ref || null);
     setHydrated(true);
   }, [isEdit, existing, hydrated]);
 
@@ -101,6 +116,20 @@ export default function NewTripScreen() {
       toast.warn("Available weight must be 0 or more (kg)");
       return;
     }
+    // Build the Trips-module payload — undefined for empty numeric fields
+    // so the backend keeps them null rather than storing 0.
+    const num = (s: string) => {
+      const v = parseFloat(s);
+      return Number.isFinite(v) && v > 0 ? v : undefined;
+    };
+    const tripsExtras = {
+      direction: route,
+      currency_type: currencyAmount.trim() ? currencyType : undefined,
+      currency_amount: num(currencyAmount),
+      gold_baht: num(goldBaht),
+      carry_charge_inr: num(carryChargeInr),
+      shipment_ref: shipmentRef || undefined,
+    };
     setBusy(true);
     try {
       if (isEdit && existing) {
@@ -113,6 +142,7 @@ export default function NewTripScreen() {
           flight_number: flightNumber.trim() || undefined,
           available_weight_kg: weight,
           notes,
+          ...tripsExtras,
         });
         toast.success("Trip updated");
       } else {
@@ -125,6 +155,7 @@ export default function NewTripScreen() {
           flight_number: flightNumber.trim() || undefined,
           available_weight_kg: weight,
           notes,
+          ...tripsExtras,
         });
         toast.success("Trip saved");
       }
@@ -287,6 +318,78 @@ export default function NewTripScreen() {
             </Text>
           </Field>
 
+          {/* ---- Trips-module fields ---- */}
+          <Field label="Currency carried">
+            <View style={styles.segRow}>
+              {(["USD", "SGD", "THB", "other"] as const).map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  onPress={() => setCurrencyType(c)}
+                  style={[styles.seg, currencyType === c && styles.segActive]}
+                  testID={`trip-cur-${c}`}
+                >
+                  <Text style={[styles.segText, currencyType === c && styles.segTextActive]}>{c}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TextInput
+              style={[styles.input, { marginTop: 8 }]}
+              keyboardType="decimal-pad"
+              value={currencyAmount}
+              onChangeText={setCurrencyAmount}
+              placeholder="Amount in the selected currency"
+              placeholderTextColor={colors.textDim}
+              testID="trip-cur-amount"
+            />
+          </Field>
+
+          <Field label="Gold carried (baht)">
+            <TextInput
+              style={styles.input}
+              keyboardType="decimal-pad"
+              value={goldBaht}
+              onChangeText={setGoldBaht}
+              placeholder="Gold weight in Thai baht (15.244 g)"
+              placeholderTextColor={colors.textDim}
+              testID="trip-gold-baht"
+            />
+          </Field>
+
+          <Field label="Carry charge (INR)">
+            <TextInput
+              style={styles.input}
+              keyboardType="decimal-pad"
+              value={carryChargeInr}
+              onChangeText={setCarryChargeInr}
+              placeholder="Total carrier fee for this trip, in ₹"
+              placeholderTextColor={colors.textDim}
+              testID="trip-carry-charge"
+            />
+          </Field>
+
+          <Field label="Linked shipment (optional)">
+            <TouchableOpacity
+              style={styles.selectBtn}
+              onPress={() => setPickShipment(true)}
+              testID="trip-shipment-pick"
+            >
+              <Text style={[styles.selectText, !shipmentRef && styles.selectPh]}>
+                {shipmentRef ? shipmentRef.consignment_no : "Choose a shipment"}
+              </Text>
+              <Ionicons name="chevron-down" size={16} color={colors.textDim} />
+            </TouchableOpacity>
+            {shipmentRef ? (
+              <TouchableOpacity
+                onPress={() => setShipmentRef(null)}
+                style={styles.clearShipmentBtn}
+                testID="trip-shipment-clear"
+              >
+                <Ionicons name="close-circle-outline" size={14} color={colors.danger} />
+                <Text style={styles.clearShipmentText}>Clear link</Text>
+              </TouchableOpacity>
+            ) : null}
+          </Field>
+
           <Field label="Notes (optional)">
             <TextInput
               style={[styles.input, { minHeight: 70, textAlignVertical: "top" }]}
@@ -364,6 +467,45 @@ export default function NewTripScreen() {
               ))}
             </ScrollView>
             <TouchableOpacity style={styles.sheetCancel} onPress={() => setPickAirline(false)}>
+              <Text style={styles.sheetCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      )}
+
+      {/* Shipment picker for the linked shipment_ref */}
+      {pickShipment && (
+        <Pressable style={styles.backdrop} onPress={() => setPickShipment(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Choose shipment</Text>
+            <ScrollView style={{ maxHeight: 440 }}>
+              {(shipmentsApi.data || []).length === 0 ? (
+                <View style={{ padding: spacing.md, alignItems: "center" }}>
+                  <Ionicons name="cube-outline" size={30} color={colors.textDim} />
+                  <Text style={[styles.pickName, { marginTop: 8 }]}>No shipments found</Text>
+                  <Text style={styles.pickMeta}>Create a shipment first to link it here.</Text>
+                </View>
+              ) : (
+                (shipmentsApi.data || []).map((s) => (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={styles.pickRow}
+                    onPress={() => {
+                      setShipmentRef({ id: s.id, consignment_no: s.consignment_no });
+                      setPickShipment(false);
+                    }}
+                    testID={`pick-shipment-${s.consignment_no}`}
+                  >
+                    <Text style={styles.pickName}>{s.consignment_no}</Text>
+                    <Text style={styles.pickMeta}>
+                      {(s.origin || "—")} → {(s.destination || "—")} · {s.status || "pending"}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+            <TouchableOpacity style={styles.sheetCancel} onPress={() => setPickShipment(false)}>
               <Text style={styles.sheetCancelText}>Cancel</Text>
             </TouchableOpacity>
           </Pressable>
@@ -473,4 +615,18 @@ const styles = StyleSheet.create({
     backgroundColor: colors.chipBg,
   },
   doneBtnText: { color: colors.lime, fontWeight: "700", fontSize: 13 },
+  clearShipmentBtn: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.chipBg,
+    borderColor: colors.danger,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  clearShipmentText: { color: colors.danger, fontSize: 11, fontWeight: "800" },
 });

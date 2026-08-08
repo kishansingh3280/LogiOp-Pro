@@ -234,8 +234,87 @@ export default function TripDetailScreen() {
             <Text style={styles.notesText}>{trip.notes}</Text>
           </View>
         ) : null}
+
+        {/* Trips-module read-only summary. Renders whichever fields the
+            operator has filled in — currency carried, gold carried, carrier
+            fee, and the linked shipment consignment number. */}
+        {(trip.currency_amount || trip.gold_baht || trip.carry_charge_inr || trip.shipment_ref?.consignment_no) ? (
+          <View style={styles.tripSummary} testID="trip-summary-card">
+            <Text style={styles.notesLabel}>Trip summary</Text>
+            {trip.currency_amount ? (
+              <SummaryRow
+                icon="cash-outline"
+                tint={colors.lime}
+                label="Currency carried"
+                value={`${new Intl.NumberFormat("en-IN").format(trip.currency_amount)} ${trip.currency_type || ""}`.trim()}
+              />
+            ) : null}
+            {trip.gold_baht ? (
+              <SummaryRow
+                icon="diamond-outline"
+                tint="#F5C518"
+                label="Gold carried"
+                value={`${new Intl.NumberFormat("en-IN").format(trip.gold_baht)} baht`}
+              />
+            ) : null}
+            {trip.carry_charge_inr ? (
+              <SummaryRow
+                icon="wallet-outline"
+                tint={colors.warn}
+                label="Carry charge"
+                value={`₹${new Intl.NumberFormat("en-IN").format(trip.carry_charge_inr)}`}
+              />
+            ) : null}
+            {trip.shipment_ref?.consignment_no ? (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() =>
+                  trip.shipment_ref?.id
+                    ? router.push(`/shipment/${trip.shipment_ref.id}` as never)
+                    : undefined
+                }
+                testID="trip-shipment-link"
+              >
+                <SummaryRow
+                  icon="cube-outline"
+                  tint={colors.info}
+                  label="Linked shipment"
+                  value={trip.shipment_ref.consignment_no}
+                  chevron
+                />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function SummaryRow({
+  icon,
+  tint,
+  label,
+  value,
+  chevron,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tint: string;
+  label: string;
+  value: string;
+  chevron?: boolean;
+}) {
+  return (
+    <View style={styles.sumRow}>
+      <View style={[styles.sumIcon, { borderColor: tint, backgroundColor: tint + "18" }]}>
+        <Ionicons name={icon} size={14} color={tint} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sumLbl}>{label}</Text>
+        <Text style={[styles.sumVal, { color: tint }]}>{value}</Text>
+      </View>
+      {chevron ? <Ionicons name="chevron-forward" size={16} color={colors.textDim} /> : null}
+    </View>
   );
 }
 
@@ -382,4 +461,40 @@ const styles = StyleSheet.create({
   emptyBox: { padding: spacing.xxl, alignItems: "center", gap: 8 },
   emptyTitle: { color: colors.text, fontSize: 15, fontWeight: "700", marginTop: 8 },
   emptySub: { color: colors.textDim, fontSize: 13, textAlign: "center" },
+
+  // Trips-module summary card
+  tripSummary: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  sumRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: 6,
+  },
+  sumIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  sumLbl: {
+    color: colors.textDim,
+    fontSize: 10,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    fontWeight: "700",
+  },
+  sumVal: {
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 2,
+  },
 });
