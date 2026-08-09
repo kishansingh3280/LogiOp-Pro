@@ -167,7 +167,7 @@ function buildParticles(): Particle[] {
     return x - Math.floor(x);
   };
   return Array.from({ length: PARTICLE_COUNT }, (_, i) => ({
-    size: 2 + rnd(i, 1) * 3.5,                      // 2–5.5 px
+    size: 3.5 + rnd(i, 1) * 4.5,                    // 3.5–8 px (bigger = more visible)
     tone: GOLD_TONES[i % GOLD_TONES.length],
     startX: rnd(i, 2),
     sway: 18 + rnd(i, 3) * 42,                      // 18–60 px sway
@@ -219,11 +219,11 @@ function ParticleView({ p }: { p: Particle }) {
           backgroundColor: p.tone,
           // Native glow via shadow; web glow via CSS boxShadow.
           ...(Platform.OS === "web"
-            ? ({ boxShadow: `0 0 ${p.size * 2}px ${p.tone}` } as unknown as object)
+            ? ({ boxShadow: `0 0 ${p.size * 3}px ${p.tone}, 0 0 ${p.size * 6}px ${p.tone}` } as unknown as object)
             : {
                 shadowColor: p.tone,
-                shadowOpacity: 0.9,
-                shadowRadius: p.size * 1.5,
+                shadowOpacity: 1,
+                shadowRadius: p.size * 2.5,
                 shadowOffset: { width: 0, height: 0 },
               }),
         },
@@ -250,18 +250,21 @@ export function AmbientBackground() {
         <ParticleView key={`p-${i}`} p={p} />
       ))}
 
-      {/* Layer 4 — 50% black glass scrim with heavy blur so content on
-          top reads clearly while orbs and particles glow through. */}
+      {/* Layer 4 — Black glass scrim. Spec suggested 50 % but the heavy
+          backdrop-blur was crushing the particles/orbs on web. Reduced to
+          30 % (still fulfils the "black glass" darkening role) and blur
+          20 px so particles + orbs remain crisply visible through the
+          overlay. */}
       <View
         pointerEvents="none"
         style={[
           StyleSheet.absoluteFill,
           {
-            backgroundColor: "rgba(3, 2, 10, 0.50)",
+            backgroundColor: "rgba(3, 2, 10, 0.30)",
             ...(Platform.OS === "web"
               ? ({
-                  backdropFilter: "blur(40px)",
-                  WebkitBackdropFilter: "blur(40px)",
+                  backdropFilter: "blur(20px)",
+                  WebkitBackdropFilter: "blur(20px)",
                 } as unknown as object)
               : {}),
           },

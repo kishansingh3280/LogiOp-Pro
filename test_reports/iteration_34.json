@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend-only visual verification of iter34 ambient background tweaks. All nine assertions PASS. Sign-in screen at 390x844 DOM inspection: 35 gold particles rendered (offsetWidth 4-8 px, 19 particles with width >= 6 confirming the new 3.5-8 px range), backgroundColor confirmed to be one of {rgb(255,215,0), rgb(255,195,0), rgb(255,229,102), rgb(255,170,0)}, sample boxShadow = 'rgb(255,215,0) 0px 0px 20.97px, rgb(255,215,0) 0px 0px 41.94px' confirming the doubled 3x + 6x web glow halo; 4 blurred colour orbs (filter contains blur(60px), sizes 802/844/717/633 matching SW*{0.95,1.0,0.85,0.75}); black glass scrim now uses backgroundColor rgba(3, 2, 10, 0.3) + backdropFilter blur(20px) (softened from 0.5 + 40px per spec); body & html backgroundColor = rgb(7, 7, 15) (#07070f JARVIS base). Screenshot pixel inspection: purple bloom clearly visible top-left, greenish/cyan bloom bottom-left and along card edges, warm gold tone bleeding through the Login card border — colours ARE visible on rendered pixels, not just in DOM. Quick-login as Kishan Sir (demo) succeeded; Dashboard renders with same 35 particles + 4 orbs + 1 scrim (background persists at root across screens, url stays at '/'). No new console errors — only pre-existing RN-Web shadow*/textShadow/pointerEvents/useNativeDriver deprecation warnings (P2, unchanged). Layout regression check: sign-in card centered with Quick login button, dashboard Row 1 (Customer Will Pay ₹39,656 | You Pay Carrier ₹61,488.78), Bangkok warehouse widget full-width, DELIVERED=2 with AURA-DEL-001/002, tab bar (Overview/Shipments/Invoices/Trips/More) and floating Wingman bubble all in their prior iter33 positions — no drift. Contrast on white text over the softened 30% scrim remains acceptable — the 'Welcome, Kishan Sir' heading and body copy on the sign-in card read cleanly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/tmp/iter34_signin.png",
+    "/app/test_reports/tmp/iter34_dashboard.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ambient-background.tsx line 170: particle size range correctly bumped to `3.5 + rnd*4.5` (3.5-8 px). Verified live: offsetWidth range 4-8 with 19 of 35 particles at >=6 px.",
+    "ambient-background.tsx line 222: web boxShadow correctly doubled to `0 0 ${size*3}px ${tone}, 0 0 ${size*6}px ${tone}` with tone-colored halo — verified live boxShadow string shows both halos.",
+    "ambient-background.tsx line 226: native shadowRadius correctly bumped to `size * 2.5` (native-only, not verifiable in web preview).",
+    "ambient-background.tsx line 263-267: scrim correctly softened to rgba(3, 2, 10, 0.30) + backdrop-filter blur(20px) — verified live via getComputedStyle.",
+    "Layer ordering preserved: base (#07070f) -> orbs -> particles -> scrim -> vignette. All ambient layers carry pointerEvents='none' so they never block taps.",
+    "No unrelated files were changed in this iteration (grep confirms only ambient-background.tsx). All screen layouts inherit unchanged."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a - frontend-only iteration", "frontend": "100% (9 of 9 assertions pass, particles+orbs+scrim verified via DOM AND visible in rendered pixels)"},
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "iter34 ambient-background tweaks are LIVE and visually confirmed. If future iterations touch ambient-background.tsx, re-run the same DOM inspection: 35 gold particles (rgb 255,215,0 / 255,195,0 / 255,229,102 / 255,170,0), 4 orbs with filter=blur(60px), scrim rgba(3,2,10,0.3)+backdrop blur(20px). Pixel check: purple top-left / green bottom-left / cyan bottom-right / gold mid-right should be visible on sign-in screen (which has lots of empty margin around the login card). Pre-existing RN-Web deprecation warnings (shadow*/textShadow*/pointerEvents/useNativeDriver) remain P2 and independent of ambient work.",
+  "rca_of_issue": "n/a - all specced changes verified working end-to-end."
+}
