@@ -1,0 +1,52 @@
+{
+  "summary": "Iter40 — Party detail + Ledger main redesign VERIFIED end-to-end on mobile viewport (390x844). All 11 acceptance points pass. Party detail: 3-card summary (DEBIT rgb(255,68,68) / CREDIT rgb(0,255,136) / YOU'LL GET rgb(255,255,255)) renders side-by-side; INR/THB pill toggle swaps correctly (active pill bg rgb(0,255,136), inactive transparent w/ rgba(255,255,255,0.2) border); switching to THB replaces summary numbers with ฿0 and shows 'No THB transactions in FY 2026-27'; bottom buttons bg rgb(255,68,68) / rgb(0,255,136), 50px tall; statement rows are 44px min-height; description truncation logic present (short data didn't hit 60-char threshold). Ledger main: 'Verified: <date> ✓' line rgba(255,255,255,0.5) with ✓ in rgb(0,255,136); 'Not verified yet' in rgb(255,215,0); 'Last entry:' line in rgba(255,255,255,0.5); balance-tag colours match YOU'LL GET rgb(0,255,136) / YOU'LL GIVE rgb(255,68,68); INR always visible on the right, THB only when non-zero (verified against multiple rows); search, filter chips, top receivables/payables card and FAB unchanged. No React 'rendered more hooks' warnings, no new console errors — only the pre-existing shadow*/textShadow*/pointerEvents/resizeMode RN-Web deprecation warnings.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/tmp/01_signin.png",
+    "/tmp/02_after.png",
+    "/tmp/03_party.png",
+    "/tmp/04_thb.png",
+    "/tmp/05_ledger.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Rules-of-Hooks respected: `selectedCcy`, `ccyInitialised`, `activeTotal` and `filteredDisplayRows` are declared BEFORE the loading/not-found early returns in party/[id].tsx (lines 121-138).",
+    "StatementRow sub-component correctly encapsulates its own useState(expanded) so per-row expand/collapse doesn't inflate the parent render tree.",
+    "Ledger row uses explicit hex colours (#FF4444/#00FF88/#FFD700) as spec requires — no dependency on the theme `colors.ok/danger` heuristic for these lines."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend only)", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Party detail (app/party/[id].tsx) and ledger main (app/ledger.tsx) redesigns are stable. Currency toggle testIDs: `ccy-toggle-INR` / `ccy-toggle-THB`. Bottom action testIDs: `party-you-gave-btn` / `party-you-got-btn`. Deepak Adavani (1d4908d1-5134-4b6f-8e60-9fc67543a6f0) has 1 INR statement row and 0 THB rows in FY 2026-27; use another party (e.g. Somchai — end-customer) if THB rows are needed for further checks.",
+  "measurements": {
+    "party_detail": {
+      "labels": {"DEBIT": "rgb(255,68,68)", "CREDIT": "rgb(0,255,136)", "YOU'LL GET": "rgb(255,255,255)"},
+      "inr_pill_default": {"bg": "rgb(0,255,136)", "border": "rgb(0,255,136)"},
+      "thb_pill_default": {"bg": "rgba(0,0,0,0)", "border": "rgba(255,255,255,0.2)"},
+      "after_thb_click": {"inr_bg": "rgba(0,0,0,0)", "thb_bg": "rgb(0,255,136)"},
+      "you_gave_btn": {"bg": "rgb(255,68,68)", "height_px": 50},
+      "you_got_btn": {"bg": "rgb(0,255,136)", "height_px": 50},
+      "statement_row_height_px": 44
+    },
+    "ledger_main": {
+      "verified_line_color": "rgba(255,255,255,0.5)",
+      "verified_check_color": "rgb(0,255,136)",
+      "not_verified_color": "rgb(255,215,0)",
+      "last_entry_color": "rgba(255,255,255,0.5)",
+      "bal_tag_get": "rgb(0,255,136)",
+      "bal_tag_give": "rgb(255,68,68)"
+    },
+    "console": {
+      "new_errors": [],
+      "pre_existing_warnings_only": ["shadow* deprecated", "textShadow* deprecated", "props.pointerEvents deprecated", "resizeMode deprecated"]
+    }
+  }
+}

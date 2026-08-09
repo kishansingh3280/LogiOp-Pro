@@ -20,7 +20,7 @@ import { FYPicker } from "@/src/components/fy-picker";
 import { useFY } from "@/src/context/fy-context";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
-import { fmtCurrency } from "@/src/utils/format";
+import { fmtCurrency, shortDate } from "@/src/utils/format";
 import { isInFY } from "@/src/utils/fy";
 
 type Role = "all" | "customer" | "supplier" | "carrier";
@@ -349,11 +349,11 @@ export default function LedgerScreen() {
           const inrBal = buckets?.inr.balance || 0;
           const thbBal = buckets?.thb.balance || 0;
           const last = buckets?.last;
-          const hasInr = Math.abs(inrBal) > 0.005;
           const hasThb = Math.abs(thbBal) > 0.005;
-          const showBoth = hasInr && hasThb;
-          const singleBal = hasInr ? inrBal : thbBal;
-          const singleCcy: "INR" | "THB" = hasInr ? "INR" : "THB";
+          // Colour rules: balance > 0 → we're owed → green; < 0 → we owe → red.
+          // Numbers are always displayed with an explicit + / - to remove ambiguity.
+          const colorFor = (v: number) => (v > 0.005 ? "#00FF88" : v < -0.005 ? "#FF4444" : colors.textDim);
+          const verifiedUpTo = item.verified_up_to;
           return (
             <TouchableOpacity
               onPress={() => router.push(`/party/${item.id}` as never)}
@@ -364,55 +364,50 @@ export default function LedgerScreen() {
                 <View style={styles.avatar}>
                   <Text style={styles.avatarText}>{(item.name || "?").slice(0, 1).toUpperCase()}</Text>
                 </View>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.partyName} numberOfLines={1}>
                     {item.name}
                   </Text>
                   <Text style={styles.partyMeta} numberOfLines={1}>
                     {item.role} · {item.country}
-                    {last ? ` · Last activity ${last}` : " · No activity yet"}
+                    {last ? ` · Last activity ${shortDate(last)}` : " · No activity yet"}
                   </Text>
+                  {/* Verified line */}
+                  {verifiedUpTo ? (
+                    <Text style={styles.verifiedLine} numberOfLines={1}>
+                      Verified: {shortDate(verifiedUpTo)} <Text style={{ color: "#00FF88" }}>✓</Text>
+                    </Text>
+                  ) : (
+                    <Text style={styles.verifiedLineGold} numberOfLines={1}>
+                      Not verified yet
+                    </Text>
+                  )}
+                  {last ? (
+                    <Text style={styles.lastEntryLine} numberOfLines={1}>
+                      Last entry: {shortDate(last)}
+                    </Text>
+                  ) : null}
                 </View>
                 <View style={{ alignItems: "flex-end" }}>
-                  {showBoth ? (
-                    <>
-                      <Text
-                        style={[
-                          styles.balAmount,
-                          { color: inrBal > 0 ? colors.ok : inrBal < 0 ? colors.danger : colors.textDim, fontSize: 14 },
-                        ]}
-                      >
-                        {inrBal >= 0 ? "" : "-"}{fmtCurrency(Math.abs(inrBal), "INR")}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.balAmount,
-                          { color: thbBal > 0 ? colors.ok : thbBal < 0 ? colors.danger : colors.textDim, fontSize: 14, marginTop: 2 },
-                        ]}
-                      >
-                        {thbBal >= 0 ? "" : "-"}{fmtCurrency(Math.abs(thbBal), "THB")}
-                      </Text>
-                    </>
-                  ) : (
-                    <>
-                      <Text
-                        style={[
-                          styles.balAmount,
-                          { color: singleBal > 0 ? colors.ok : singleBal < 0 ? colors.danger : colors.textDim },
-                        ]}
-                      >
-                        {fmtCurrency(Math.abs(singleBal), singleCcy)}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.balTag,
-                          { color: singleBal > 0 ? colors.ok : singleBal < 0 ? colors.danger : colors.textDim },
-                        ]}
-                      >
-                        {singleBal > 0 ? "You'll get" : singleBal < 0 ? "You'll give" : "Settled"}
-                      </Text>
-                    </>
-                  )}
+                  {/* INR always visible */}
+                  <Text style={[styles.balAmount, { color: colorFor(inrBal), fontSize: 14 }]}>
+                    {fmtCurrency(Math.abs(inrBal), "INR")}
+                  </Text>
+                  {/* THB visible only when non-zero */}
+                  {hasThb ? (
+                    <Text style={[styles.balAmount, { color: colorFor(thbBal), fontSize: 13, marginTop: 2 }]}>
+                      {fmtCurrency(Math.abs(thbBal), "THB")}
+                    </Text>
+                  ) : null}
+                  {/* Balance label under numbers */}
+                  <Text
+                    style={[
+                      styles.balTag,
+                      { color: colorFor(inrBal || thbBal), fontSize: 10, marginTop: 3 },
+                    ]}
+                  >
+                    {(inrBal || thbBal) > 0.005 ? "YOU'LL GET" : (inrBal || thbBal) < -0.005 ? "YOU'LL GIVE" : "SETTLED"}
+                  </Text>
                 </View>
               </View>
             </TouchableOpacity>
@@ -724,6 +719,24 @@ const styles = StyleSheet.create({
   avatarText: { color: colors.lime, fontWeight: "800", fontSize: 18 },
   partyName: { color: colors.text, fontSize: 16, fontWeight: "700" },
   partyMeta: { color: colors.textDim, fontSize: 12, marginTop: 2, textTransform: "capitalize" },
+  verifiedLine: {
+    color: "rgba(255,255,255,0.50)",
+    fontSize: 11,
+    marginTop: 3,
+    fontWeight: "600",
+  },
+  verifiedLineGold: {
+    color: "#FFD700",
+    fontSize: 11,
+    marginTop: 3,
+    fontWeight: "600",
+  },
+  lastEntryLine: {
+    color: "rgba(255,255,255,0.50)",
+    fontSize: 11,
+    marginTop: 1,
+    fontWeight: "500",
+  },
   balAmount: { fontSize: 15, fontWeight: "800" },
   balTag: { fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 },
   emptyBox: { padding: spacing.xxl, alignItems: "center", gap: 8 },

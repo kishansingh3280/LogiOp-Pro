@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -115,6 +115,28 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
     return rows;
   }, [entries, party.data]);
 
+  // -------- JARVIS Aura v3: INR | THB currency toggle --------
+  // Placed BEFORE early returns to satisfy the Rules of Hooks. Default
+  // to the party's own default currency once loaded; fall back to INR.
+  const [selectedCcy, setSelectedCcy] = useState<"INR" | "THB">("INR");
+  // Sync to the party's default currency once it loads (first time only).
+  const [ccyInitialised, setCcyInitialised] = useState(false);
+  useEffect(() => {
+    if (!ccyInitialised && party.data?.default_currency) {
+      const dc = party.data.default_currency;
+      if (dc === "INR" || dc === "THB") setSelectedCcy(dc);
+      setCcyInitialised(true);
+    }
+  }, [ccyInitialised, party.data]);
+  const activeTotal = useMemo(
+    () => totals.find((t) => t.currency === selectedCcy) || { currency: selectedCcy, debit: 0, credit: 0, balance: 0 },
+    [totals, selectedCcy],
+  );
+  const filteredDisplayRows = useMemo(
+    () => displayRows.filter((r) => r.ccy === selectedCcy),
+    [displayRows, selectedCcy],
+  );
+
   const Wrapper: React.ComponentType<{ children: React.ReactNode }> = embedded
     ? ({ children }) => <View style={{ flex: 1, backgroundColor: "transparent" }}>{children}</View>
     : ({ children }) => (
@@ -178,39 +200,44 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
           </View>
 
           <View style={styles.balCurrencies}>
-            {totals.length === 0 ? (
-              <View style={styles.balCol}>
-                <Text style={styles.balLbl}>No entries yet</Text>
-                <Text style={styles.balVal}>—</Text>
+            {/* Currency toggle — INR | THB */}
+            <View style={styles.ccyToggleRow}>
+              {(["INR", "THB"] as const).map((c) => {
+                const active = selectedCcy === c;
+                return (
+                  <TouchableOpacity
+                    key={c}
+                    onPress={() => setSelectedCcy(c)}
+                    style={[styles.ccyTogglePill, active && styles.ccyTogglePillActive]}
+                    testID={`ccy-toggle-${c}`}
+                  >
+                    <Text style={[styles.ccyToggleText, active && styles.ccyToggleTextActive]}>{c}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryCard}>
+                <Text style={[styles.summaryLbl, { color: "#FF4444" }]}>DEBIT</Text>
+                <Text style={[styles.summaryVal, { color: "#FF4444" }]} numberOfLines={1} adjustsFontSizeToFit>
+                  {fmtCurrency(activeTotal.debit, activeTotal.currency)}
+                </Text>
               </View>
-            ) : (
-              totals.map((t) => (
-                <View key={t.currency} style={styles.balCurRow}>
-                  <View style={styles.curTag}>
-                    <Text style={styles.curTagText}>{t.currency}</Text>
-                  </View>
-                  <View style={styles.balCol}>
-                    <Text style={styles.balLbl}>Debit</Text>
-                    <Text style={styles.balVal}>{fmtCurrency(t.debit, t.currency)}</Text>
-                  </View>
-                  <View style={styles.balCol}>
-                    <Text style={styles.balLbl}>Credit</Text>
-                    <Text style={styles.balVal}>{fmtCurrency(t.credit, t.currency)}</Text>
-                  </View>
-                  <View style={styles.balCol}>
-                    <Text style={styles.balLbl}>{t.balance >= 0 ? "You will get" : "You will give"}</Text>
-                    <Text
-                      style={[
-                        styles.balVal,
-                        t.balance >= 0 ? styles.glowGreen : styles.glowRed,
-                      ]}
-                    >
-                      {fmtCurrency(Math.abs(t.balance), t.currency)}
-                    </Text>
-                  </View>
-                </View>
-              ))
-            )}
+              <View style={styles.summaryCard}>
+                <Text style={[styles.summaryLbl, { color: "#00FF88" }]}>CREDIT</Text>
+                <Text style={[styles.summaryVal, { color: "#00FF88" }]} numberOfLines={1} adjustsFontSizeToFit>
+                  {fmtCurrency(activeTotal.credit, activeTotal.currency)}
+                </Text>
+              </View>
+              <View style={styles.summaryCard}>
+                <Text style={[styles.summaryLbl, { color: "#FFFFFF" }]}>
+                  {activeTotal.balance >= 0 ? "YOU'LL GET" : "YOU'LL GIVE"}
+                </Text>
+                <Text style={[styles.summaryVal, { color: "#FFFFFF" }]} numberOfLines={1} adjustsFontSizeToFit>
+                  {fmtCurrency(Math.abs(activeTotal.balance), activeTotal.currency)}
+                </Text>
+              </View>
+            </View>
           </View>
         </Card>
 
@@ -250,54 +277,24 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
             <Text style={[styles.stmtHeadTxt, styles.stmtNumCol]}>Balance</Text>
           </View>
 
-          {displayRows.length === 0 ? (
-            <Text style={styles.dim}>No transactions in {fyLabel(fy)}</Text>
+          {filteredDisplayRows.length === 0 ? (
+            <Text style={styles.dim}>No {selectedCcy} transactions in {fyLabel(fy)}</Text>
           ) : (
-            displayRows.map(({ entry: e, ccy, balanceInr, balanceThb }) => {
+            filteredDisplayRows.map(({ entry: e, ccy, balanceInr, balanceThb }) => {
               const balForRow = ccy === "THB" ? balanceThb : balanceInr;
               const isVerified = !!p.verified_up_to && e.date <= p.verified_up_to;
               return (
-                <View key={e.id} style={styles.stmtRow}>
-                  <View style={{ width: 62 }}>
-                    <Text style={styles.stmtCell}>{shortDate(e.date)}</Text>
-                    {isVerified ? (
-                      <View style={styles.verifiedBadge}>
-                        <Ionicons name="shield-checkmark" size={9} color={colors.lime} />
-                        <Text style={styles.verifiedText}>Verified</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.stmtDesc} numberOfLines={2}>
-                      {e.description || "—"}
-                    </Text>
-                    <View style={styles.stmtMeta}>
-                      <View style={[styles.stmtCcyTag, ccy === "THB" ? styles.stmtCcyThb : styles.stmtCcyInr]}>
-                        <Text style={styles.stmtCcyText}>{ccy}</Text>
-                      </View>
-                      {e.ref_type ? (
-                        <Text style={styles.stmtRef}>{e.ref_type.replace("_", " ")}</Text>
-                      ) : null}
-                    </View>
-                  </View>
-                  <Text style={[styles.stmtCell, styles.stmtNumCol, (e.debit || 0) > 0 ? styles.glowGreen : { color: colors.textDim }]}>
-                    {e.debit ? fmtCurrency(e.debit, ccy as Currency) : "—"}
-                  </Text>
-                  <Text style={[styles.stmtCell, styles.stmtNumCol, (e.credit || 0) > 0 ? styles.glowRed : { color: colors.textDim }]}>
-                    {e.credit ? fmtCurrency(e.credit, ccy as Currency) : "—"}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.stmtCell,
-                      styles.stmtNumCol,
-                      styles.stmtBalCol,
-                      balForRow >= 0 ? styles.glowGreen : styles.glowRed,
-                    ]}
-                  >
-                    {fmtCurrency(Math.abs(balForRow), ccy as Currency)}
-                    {balForRow < 0 ? " Cr" : balForRow > 0 ? " Dr" : ""}
-                  </Text>
-                </View>
+                <StatementRow
+                  key={e.id}
+                  date={e.date}
+                  description={e.description || "—"}
+                  refType={e.ref_type}
+                  debit={e.debit || 0}
+                  credit={e.credit || 0}
+                  balance={balForRow}
+                  currency={ccy as Currency}
+                  verified={isVerified}
+                />
               );
             })
           )}
@@ -418,24 +415,83 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
       {!embedded && (
         <View style={styles.actionBar}>
           <TouchableOpacity
-            style={[styles.actionBtn, styles.actionGave]}
+            style={[styles.actionBtn, { backgroundColor: "#FF4444" }]}
             onPress={() => router.push(`/entry/new?party_id=${p.id}&kind=gave` as never)}
             testID="party-you-gave-btn"
           >
-            <Ionicons name="arrow-up-outline" size={16} color={colors.text} />
-            <Text style={styles.actionText}>You gave</Text>
+            <Ionicons name="arrow-up-outline" size={16} color="#FFFFFF" />
+            <Text style={[styles.actionText, { color: "#FFFFFF" }]}>You gave</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.actionBtn, styles.actionGot]}
+            style={[styles.actionBtn, { backgroundColor: "#00FF88" }]}
             onPress={() => router.push(`/entry/new?party_id=${p.id}&kind=got` as never)}
             testID="party-you-got-btn"
           >
-            <Ionicons name="arrow-down-outline" size={16} color={colors.bg} />
-            <Text style={[styles.actionText, { color: colors.bg }]}>You got</Text>
+            <Ionicons name="arrow-down-outline" size={16} color="#FFFFFF" />
+            <Text style={[styles.actionText, { color: "#FFFFFF" }]}>You got</Text>
           </TouchableOpacity>
         </View>
       )}
     </Wrapper>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// StatementRow — compact 44 px passbook row. Debit is red, credit green,
+// running balance white. Description truncates at 60 chars; tap the row
+// to expand the full text.
+// ---------------------------------------------------------------------------
+function StatementRow({
+  date,
+  description,
+  refType,
+  debit,
+  credit,
+  balance,
+  currency,
+  verified,
+}: {
+  date: string;
+  description: string;
+  refType?: string | null;
+  debit: number;
+  credit: number;
+  balance: number;
+  currency: Currency;
+  verified: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const truncated = description.length > 60 ? description.slice(0, 57) + "…" : description;
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={() => setExpanded((v) => !v)}
+      style={styles.stmtRowCompact}
+    >
+      <View style={{ width: 58 }}>
+        <Text style={styles.stmtDate}>{shortDate(date)}</Text>
+        {verified ? (
+          <Text style={styles.stmtVerifiedInline}>✓</Text>
+        ) : null}
+      </View>
+      <View style={{ flex: 1, marginRight: 6 }}>
+        <Text style={styles.stmtDescCompact} numberOfLines={expanded ? 0 : 1}>
+          {expanded ? description : truncated}
+        </Text>
+        {refType && expanded ? (
+          <Text style={styles.stmtRef}>{refType.replace("_", " ")}</Text>
+        ) : null}
+      </View>
+      <Text style={[styles.stmtNumCompact, { color: debit > 0 ? "#FF4444" : "rgba(255,255,255,0.30)" }]}>
+        {debit > 0 ? fmtCurrency(debit, currency) : "—"}
+      </Text>
+      <Text style={[styles.stmtNumCompact, { color: credit > 0 ? "#00FF88" : "rgba(255,255,255,0.30)" }]}>
+        {credit > 0 ? fmtCurrency(credit, currency) : "—"}
+      </Text>
+      <Text style={[styles.stmtNumCompact, styles.stmtBalCol, { color: "#FFFFFF" }]}>
+        {fmtCurrency(Math.abs(balance), currency)}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
@@ -504,6 +560,88 @@ const styles = StyleSheet.create({
   },
   balLbl: { color: colors.textDim, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 },
   balVal: { color: colors.text, fontSize: 16, fontWeight: "800", marginTop: 6 },
+  // ---- JARVIS Aura v3 — compact 3-card summary + INR/THB toggle ----
+  ccyToggleRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 10,
+  },
+  ccyTogglePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.20)",
+    backgroundColor: "transparent",
+  },
+  ccyTogglePillActive: {
+    backgroundColor: "#00FF88",
+    borderColor: "#00FF88",
+  },
+  ccyToggleText: {
+    color: "rgba(255,255,255,0.60)",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  ccyToggleTextActive: { color: "#000000" },
+  summaryRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  summaryCard: {
+    flex: 1,
+    borderRadius: radii.md,
+    padding: 10,
+    backgroundColor: "rgba(12,12,30,0.75)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
+    minWidth: 0,
+  },
+  summaryLbl: {
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  summaryVal: {
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  // ---- Compact 44 px statement row ----
+  stmtRowCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    minHeight: 44,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    gap: 4,
+  },
+  stmtDate: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  stmtVerifiedInline: {
+    color: "#00FF88",
+    fontSize: 11,
+    fontWeight: "900",
+    marginTop: 1,
+  },
+  stmtDescCompact: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  stmtNumCompact: {
+    width: 78,
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "right",
+  },
   // ---- JARVIS Aura number-glow variants (pure white text, semantic
   //      glow via text-shadow so numbers stay legible on any surface). --
   glowGreen: {
