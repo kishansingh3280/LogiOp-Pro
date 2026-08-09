@@ -11,10 +11,12 @@ import { AmbientBackground } from "@/src/components/ambient-background";
 import { BlockerBell } from "@/src/components/blocker-bell";
 import { FloatingJarvis } from "@/src/components/floating-jarvis";
 import { GlassOverlay } from "@/src/components/glass-overlay";
+import { Sidebar } from "@/src/components/sidebar";
 import { ToastHost } from "@/src/components/toast";
 import { CompanyProvider } from "@/src/context/company-context";
 import { FYProvider } from "@/src/context/fy-context";
 import { ScreenContextProvider } from "@/src/context/screen-context";
+import { SidebarProvider, currentSidebarWidth, useSidebar } from "@/src/context/sidebar-context";
 import { GhostUserProvider } from "@/src/ghost/ghost-user";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { colors } from "@/src/theme";
@@ -57,6 +59,27 @@ if (Platform.OS === "web" && typeof document !== "undefined") {
   const existing = document.head.querySelector('[data-app-theme="siri"]');
   if (existing) existing.remove();
   document.head.appendChild(style);
+}
+
+/**
+ * AuthShell — renders the Sidebar + main content pane. Sidebar is
+ * hidden on the /sign-in route; on tablet it's docked left and the
+ * content pane shifts right to accommodate; on mobile it's an overlay
+ * so the content pane keeps full width.
+ */
+function AuthShell({ children }: { children: React.ReactNode }) {
+  const segments = useSegments();
+  const s = useSidebar();
+  const onSignIn = segments[0] === "sign-in";
+  const contentOffset = onSignIn ? 0 : currentSidebarWidth(s);
+  return (
+    <View style={{ flex: 1, flexDirection: "row" }}>
+      {!onSignIn ? <Sidebar /> : null}
+      <View style={{ flex: 1, marginLeft: s.isTablet ? 0 : 0, paddingLeft: contentOffset }}>
+        {children}
+      </View>
+    </View>
+  );
 }
 
 /**
@@ -105,20 +128,24 @@ export default function RootLayout() {
             <FYProvider>
               <ScreenContextProvider>
                 <GhostUserProvider>
-                  <StatusBar style="light" />
-                  <AuthGate>
-                    <Stack
-                      screenOptions={{
-                        headerShown: false,
-                        // Transparent content lets the AmbientBackground bleed through.
-                        contentStyle: { backgroundColor: "transparent" },
-                        animation: "slide_from_right",
-                      }}
-                    />
-                  </AuthGate>
-                  <BlockerBell />
-                  <FloatingJarvis />
-                  <ToastHost />
+                  <SidebarProvider>
+                    <StatusBar style="light" />
+                    <AuthGate>
+                      <AuthShell>
+                        <Stack
+                          screenOptions={{
+                            headerShown: false,
+                            // Transparent content lets the AmbientBackground bleed through.
+                            contentStyle: { backgroundColor: "transparent" },
+                            animation: "slide_from_right",
+                          }}
+                        />
+                      </AuthShell>
+                    </AuthGate>
+                    <BlockerBell />
+                    <FloatingJarvis />
+                    <ToastHost />
+                  </SidebarProvider>
                 </GhostUserProvider>
               </ScreenContextProvider>
             </FYProvider>
