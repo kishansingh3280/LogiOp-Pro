@@ -202,7 +202,7 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
                     <Text
                       style={[
                         styles.balVal,
-                        { color: t.balance >= 0 ? colors.ok : colors.danger },
+                        t.balance >= 0 ? styles.glowGreen : styles.glowRed,
                       ]}
                     >
                       {fmtCurrency(Math.abs(t.balance), t.currency)}
@@ -280,10 +280,10 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
                       ) : null}
                     </View>
                   </View>
-                  <Text style={[styles.stmtCell, styles.stmtNumCol, { color: (e.debit || 0) > 0 ? colors.ok : colors.textDim }]}>
+                  <Text style={[styles.stmtCell, styles.stmtNumCol, (e.debit || 0) > 0 ? styles.glowGreen : { color: colors.textDim }]}>
                     {e.debit ? fmtCurrency(e.debit, ccy as Currency) : "—"}
                   </Text>
-                  <Text style={[styles.stmtCell, styles.stmtNumCol, { color: (e.credit || 0) > 0 ? colors.danger : colors.textDim }]}>
+                  <Text style={[styles.stmtCell, styles.stmtNumCol, (e.credit || 0) > 0 ? styles.glowRed : { color: colors.textDim }]}>
                     {e.credit ? fmtCurrency(e.credit, ccy as Currency) : "—"}
                   </Text>
                   <Text
@@ -291,7 +291,7 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
                       styles.stmtCell,
                       styles.stmtNumCol,
                       styles.stmtBalCol,
-                      { color: balForRow >= 0 ? colors.text : colors.danger },
+                      balForRow >= 0 ? styles.glowNeutral : styles.glowRed,
                     ]}
                   >
                     {fmtCurrency(Math.abs(balForRow), ccy as Currency)}
@@ -316,7 +316,7 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
                         key="inr"
                         style={[
                           styles.stmtFooterVal,
-                          { color: last.balanceInr >= 0 ? colors.ok : colors.danger },
+                          last.balanceInr >= 0 ? styles.glowGreen : styles.glowRed,
                         ]}
                       >
                         {fmtCurrency(Math.abs(last.balanceInr), "INR")}
@@ -330,7 +330,7 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
                         key="thb"
                         style={[
                           styles.stmtFooterVal,
-                          { color: last.balanceThb >= 0 ? colors.ok : colors.danger },
+                          last.balanceThb >= 0 ? styles.glowGreen : styles.glowRed,
                         ]}
                       >
                         {fmtCurrency(Math.abs(last.balanceThb), "THB")}
@@ -504,13 +504,33 @@ const styles = StyleSheet.create({
   },
   balLbl: { color: colors.textDim, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 },
   balVal: { color: colors.text, fontSize: 16, fontWeight: "800", marginTop: 6 },
+  // ---- JARVIS Aura number-glow variants (pure white text, semantic
+  //      glow via text-shadow so numbers stay legible on any surface). --
+  glowGreen: {
+    color: "#FFFFFF",
+    textShadowColor: "rgba(0, 255, 136, 0.75)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
+  glowRed: {
+    color: "#FFFFFF",
+    textShadowColor: "rgba(255, 107, 138, 0.85)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
+  glowNeutral: {
+    color: "#FFFFFF",
+  },
   sectionTitle: {
-    color: colors.text,
+    color: colors.lime,
     fontSize: 13,
     fontWeight: "800",
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginBottom: 8,
+    textShadowColor: "rgba(0, 255, 136, 0.45)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
   },
   entryRow: {
     flexDirection: "row",

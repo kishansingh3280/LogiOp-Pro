@@ -125,7 +125,7 @@ export default function InvoiceDetail() {
             </View>
             <View style={styles.totalCol}>
               <Text style={styles.totalLbl}>Total</Text>
-              <Text style={[styles.totalVal, { color: colors.lime }]}>
+              <Text style={[styles.totalVal, styles.glowGreen]}>
                 {fmtCurrency(i.total, i.currency)}
               </Text>
             </View>
@@ -259,7 +259,7 @@ function LinkedShipmentCard({
         </View>
         <View style={styles.shipStat}>
           <Text style={styles.shipStatLbl}>Freight</Text>
-          <Text style={[styles.shipStatVal, { color: colors.lime }]}>
+          <Text style={[styles.shipStatVal, styles.glowGreen]}>
             {fmtCurrency(Number(shipment.freight) || 0, shipment.freight_currency)}
           </Text>
         </View>
@@ -337,13 +337,23 @@ const styles = StyleSheet.create({
   },
   totalLbl: { color: colors.textDim, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 },
   totalVal: { color: colors.text, fontSize: 16, fontWeight: "800", marginTop: 4 },
+  // ---- JARVIS Aura number-glow (white text + green text-shadow) --------
+  glowGreen: {
+    color: "#FFFFFF",
+    textShadowColor: "rgba(0, 255, 136, 0.75)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
   sectionTitle: {
-    color: colors.text,
+    color: colors.lime,
     fontSize: 13,
     fontWeight: "800",
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginBottom: 8,
+    textShadowColor: "rgba(0, 255, 136, 0.45)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
   },
   item: {
     flexDirection: "row",
@@ -355,7 +365,14 @@ const styles = StyleSheet.create({
   },
   itemDesc: { color: colors.text, fontSize: 14, fontWeight: "600" },
   itemMeta: { color: colors.textDim, fontSize: 12, marginTop: 2 },
-  itemTotal: { color: colors.lime, fontSize: 14, fontWeight: "800" },
+  itemTotal: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
+    textShadowColor: "rgba(0, 255, 136, 0.65)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
+  },
   createShipmentBtn: {
     marginTop: spacing.md,
     flexDirection: "row",
