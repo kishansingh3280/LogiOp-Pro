@@ -1,0 +1,28 @@
+{
+  "summary": "Retest of iter37 P0 (mobile drawer + scrim rendering behind content pane). Main agent added web Platform.select zIndex 25 on the scrim's Animated.View and zIndex 26 on the drawer's Animated.View in /app/frontend/src/components/sidebar.tsx (MobileSidebar). Retest on MOBILE 390x844 (logged in as kishan/Kishan@Boss2026 via 'Quick login as Kishan Sir (demo)' button): (1) tapping [data-testid=sidebar-hamburger] slides drawer in — bounding box {x:0,y:0,w:260,h:844}. (2) document.elementFromPoint(130, 400) — centre of the open drawer — returns a BUTTON whose testid ancestor chain is ['sidebar-nav-more','sidebar-body','sidebar-mobile-drawer'] (i.e. it IS a descendant of sidebar-mobile-drawer, no dashboard content underneath wins). (3) elementFromPoint(350, 500) on the scrim area returns a DIV with testid 'sidebar-scrim' directly (not a dashboard card). (4) Real click on [data-testid=sidebar-nav-shipments] at box {x:10,y:179,w:240,h:48} navigated to /shipments (URL: .../shipments). (5) Re-opened drawer and issued a real page.mouse.click(350, 500) on the scrim; drawer transform animated back to matrix(1,0,0,1,-260,0), the scrim's parent Animated.View computed opacity=0 & pointerEvents=none, and the URL remained /shipments (route unchanged, only drawer closed). TABLET 1024x768: no regression. sidebar-dock renders at w=220, hamburger count=0 (not on tablet), sidebar-toggle collapses to w=64 and re-expands to w=220, sidebar-nav-shipments → /shipments, sidebar-nav-ledger → /ledger, sidebar-nav-overview → /. Zero console errors on both viewports.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/tmp/iter38_mobile_after.png",
+    "/app/test_reports/tmp/iter38_tablet_after.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sidebar.tsx L446-462 — scrim Animated.View now has Platform.select({web:{zIndex:25}}) — confirmed at runtime, elementFromPoint returns sidebar-scrim on the right half of the viewport with drawer open.",
+    "sidebar.tsx L464-484 — drawer Animated.View now has Platform.select({web:{zIndex:26}}) — confirmed, elementFromPoint at drawer centre returns a descendant of sidebar-mobile-drawer.",
+    "Hamburger (styles.hamburger, zIndex:20) sits below the scrim (25) — correct: while drawer is open, hamburger tap is intentionally blocked by the scrim which will close the drawer instead. This matches spec.",
+    "Toast/BlockerBell/FloatingJarvis roots are not affected because they mount separately and the drawer's zIndex 26 stays under any higher root-level portals (verified no console errors, no visual overlap in screenshots)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a - frontend-only iteration", "frontend": "Mobile 6/6 bullets PASS + Tablet 3/3 bullets PASS. Zero console errors."},
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter37 P0 mobile drawer stacking bug is FIXED by adding web zIndex 25 (scrim) and 26 (drawer) via Platform.select in /app/frontend/src/components/sidebar.tsx. Mobile drawer now correctly receives pointer events: elementFromPoint in the drawer returns sidebar-mobile-drawer descendants, elementFromPoint on the scrim area returns sidebar-scrim, real mouse clicks on nav rows route correctly (sidebar-nav-shipments → /shipments), and real mouse clicks on the scrim close the drawer (translateX back to -260, scrim opacity 0, pointerEvents none) without changing the current route. Tablet 1024x768 remains fully functional — no regressions on dock width (220↔64 via sidebar-toggle) or any nav item routing. Zero console errors on either viewport. Pre-existing warnings (ElevenLabs 401, RN-Web shadow*/pointerEvents/useNativeDriver deprecations) were not re-evaluated per E1's known_pre_existing_issues note.",
+  "rca_of_issue": "Fix verified. Root cause from iter37 (positioned siblings sharing zIndex:auto, so DOM-later content pane painted on top) is now resolved by explicit web zIndex on scrim and drawer Animated.Views. Both are above the content pane (which has no explicit high zIndex) and above the hamburger (20), so when the drawer is open the scrim intercepts outside taps and the drawer intercepts inside taps — exactly the intended behaviour."
+}

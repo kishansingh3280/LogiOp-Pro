@@ -450,6 +450,11 @@ function MobileSidebar() {
           {
             backgroundColor: "rgba(0,0,0,0.5)",
             opacity: scrim,
+            ...Platform.select({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              web: ({ zIndex: 25 } as any),
+              default: {},
+            }),
           },
         ]}
       >
@@ -460,7 +465,15 @@ function MobileSidebar() {
       <Animated.View
         style={[
           styles.mobileDrawer,
-          { width: drawerWidth, transform: [{ translateX: anim }] },
+          {
+            width: drawerWidth,
+            transform: [{ translateX: anim }],
+            ...Platform.select({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              web: ({ zIndex: 26 } as any),
+              default: {},
+            }),
+          },
         ]}
         testID="sidebar-mobile-drawer"
       >
