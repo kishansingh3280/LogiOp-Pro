@@ -662,7 +662,7 @@ const styles = StyleSheet.create({
   splitLogTitle: { color: colors.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 0.6 },
   splitLogRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   splitLogText: { color: colors.textMuted, fontSize: 11 },
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: "transparent" },
   headBar: {
     flexDirection: "row", alignItems: "center",
     paddingHorizontal: spacing.sm, paddingTop: spacing.sm, paddingBottom: spacing.sm,

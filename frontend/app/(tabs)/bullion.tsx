@@ -802,7 +802,7 @@ function SheetItem({ icon, title, sub, onPress, testID }: { icon: keyof typeof I
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: "transparent" },
   header: {
     paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.md,
     flexDirection: "row", alignItems: "center", gap: spacing.sm,

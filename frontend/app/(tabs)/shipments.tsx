@@ -205,7 +205,7 @@ function Meta({ icon, text }: { icon: keyof typeof Ionicons.glyphMap; text: stri
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: "transparent" },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
     borderRightWidth: StyleSheet.hairlineWidth,
   },
   listContent: { paddingHorizontal: spacing.lg, paddingBottom: 120 },
-  detailCol: { flex: 1, minWidth: 0, backgroundColor: colors.bg },
+  detailCol: { flex: 1, minWidth: 0, backgroundColor: "transparent" },
   rowCard: { padding: spacing.lg },
   rowCardActive: { borderColor: colors.lime, backgroundColor: colors.limeGlow },
   rowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },

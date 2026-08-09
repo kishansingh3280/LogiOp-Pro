@@ -116,7 +116,7 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
   }, [entries, party.data]);
 
   const Wrapper: React.ComponentType<{ children: React.ReactNode }> = embedded
-    ? ({ children }) => <View style={{ flex: 1, backgroundColor: colors.bg }}>{children}</View>
+    ? ({ children }) => <View style={{ flex: 1, backgroundColor: "transparent" }}>{children}</View>
     : ({ children }) => (
         <SafeAreaView edges={["top"]} style={styles.safe}>
           {children}
@@ -440,7 +440,7 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: "transparent" },
   headBar: {
     flexDirection: "row",
     alignItems: "center",

@@ -1,0 +1,36 @@
+{
+  "summary": "Frontend-only verification of the ambient-background fix (screen wrappers flipped from backgroundColor: colors.bg to transparent across 23 files). PASS on all 8 target screens. DOM probe at 390x844 confirms 35 gold particles + 4 blurred (blur(60px)) colour orbs + softened scrim (rgba(3,2,10,0.3) + backdropFilter blur(20px)) are present on: sign-in, Dashboard/Overview, Shipments, Invoices, Trips/Bullion, More, Party detail (/party/2cc0d735-25d4-4357-bc8d-a70b01530d0c), Invoice detail (/invoice/c9eecd3b-7aaf-435c-927b-5d71875e3ece), AND on a shipment detail (AURA-IT-002) as a bonus. Every screen returns particles=35, orbs=4, scrim=blur(20px). Screenshots visually confirm ambient bleed-through on every logged-in screen: purple bloom top-left, green/cyan bloom bottom-right or right edge, gold particle glow near Wingman bubble — the previous flat #07070f behind widgets is GONE. Sign-in screen baseline unchanged (purple + green + gold visible around login card). Layout unchanged — the Dashboard Row 1 (Customer Will Pay Rs.39,656 | You Pay Carrier Rs.61,488.78), Bangkok warehouse widget, Delivered=2 with AURA-DEL-001/002, tab bar (Overview/Shipments/Invoices/Trips/More), floating Wingman bubble, and top notifications bell all remain in their iter34 positions. Grep confirms only two `backgroundColor: colors.bg` remain in /app/frontend/app/**: line 68 (loading View) and line 85 (GestureHandlerRootView) of _layout.tsx — both are correct root paints. The 'bad opaque' probe returned 3 full-viewport #07070f divs — these are the intended #root wrapper + RN-Web layout wrapper + GestureHandlerRootView, which paint the black base BELOW AmbientBackground and are the expected chain. No new console errors — only a single pre-existing 403 (ElevenLabs asset, unrelated per known_pre_existing_issues).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/tmp/iter35_signin.png",
+    "/app/test_reports/tmp/iter35_dashboard.png",
+    "/app/test_reports/tmp/iter35_shipments.png",
+    "/app/test_reports/tmp/iter35_invoices.png",
+    "/app/test_reports/tmp/iter35_trips.png (shipment detail — Trips text matched detail nav)",
+    "/app/test_reports/tmp/iter35_bullion.png (actual Trips/bullion tab via /bullion route)",
+    "/app/test_reports/tmp/iter35_more.png",
+    "/app/test_reports/tmp/iter35_party.png",
+    "/app/test_reports/tmp/iter35_invoice.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_layout.tsx line 85: GestureHandlerRootView correctly retains backgroundColor: colors.bg (#07070f) — this is the root black base that AmbientBackground paints on top of. Verified via 'bad opaque' probe finding exactly 3 full-viewport #07070f divs (html/body/#root wrapper chain + GestureHandlerRootView).",
+    "_layout.tsx lines 27-46: injected CSS `html, body, #root, #root > div { background-color: #07070f !important }` correctly paints the DOM chain black so no iOS grey (#F2F2F2) leaks around the AmbientBackground. Verified with body/html backgroundColor = rgb(7,7,15).",
+    "23 screen files across app/(tabs)/*, app/party/[id].tsx, app/invoice/[id].tsx, etc.: outer safe/wrap/detailCol StyleSheet keys correctly use `backgroundColor: 'transparent'` — grep confirms 8 files (checked in this run) all match. Ambient bleeds through every wrapper up to the root base.",
+    "ambient-background.tsx line 289: styles.wrap keeps backgroundColor: colors.bg on the ambient container — this is fine because the ambient container IS the top-most root sibling that renders BEFORE the Stack, so it paints its own black base under the orbs + particles.",
+    "Layer ordering preserved end-to-end: html/body/#root (black) → GestureHandlerRootView (black) → AmbientBackground.wrap (black + orbs + particles + scrim + vignette) → Stack contentStyle transparent → SafeAreaView safe transparent → cards with rgba(12,12,30,0.82) frosted glass. Every logged-in screen now inherits ambient bleed-through instead of an opaque screen-level black."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a - frontend-only iteration", "frontend": "100% (8 of 8 target screens: sign-in, dashboard, shipments, invoices, trips/bullion, more, party detail, invoice detail — all show 35 particles + 4 orbs + softened scrim in DOM and visibly bleeding through in screenshots)"},
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "iter35 ambient-bleed fix is LIVE end-to-end. If future work touches screen-level SafeAreaView backgrounds, re-run the probe: DOM probe at 390x844 should return particles=35, orbs=4, scrim=blur(20px) on every screen (route through /, /bullion, /party/:id, /invoice/:id). Pixel-inspect screenshots for purple bloom top-left, green/cyan bloom on right/bottom, gold Wingman-bubble glow — those confirm ambient is not being painted over. The three 'bad opaque' #07070f divs found by the probe are the expected root chain (#root wrapper + RN-Web layout wrapper + GestureHandlerRootView) and are ALLOWED. Any 4th full-viewport #07070f div would indicate a screen wrapper still painting over the ambient. Pre-existing 403 (ElevenLabs) and RN-Web shadow*/pointerEvents/useNativeDriver deprecation warnings are P2 and unchanged.",
+  "rca_of_issue": "Root cause of the reported bug (ambient visible only on sign-in): every logged-in screen's outer SafeAreaView had `backgroundColor: colors.bg` (#07070f), which is fully opaque and painted OVER the root AmbientBackground. The fix flipped those 25 outer wrapper backgrounds to 'transparent' while keeping the #07070f base at the GestureHandlerRootView + html/body/#root level so nothing goes white/grey. Verified visually — orbs and particles now bleed through every screen."
+}
