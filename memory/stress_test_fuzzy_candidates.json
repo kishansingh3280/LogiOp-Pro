@@ -1,0 +1,11 @@
+{
+  "shipments": [],
+  "ledger": [
+    {
+      "id": "7289054f-2562-4b54-b356-346771deb00d",
+      "description": "Test entry",
+      "date": "2026-08-09"
+    }
+  ],
+  "items": []
+}
