@@ -41,50 +41,56 @@ type Orb = {
   opacity: number;  // 0.18–0.22 per JARVIS Aura spec
 };
 
+// Per JARVIS Aura spec — target visible peak alphas:
+//   purple rgba(155,77,255,0.22), gold rgba(255,215,0,0.18),
+//   cyan rgba(0,245,255,0.16), green rgba(0,255,136,0.14).
+// The gradient inner alpha is kept high (0.8–1.0) so it survives the 50%
+// black glass scrim overhead; the `opacity` prop then scales the entire
+// orb to the spec's target peak alpha.
 const ORBS: Orb[] = [
   {
     // Purple — top-left drift
     size: Math.max(SW, SH) * 0.95,
-    colors: ["rgba(155, 77, 255, 0.65)", "rgba(155, 77, 255, 0.0)"],
+    colors: ["rgba(155, 77, 255, 1.0)", "rgba(155, 77, 255, 0.0)"],
     x0: -0.35,
     y0: -0.25,
     dx: 0.15,
     dy: 0.12,
     period: 32000,
-    opacity: 0.22,
+    opacity: 0.34,
   },
   {
     // Gold — mid-right drift
     size: Math.max(SW, SH) * 1.0,
-    colors: ["rgba(255, 215, 0, 0.55)", "rgba(255, 215, 0, 0.0)"],
+    colors: ["rgba(255, 215, 0, 1.0)", "rgba(255, 215, 0, 0.0)"],
     x0: 0.55,
     y0: 0.25,
     dx: -0.18,
     dy: 0.10,
     period: 36000,
-    opacity: 0.20,
+    opacity: 0.28,
   },
   {
     // Cyan — bottom-left drift
     size: Math.max(SW, SH) * 0.85,
-    colors: ["rgba(0, 245, 255, 0.55)", "rgba(0, 245, 255, 0.0)"],
+    colors: ["rgba(0, 245, 255, 1.0)", "rgba(0, 245, 255, 0.0)"],
     x0: -0.15,
     y0: 0.65,
     dx: 0.22,
     dy: -0.14,
     period: 30000,
-    opacity: 0.20,
+    opacity: 0.25,
   },
   {
     // Neon green — top-right accent
     size: Math.max(SW, SH) * 0.75,
-    colors: ["rgba(0, 255, 136, 0.55)", "rgba(0, 255, 136, 0.0)"],
+    colors: ["rgba(0, 255, 136, 1.0)", "rgba(0, 255, 136, 0.0)"],
     x0: 0.45,
     y0: -0.15,
     dx: -0.10,
     dy: 0.18,
     period: 38000,
-    opacity: 0.18,
+    opacity: 0.22,
   },
 ];
 
@@ -168,7 +174,7 @@ function buildParticles(): Particle[] {
     swayFreq: 1 + Math.floor(rnd(i, 4) * 3),        // 1–3 cycles per rise
     period: 14000 + rnd(i, 5) * 12000,              // 14–26 s per rise
     delay: rnd(i, 6) * 15000,                       // stagger start
-    opacity: 0.5 + rnd(i, 7) * 0.35,                // 0.5–0.85
+    opacity: 0.6 + rnd(i, 7) * 0.25,                // 0.6–0.85 (spec)
   }));
 }
 

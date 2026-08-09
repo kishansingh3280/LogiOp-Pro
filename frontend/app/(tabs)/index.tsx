@@ -7,7 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { subscribeQueue, getQueue, flushQueue } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
-import type { DashboardStats, LedgerEntry, LedgerSummary, Shipment, WarehouseSummary } from "@/src/api/types";
+import type { DashboardStats, LedgerEntry, LedgerSummary, Party, Shipment, WarehouseSummary } from "@/src/api/types";
 import { useAuth } from "@/src/auth/context";
 import { computeAssetTotals } from "@/src/bullion/AssetMap";
 import { useTrips, useTxns, usedWeightKgFor } from "@/src/bullion/store";
@@ -32,6 +32,7 @@ export default function DashboardScreen() {
   const ledger = useApi<LedgerSummary>("/api/dashboard/ledger-summary");
   const shipments = useApi<Shipment[]>("/api/shipments");
   const entries = useApi<LedgerEntry[]>("/api/ledger/entries");
+  const parties = useApi<Party[]>("/api/parties");
   const trips = useTrips();
   const batches = useTxns();
 
@@ -50,8 +51,9 @@ export default function DashboardScreen() {
       ledger.refresh(),
       shipments.refresh(),
       entries.refresh(),
+      parties.refresh(),
     ]);
-  }, [stats, warehouse, ledger, shipments, entries]);
+  }, [stats, warehouse, ledger, shipments, entries, parties]);
 
   const loading = stats.loading || warehouse.loading || ledger.loading;
 
@@ -96,6 +98,64 @@ export default function DashboardScreen() {
   const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
 
   const recent = fyShipments.slice(0, tablet ? 6 : 4);
+
+  // ------------------------------------------------------------------
+  // Mini-lists inside Delivered / In Transit / Pending stat tiles.
+  // Each tile shows the last 4 shipments in its status bucket. Party
+  // and carrier names are resolved via the /api/parties response.
+  // ------------------------------------------------------------------
+  const partyName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of parties.data || []) m.set(p.id, p.name);
+    return (id?: string | null) => (id && m.get(id)) || "—";
+  }, [parties.data]);
+
+  const deliveredList = useMemo<StatItem[]>(() => {
+    return [...fyShipments]
+      .filter((sh) => sh.status === "delivered")
+      .sort((a, b) => {
+        const da = a.delivered_at || a.dispatch_date || a.created_at;
+        const db = b.delivered_at || b.dispatch_date || b.created_at;
+        return da < db ? 1 : -1;
+      })
+      .slice(0, 4)
+      .map((sh) => ({
+        key: sh.id,
+        line1: sh.consignment_no,
+        line2: `${shortDate(sh.delivered_at || sh.dispatch_date || sh.created_at)} · ${partyName(sh.party_id)}`,
+        onPress: () => router.push(`/shipment/${sh.id}` as never),
+      }));
+  }, [fyShipments, partyName, router]);
+
+  const inTransitList = useMemo<StatItem[]>(() => {
+    return [...fyShipments]
+      .filter((sh) => sh.status === "in_transit" || sh.status === "warehouse_arrived")
+      .sort((a, b) => {
+        const da = a.in_transit_at || a.dispatch_date || a.created_at;
+        const db = b.in_transit_at || b.dispatch_date || b.created_at;
+        return da < db ? 1 : -1;
+      })
+      .slice(0, 4)
+      .map((sh) => ({
+        key: sh.id,
+        line1: sh.consignment_no,
+        line2: `${sh.direction === "IN_TO_TH" ? "IN→TH" : "TH→IN"} · ${partyName(sh.carrier_party_id)}`,
+        onPress: () => router.push(`/shipment/${sh.id}` as never),
+      }));
+  }, [fyShipments, partyName, router]);
+
+  const pendingList = useMemo<StatItem[]>(() => {
+    return [...fyShipments]
+      .filter((sh) => sh.status === "pending")
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+      .slice(0, 4)
+      .map((sh) => ({
+        key: sh.id,
+        line1: sh.consignment_no,
+        line2: `${shortDate(sh.created_at)} · ${sh.weight_kg} kg`,
+        onPress: () => router.push(`/shipment/${sh.id}` as never),
+      }));
+  }, [fyShipments, router]);
 
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
@@ -175,70 +235,90 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* ---------------- Row 2 (HORIZONTAL CAROUSEL) ----------------
-            4 widgets — Bangkok Warehouse, Delivered, In Transit, Pending.
-            Snaps one page at a time on phone, two per page on tablet.
-            Dot indicators below track the active page. Individual widget
-            content/colors/numbers are unchanged from the original render. */}
-        <DashCarousel tablet={tablet}>
-          {/* Widget 1 — Bangkok warehouse (same JSX as before, just wrapped) */}
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => router.push("/shipments")}
-            testID="warehouse-card"
+        {/* ---------------- Row 2a (FIXED — Bangkok Warehouse on its own full-width row) ----------------
+            Warehouse widget is always visible; not part of the carousel. */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => router.push("/shipments")}
+          testID="warehouse-card"
+        >
+          <LinearGradient
+            colors={["#0a0a0a", "#0f0f0f"]}
+            style={styles.hero}
           >
-            <LinearGradient
-              colors={["#0a0a0a", "#0f0f0f"]}
-              style={styles.hero}
-            >
-              <View style={styles.heroTop}>
-                <View>
-                  <Text style={styles.heroLabel}>Bangkok warehouse</Text>
-                  <Text style={styles.heroValue}>{warehouse.data?.current_bags ?? 0}</Text>
-                  <Text style={styles.heroSub}>bags awaiting delivery</Text>
-                </View>
-                <View style={styles.heroRight}>
-                  <Text style={styles.heroLabel}>Total weight</Text>
-                  <Text style={styles.heroValueSmall}>{Math.round(warehouse.data?.current_kg || 0)} kg</Text>
-                  <Text style={styles.heroSub}>
-                    {Math.round(warehouse.data?.pct || 0)}% of {Math.round(warehouse.data?.capacity_kg || 0)} kg
-                  </Text>
-                </View>
+            <View style={styles.heroTop}>
+              <View>
+                <Text style={styles.heroLabel}>Bangkok warehouse</Text>
+                <Text style={styles.heroValue}>{warehouse.data?.current_bags ?? 0}</Text>
+                <Text style={styles.heroSub}>bags awaiting delivery</Text>
               </View>
-
-              {/* Capacity bar */}
-              <View style={styles.barTrack}>
-                <View
-                  style={[
-                    styles.barFill,
-                    { width: `${Math.min(100, warehouse.data?.pct || 0)}%` },
-                  ]}
-                />
+              <View style={styles.heroRight}>
+                <Text style={styles.heroLabel}>Total weight</Text>
+                <Text style={styles.heroValueSmall}>{Math.round(warehouse.data?.current_kg || 0)} kg</Text>
+                <Text style={styles.heroSub}>
+                  {Math.round(warehouse.data?.pct || 0)}% of {Math.round(warehouse.data?.capacity_kg || 0)} kg
+                </Text>
               </View>
+            </View>
 
-              <View style={styles.heroFooter}>
-                <View>
-                  <Text style={styles.heroLabel}>Not yet booked</Text>
-                  <Text style={styles.heroValueSmall}>{warehouse.data?.pending_deliveries ?? 0}</Text>
-                </View>
-                <View>
-                  <Text style={styles.heroLabel}>Booked</Text>
-                  <Text style={styles.heroValueSmall}>{warehouse.data?.booked_deliveries ?? 0}</Text>
-                </View>
-                <TouchableOpacity style={styles.heroCta} onPress={() => router.push("/shipments")}>
-                  <Text style={styles.heroCtaText}>view shipments</Text>
-                  <Ionicons name="arrow-forward" size={14} color={colors.bg} />
-                </TouchableOpacity>
+            {/* Capacity bar */}
+            <View style={styles.barTrack}>
+              <View
+                style={[
+                  styles.barFill,
+                  { width: `${Math.min(100, warehouse.data?.pct || 0)}%` },
+                ]}
+              />
+            </View>
+
+            <View style={styles.heroFooter}>
+              <View>
+                <Text style={styles.heroLabel}>Not yet booked</Text>
+                <Text style={styles.heroValueSmall}>{warehouse.data?.pending_deliveries ?? 0}</Text>
               </View>
-            </LinearGradient>
-          </TouchableOpacity>
+              <View>
+                <Text style={styles.heroLabel}>Booked</Text>
+                <Text style={styles.heroValueSmall}>{warehouse.data?.booked_deliveries ?? 0}</Text>
+              </View>
+              <TouchableOpacity style={styles.heroCta} onPress={() => router.push("/shipments")}>
+                <Text style={styles.heroCtaText}>view shipments</Text>
+                <Ionicons name="arrow-forward" size={14} color={colors.bg} />
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
+        </TouchableOpacity>
 
-          {/* Widget 2 — Delivered */}
-          <StatTile title="Delivered" value={String(s.delivered)} sub={`${pct(s.delivered)}% of total`} tint={colors.ok} icon="checkmark-done-outline" />
-          {/* Widget 3 — In Transit */}
-          <StatTile title="In Transit" value={String(s.in_transit)} sub={`${pct(s.in_transit)}% of total`} tint={colors.info} icon="airplane-outline" />
-          {/* Widget 4 — Pending */}
-          <StatTile title="Pending" value={String(s.pending)} sub={`${pct(s.pending)}% of total`} tint={colors.warn} icon="time-outline" />
+        {/* ---------------- Row 2b (HORIZONTAL CAROUSEL — 3 widgets) ----------------
+            Delivered / In Transit / Pending. Each tile shows the last 4
+            related shipments below its main number. Dots auto-count to 3. */}
+        <DashCarousel tablet={tablet}>
+          {/* Widget 1 — Delivered */}
+          <StatTile
+            title="Delivered"
+            value={String(s.delivered)}
+            sub={`${pct(s.delivered)}% of total`}
+            tint={colors.ok}
+            icon="checkmark-done-outline"
+            items={deliveredList}
+          />
+          {/* Widget 2 — In Transit */}
+          <StatTile
+            title="In Transit"
+            value={String(s.in_transit + s.warehouse_arrived)}
+            sub={`${pct(s.in_transit + s.warehouse_arrived)}% of total`}
+            tint={colors.info}
+            icon="airplane-outline"
+            items={inTransitList}
+          />
+          {/* Widget 3 — Pending */}
+          <StatTile
+            title="Pending"
+            value={String(s.pending)}
+            sub={`${pct(s.pending)}% of total`}
+            tint={colors.warn}
+            icon="time-outline"
+            items={pendingList}
+          />
         </DashCarousel>
 
         {/* Bullion module — reordered per operator's request:
@@ -414,18 +494,27 @@ function fmtKgDash(n: number): string {
 }
 
 
+export type StatItem = {
+  key: string;
+  line1: string;
+  line2: string;
+  onPress?: () => void;
+};
+
 function StatTile({
   title,
   value,
   sub,
   tint,
   icon,
+  items,
 }: {
   title: string;
   value: string;
   sub: string;
   tint: string;
   icon: keyof typeof Ionicons.glyphMap;
+  items?: StatItem[];
 }) {
   return (
     <View style={styles.stat} testID={`stat-${title}`}>
@@ -437,6 +526,27 @@ function StatTile({
       </View>
       <Text style={[styles.statValue, { color: tint }]}>{value}</Text>
       <Text style={styles.statSub}>{sub}</Text>
+      {items && items.length > 0 ? (
+        <View style={styles.statList} testID={`stat-${title}-list`}>
+          <View style={styles.statListDivider} />
+          {items.map((it) => (
+            <TouchableOpacity
+              key={it.key}
+              activeOpacity={0.7}
+              onPress={it.onPress}
+              style={styles.statListRow}
+              testID={`stat-${title}-row-${it.key}`}
+            >
+              <Text style={styles.statListL1} numberOfLines={1}>
+                {it.line1}
+              </Text>
+              <Text style={styles.statListL2} numberOfLines={1}>
+                {it.line2}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1006,5 +1116,28 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: colors.lime,
     opacity: 1,
+  },
+  // ---- Stat tile mini list (Delivered / In Transit / Pending) ----
+  statList: {
+    marginTop: 10,
+    gap: 6,
+  },
+  statListDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginBottom: 6,
+  },
+  statListRow: {
+    paddingVertical: 3,
+  },
+  statListL1: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  statListL2: {
+    color: "rgba(255, 255, 255, 0.60)",
+    fontSize: 11,
+    marginTop: 1,
   },
 });
