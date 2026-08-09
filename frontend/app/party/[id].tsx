@@ -291,7 +291,7 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
                       styles.stmtCell,
                       styles.stmtNumCol,
                       styles.stmtBalCol,
-                      balForRow >= 0 ? styles.glowNeutral : styles.glowRed,
+                      balForRow >= 0 ? styles.glowGreen : styles.glowRed,
                     ]}
                   >
                     {fmtCurrency(Math.abs(balForRow), ccy as Currency)}
