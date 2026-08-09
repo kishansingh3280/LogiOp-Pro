@@ -27,6 +27,18 @@ function notify() {
 let tripsCache: CarrierTrip[] | null = null;
 let txnsCache: BullionTxn[] | null = null;
 
+/**
+ * Wipe the in-memory bullion caches so subsequent `useTrips` / `useTxns`
+ * consumers refetch from scratch. Called by CompanyContext whenever the
+ * operator switches brand — otherwise every screen would keep showing
+ * the previous company's trips/txns until manual refresh.
+ */
+export function resetBullionCaches(): void {
+  tripsCache = null;
+  txnsCache = null;
+  notify();
+}
+
 function isQueuedResponse(x: unknown): x is { queued: true } {
   return !!x && typeof x === "object" && (x as { queued?: boolean }).queued === true;
 }
@@ -245,7 +257,15 @@ export function useTrips() {
   }, []);
   useEffect(() => {
     refresh();
-    const cb = () => setData(tripsCache ?? []);
+    // When the caches are reset (e.g. company switch), auto-refetch so
+    // the UI immediately reflects the new brand's data.
+    const cb = () => {
+      if (tripsCache === null) {
+        refresh();
+      } else {
+        setData(tripsCache ?? []);
+      }
+    };
     listeners.add(cb);
     return () => { listeners.delete(cb); };
   }, [refresh]);
@@ -263,7 +283,13 @@ export function useTxns() {
   }, []);
   useEffect(() => {
     refresh();
-    const cb = () => setData(txnsCache ?? []);
+    const cb = () => {
+      if (txnsCache === null) {
+        refresh();
+      } else {
+        setData(txnsCache ?? []);
+      }
+    };
     listeners.add(cb);
     return () => { listeners.delete(cb); };
   }, [refresh]);

@@ -1,0 +1,37 @@
+{
+  "summary": "Iter28 re-verification of the two iter27 follow-up fixes: PASS on both. Backend 5/5 pytest passed — POST /api/auth/login for bsingh/Papa@2026 now returns user.company='co_singh_exports'; /api/auth/me also carries the field; Admin (kishan) login has user.company=null; Awadh trips endpoint returns 8, Singh returns 0. Frontend: (1) Papa auto-scope confirmed — bsingh lands on Home with /api/bullion/trips?company=singh_exports (NOT awadh_enterprise), 'No trips scheduled' rendered, CompanySwitcher hidden. (2) Zustand cache invalidation confirmed — tapping the CompanySwitcher on Home immediately fires a new /api/bullion/trips?company=<new> call AND the Active-carrier-trips widget updates in place (Awadh 8 trips → Singh 'No trips scheduled' and back) without needing pull-to-refresh. localStorage 'active_company' persists Admin's Singh Exports selection. resetBullionCaches() wiring is working.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter28_papa_scope.py",
+    "/app/test_reports/pytest/iter28_results.xml"
+  ],
+  "action_items": [
+    "Optional: add testID=\"signout-btn\" to the 'Sign out' row in /app/frontend/app/(tabs)/more.tsx — currently the row is only findable by text which is fragile for automation.",
+    "Optional: mount CompanySwitcher on the Trips (bullion.tsx) tab header too so Admins can flip brands without going back to Home. Currently switcher only lives on Home."
+  ],
+  "critical_code_review_comments": [
+    "resetBullionCaches() nulls tripsCache/txnsCache and calls notify(); the useTrips/useTxns listeners then refetch. Clean pattern. Only nit: the same reset also fires on initial Papa login (when short !== activeCompany) which triggers an extra fetch on top of the initial one — harmless but a double-network call could be avoided by inlining the pin in the initial hydrate effect.",
+    "CompanySwitcher tap while already on that brand is a no-op via `if (c === activeCompany) return;` in setActiveCompany — good, matches review-request expectation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter28_papa_scope.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (5/5)",
+    "frontend": "100% (Papa auto-scope + cache-invalidate both verified; admin persistence to localStorage confirmed)"
+  },
+  "seed_data_creation": "None. Used existing seeded users (kishan/bsingh) and 8 Awadh bullion trips from iter27 baseline.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both iter27 follow-ups are fixed and verified. Backend suite lives at /app/backend/tests/test_iter28_papa_scope.py — run with `pytest test_iter28_papa_scope.py -o addopts=''` (EXPO_PUBLIC_BACKEND_URL must be exported). The CompanySwitcher is only mounted on the Home tab (index.tsx); when testing programmatic switch effects on the Trips tab, first navigate to Home to tap the switcher, then tab back to /bullion. The signout row has no testID — click via `page.get_by_text('Sign out', exact=True).first` only after navigating to /more. Papa's forced scope correctly overrides the Admin-persisted localStorage value (verified indirectly via /api/bullion/trips?company=singh_exports on Papa login even when previous Admin session had toggled to Singh).",
+  "rca_of_issue": "N/A — both follow-ups verified as resolved. Papa auto-scope: backend now emits `company` on UserPublic (auth.py:57,121), frontend CompanyContext (company-context.tsx:65-78) pins active company from user.company when role !== Admin, stripping the 'co_' prefix. Cache invalidation: resetBullionCaches() in store.ts:36-40 nulls tripsCache/txnsCache and notifies listeners; useTrips/useTxns hooks (store.ts:258-296) auto-refetch when cache is null. setActiveCompany in CompanyContext calls resetBullionCaches() on every real change (company-context.tsx:84-91)."
+}

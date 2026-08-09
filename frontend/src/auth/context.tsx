@@ -15,7 +15,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 
 import { storage } from "@/src/utils/storage";
 
-export type Role = "Admin" | "Staff" | "Carrier";
+export type Role = "Admin" | "Staff" | "Carrier" | "Papa";
 
 export type AuthUser = {
   id: string;
@@ -23,6 +23,8 @@ export type AuthUser = {
   display_name: string;
   role: Role;
   honorific: string;
+  /** Multi-company scoping — set on Papa / Staff / Carrier user documents. */
+  company?: string;
 };
 
 const TOKEN_KEY = "auth_token";

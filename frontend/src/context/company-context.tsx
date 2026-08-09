@@ -9,6 +9,8 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 
 import { setApiCompany } from "@/src/api/client";
+import { useAuth } from "@/src/auth/context";
+import { resetBullionCaches } from "@/src/bullion/store";
 import { storage } from "@/src/utils/storage";
 
 export type CompanyId = "awadh_enterprise" | "singh_exports" | string;
@@ -29,6 +31,7 @@ const STORAGE_KEY = "active_company";
 const DEFAULT_COMPANY: CompanyId = "awadh_enterprise";
 
 export function CompanyProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
   const [activeCompany, setActiveCompanyState] = useState<CompanyId>(DEFAULT_COMPANY);
   const [ready, setReady] = useState(false);
 
@@ -55,11 +58,34 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Non-Admin users are always scoped to their own company. When a Papa /
+  // Staff / Carrier logs in with a `user.company` on their profile, we
+  // pin the active company to that brand and ignore any stored value.
+  // Admins keep their persisted preference so the switcher works.
+  useEffect(() => {
+    if (!ready || !user) return;
+    if (user.role === "Admin") return;
+    const rawCompany = (user as unknown as { company?: string }).company;
+    if (!rawCompany) return;
+    // The user profile stores the prefixed form ("co_singh_exports")
+    // but records are tagged with the short form ("singh_exports").
+    const short = rawCompany.startsWith("co_") ? rawCompany.slice(3) : rawCompany;
+    if (short !== activeCompany) {
+      setActiveCompanyState(short);
+      setApiCompany(short);
+      resetBullionCaches();
+    }
+  }, [ready, user, activeCompany]);
+
   // Push every update into the module-level api client + persist it so
-  // full-reload restarts remember the operator's last brand.
+  // full-reload restarts remember the operator's last brand. Also purge
+  // the in-memory bullion caches so switching brands immediately reflects
+  // the new data instead of showing the previous company's list.
   const setActiveCompany = (c: CompanyId) => {
+    if (c === activeCompany) return;
     setActiveCompanyState(c);
     setApiCompany(c);
+    resetBullionCaches();
     // Fire-and-forget persistence — a failed write shouldn't block the UI.
     storage.setItem(STORAGE_KEY, c).catch(() => {});
   };

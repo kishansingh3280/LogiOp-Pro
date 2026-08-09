@@ -54,6 +54,7 @@ class UserPublic(BaseModel):
     display_name: str
     role: Role
     honorific: str = "Sir"  # "Sir" | "Boss" — used by AI Assistant
+    company: Optional[str] = None  # Multi-Company scope for non-Admin users
 
 
 class TokenResponse(BaseModel):
@@ -117,6 +118,7 @@ def user_public(user_doc: dict) -> UserPublic:
         display_name=user_doc.get("display_name") or user_doc["username"],
         role=user_doc.get("role", Role.STAFF.value),
         honorific=user_doc.get("honorific", "Sir"),
+        company=user_doc.get("company"),
     )
 
 
