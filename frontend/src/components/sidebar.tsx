@@ -493,6 +493,8 @@ const styles = StyleSheet.create({
   // Tablet dock
   dock: {
     height: "100%",
+    flexShrink: 0,
+    flexGrow: 0,
     borderRightColor: "rgba(255,255,255,0.08)",
     borderRightWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",

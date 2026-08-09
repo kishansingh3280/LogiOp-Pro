@@ -1,0 +1,63 @@
+{
+  "summary": "Iter39 sidebar/content gap fix VERIFIED. Removed paddingLeft on AuthShell content pane + added flexShrink/flexGrow:0 on tablet dock — dead space is gone. Tablet expanded gap = 16px (well under 32px budget). Collapse retiles content correctly. Mobile drawer regression passes. No new console errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/tmp/tablet_dashboard.png",
+    "/tmp/tablet_collapsed.png",
+    "/tmp/mobile_drawer_open.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AuthShell now uses `{flex:1, minWidth:0}` for the content pane, and sidebar (Animated.View with width=220/64) is a flex sibling — this is the correct RN-Web pattern; no double shift.",
+    "Sidebar dock has flexShrink:0/flexGrow:0 + explicit width — dock holds its exact width in the row and content pane consumes remainder cleanly.",
+    "useSidebar/currentSidebarWidth imports were removed from _layout.tsx as claimed — file is clean."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend only)", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Sidebar shell layout is verified stable across tablet expanded/collapsed and mobile. AuthShell content pane is `{flex:1, minWidth:0}` with no paddingLeft. Any future padding on the content pane must be added inside the pane (not the shell) to avoid re-introducing the double-shift dead space.",
+  "rca_of_issue": "Prior iter had the AuthShell applying BOTH a docked sidebar (Animated.View sibling occupying flex width) AND a paddingLeft equal to sidebar width on the content pane — double shift produced ~220px of dead space. Fix: dropped paddingLeft; content pane just does {flex:1, minWidth:0}. Verified expanded gap=16px, collapsed gap=16px (natural 16px overview-header padding only). Content pane left edge moves from 220px→64px on collapse as expected.",
+  "measurements": {
+    "tablet_expanded": {
+      "sidebar_dock": {"x": 0, "w": 220, "right": 220},
+      "overview_header": {"x": 236, "w": 1028},
+      "gap_px": 16,
+      "content_pane": {"x": 220, "w": 1060, "right": 1280}
+    },
+    "tablet_collapsed": {
+      "sidebar_dock": {"x": 0, "w": 64, "right": 64},
+      "overview_header": {"x": 80, "w": 1184},
+      "gap_px": 16,
+      "content_pane": {"x": 64, "w": 1216, "right": 1280}
+    },
+    "mobile": {
+      "sidebar_dock": null,
+      "hamburger": {"x": 12, "y": 8, "w": 40, "h": 40},
+      "drawer_after_open": {"x": 0, "w": 260},
+      "closes_via_scrim": true
+    },
+    "dashboard_regression": {
+      "row1_side_by_side": "Customer Will Pay + You Pay Carrier confirmed side-by-side in screenshot",
+      "bangkok_full_width_row": "visible",
+      "aura_rows_in_tiles": ["AURA-DEL-002", "AURA-DEL-001", "AURA-IT-002", "AURA-IT-001"],
+      "carousel_dots": "3 dots visible below tiles"
+    },
+    "console": {
+      "new_errors": [],
+      "pre_existing_warnings_only": [
+        "shadow* deprecated (P2)",
+        "textShadow* deprecated (P2)",
+        "props.pointerEvents deprecated (P2)",
+        "useNativeDriver web fallback (P2)"
+      ]
+    }
+  }
+}
