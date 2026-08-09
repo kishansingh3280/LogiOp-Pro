@@ -11,6 +11,7 @@ import { AmbientBackground } from "@/src/components/ambient-background";
 import { BlockerBell } from "@/src/components/blocker-bell";
 import { FloatingJarvis } from "@/src/components/floating-jarvis";
 import { ToastHost } from "@/src/components/toast";
+import { CompanyProvider } from "@/src/context/company-context";
 import { FYProvider } from "@/src/context/fy-context";
 import { ScreenContextProvider } from "@/src/context/screen-context";
 import { GhostUserProvider } from "@/src/ghost/ghost-user";
@@ -85,26 +86,28 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <AmbientBackground />
         <AuthProvider>
-          <FYProvider>
-            <ScreenContextProvider>
-              <GhostUserProvider>
-                <StatusBar style="light" />
-                <AuthGate>
-                  <Stack
-                    screenOptions={{
-                      headerShown: false,
-                      // Transparent content lets the AmbientBackground bleed through.
-                      contentStyle: { backgroundColor: "transparent" },
-                      animation: "slide_from_right",
-                    }}
-                  />
-                </AuthGate>
-                <BlockerBell />
-                <FloatingJarvis />
-                <ToastHost />
-              </GhostUserProvider>
-            </ScreenContextProvider>
-          </FYProvider>
+          <CompanyProvider>
+            <FYProvider>
+              <ScreenContextProvider>
+                <GhostUserProvider>
+                  <StatusBar style="light" />
+                  <AuthGate>
+                    <Stack
+                      screenOptions={{
+                        headerShown: false,
+                        // Transparent content lets the AmbientBackground bleed through.
+                        contentStyle: { backgroundColor: "transparent" },
+                        animation: "slide_from_right",
+                      }}
+                    />
+                  </AuthGate>
+                  <BlockerBell />
+                  <FloatingJarvis />
+                  <ToastHost />
+                </GhostUserProvider>
+              </ScreenContextProvider>
+            </FYProvider>
+          </CompanyProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

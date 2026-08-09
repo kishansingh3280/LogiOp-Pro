@@ -29,6 +29,50 @@ type QueuedMutation = {
 let flushing = false;
 const listeners = new Set<() => void>();
 
+// -----------------------------------------------------------------
+// Multi-company support — a module-level "active company" that gets
+// auto-appended as `?company=<id>` to every request. Set from the
+// CompanyContext provider whenever the operator flips brands.
+//
+// A tiny allowlist prevents us from tagging endpoints that are
+// company-agnostic (auth, the companies list itself, the LLM
+// assistant proxy, TTS/STT streams). Anything under those prefixes
+// stays untouched so we don't break unrelated flows.
+// -----------------------------------------------------------------
+let _activeCompany: string | null = null;
+const COMPANY_SKIP_PREFIXES = [
+  "/api/auth/",
+  "/api/companies",
+  "/api/assistant/tts",
+  "/api/assistant/stt",
+];
+
+export function setApiCompany(company: string | null): void {
+  _activeCompany = company && company.length > 0 ? company : null;
+}
+
+export function getApiCompany(): string | null {
+  return _activeCompany;
+}
+
+function shouldSkipCompanyParam(path: string): boolean {
+  return COMPANY_SKIP_PREFIXES.some((p) => path === p || path.startsWith(p));
+}
+
+/**
+ * Return `path` with `?company=<activeCompany>` appended if:
+ *   1. an active company is set, AND
+ *   2. the path is not in the skip list, AND
+ *   3. the caller hasn't already put a `company=` param on it.
+ */
+function withCompanyParam(path: string): string {
+  if (!_activeCompany) return path;
+  if (shouldSkipCompanyParam(path)) return path;
+  if (/[?&]company=/.test(path)) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}company=${encodeURIComponent(_activeCompany)}`;
+}
+
 function notify() {
   listeners.forEach((l) => l());
 }
@@ -75,7 +119,8 @@ async function isOnline(): Promise<boolean> {
 }
 
 async function rawRequest<T>(method: Method, path: string, body?: unknown): Promise<T> {
-  const url = BASE + path;
+  const effectivePath = withCompanyParam(path);
+  const url = BASE + effectivePath;
   // Hard timeout so the UI never gets stuck on a hanging socket — the
   // fetch spec has no default timeout and a mobile network can silently
   // stall.
@@ -155,26 +200,29 @@ async function invalidateCollection(path: string): Promise<void> {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
+  // Bake the active company into the cache key so switching brands
+  // doesn't return the other company's cached list.
+  const cacheKey = withCompanyParam(path);
   const online = await isOnline();
   if (online) {
     try {
       const data = await rawRequest<T>("GET", path);
-      await writeCache(path, data);
+      await writeCache(cacheKey, data);
       return data;
     } catch (e) {
       // Don't hide 404s behind cached data — that's exactly the "Invoice
       // not found" symptom the operator hit after a data reset. Purge the
       // stale entry and rethrow so the UI can surface a clear message.
       if ((e as { status?: number }).status === 404) {
-        await purgeCache(path);
+        await purgeCache(cacheKey);
         throw e;
       }
-      const cached = await readCache<T>(path);
+      const cached = await readCache<T>(cacheKey);
       if (cached !== null) return cached;
       throw e;
     }
   }
-  const cached = await readCache<T>(path);
+  const cached = await readCache<T>(cacheKey);
   if (cached !== null) return cached;
   throw new Error("Offline and no cached data");
 }

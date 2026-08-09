@@ -31,6 +31,7 @@ from auth import (  # noqa: E402
     audit_stamp,
 )
 from lalamove import router as lalamove_router  # noqa: E402
+from routers.companies import router as companies_router  # noqa: E402
 from bson import ObjectId
 from jwt.exceptions import InvalidTokenError
 
@@ -286,6 +287,9 @@ class BullionTrip(BaseModel):
     gold_baht: Optional[float] = None        # gold carried, measured in Thai baht (15.244g)
     carry_charge_inr: Optional[float] = None # total carrier fee for this trip, in INR
     shipment_ref: Optional[Dict[str, Any]] = None  # {id: uuid, consignment_no: "CN-…"}
+    # Multi-company tag (Phase 1). Matches a Company.id, e.g. "awadh_enterprise"
+    # or "singh_exports". `None` = untagged legacy record.
+    company: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     # Allow the richer frontend schema to pass through without loss.
@@ -333,8 +337,18 @@ class BullionRates(BaseModel):
 
 
 @api_router.get("/bullion/trips")
-async def bullion_list_trips():
-    docs = await db.bullion_trips.find().sort("date", -1).to_list(500)
+async def bullion_list_trips(company: Optional[str] = None):
+    """List all bullion trips. When `company` is provided, results are
+    filtered to that company (multi-company Phase 1). Matches both
+    prefixed (`co_singh_exports`) and short (`singh_exports`) forms so
+    legacy records tagged either way stay reachable. No filter = all
+    trips (backward compat for older clients)."""
+    query: Dict[str, Any] = {}
+    if company:
+        short = company[3:] if company.startswith("co_") else company
+        prefixed = company if company.startswith("co_") else f"co_{company}"
+        query["company"] = {"$in": list({company, short, prefixed})}
+    docs = await db.bullion_trips.find(query).sort("date", -1).to_list(500)
     return [_clean_mongo_id(d) for d in docs]
 
 
@@ -2040,6 +2054,9 @@ app.include_router(api_router)
 # Lalamove endpoints — mounted under /api/lalamove/*. Registered BEFORE the
 # catch-all proxy so its paths don't get forwarded to the remote backend.
 app.include_router(lalamove_router)
+# Companies router — must be registered BEFORE the catch-all proxy at the
+# bottom so /api/companies/* is handled locally, not forwarded to remote.
+app.include_router(companies_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
@@ -2144,6 +2161,13 @@ async def proxy_to_remote_backend(path: str, request: Request):
                     payload.setdefault("entry_source", entry_source)
                 payload["modified_by"] = stamper
                 payload["modified_at"] = now_iso
+                # Multi-company inheritance: if the request URL carried a
+                # `?company=` param and the payload didn't set one, stamp
+                # it on so the remote backend persists the tag on new /
+                # updated records without any client cooperation.
+                query_company = request.query_params.get("company")
+                if query_company and not payload.get("company"):
+                    payload["company"] = query_company
                 body = json.dumps(payload).encode()
                 fwd_headers.pop("content-length", None)
         except (json.JSONDecodeError, ValueError):

@@ -43,6 +43,9 @@ class Role(str, Enum):
     ADMIN = "Admin"
     STAFF = "Staff"
     CARRIER = "Carrier"
+    # Papa (B Singh) — read-mostly persona introduced in the Multi-Company
+    # feature. Can view + create + update statuses; no delete or settings.
+    PAPA = "Papa"
 
 
 class UserPublic(BaseModel):
