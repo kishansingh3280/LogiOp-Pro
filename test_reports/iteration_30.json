@@ -1,0 +1,29 @@
+{
+  "summary": "Iter30 — Dashboard widget layout refactor verified end-to-end on 390px mobile viewport via public preview URL, kishan/Kishan@Boss2026. All 8 review-request items PASS. Backend regression sanity 3/3 (test_iter30_dashboard_layout_sanity.py: login, /api/parties, /api/shipments — 0 shipments post-purge confirmed). Frontend: Row 1 renders CUSTOMER WILL PAY (x=16,w=173) and YOU PAY CARRIER (x=201,w=173) side-by-side at y=168 on 390px viewport. Row 2 <DashCarousel> exposes exactly 4 pages (dash-carousel-page-0 through -3); page-0 is the full Bangkok warehouse hero card (capacity bar, Not-yet-booked, Booked, VIEW SHIPMENTS CTA), pages 1/2/3 are Delivered/In Transit/Pending stat tiles with 'N% of total' sub-labels. dash-carousel-dots wrapper contains exactly 4 dots (no dot-4). Active dot is 20x7 lime rgb(0,209,255); inactive are 7x7 muted rgb(100,116,139). Tap-to-jump validated for dot-0/1/3: scrollLeft snaps to 0/370/1110 (== i*(pageWidth+gap)) and the corresponding page bbox moves to x=16 (fully in view). Widget contents unchanged. Other tabs (Shipments/Invoices/More) navigate correctly; sign-in flow works. No colors/theme changed. No new endpoints touched. Cyber-Siri theme intact.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter30_dashboard_layout_sanity.py",
+    "/app/test_reports/pytest/iter30_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "index.tsx:472-481 DashCarousel onScrollEnd uses onMomentumScrollEnd + onScrollEndDrag — on RN-Web a raw mouse-wheel scroll DOES scroll the ScrollView (CSS scroll-snap keeps it aligned) but does NOT fire either RN scroll-end event, so the active dot won't advance from mouse-wheel alone. This is a known RN-Web limitation and NOT a bug for the target mobile experience (touch swipe fires onScrollEndDrag correctly). Tap-to-jump path is the reliable web-preview fallback and works perfectly. Consider adding an `onScroll` handler (throttled) as a belt-and-braces sync if desktop-web accuracy ever matters.",
+    "index.tsx:465 contentPadH is hard-coded to spacing.lg*2 in a comment saying 'kept in sync with styles.content' — but the actual style key is `scroll` (line 748). Comment nit only; the value spacing.lg*2 does match paddingHorizontal: spacing.lg on both sides, so pageWidth math is correct.",
+    "index.tsx overall length is 1005 lines — approaching the >700 lines split threshold. The Bullion widgets (ActiveCarrierTripsCard, AssetsOnHandCard, SplitPill) could move to /src/components/dashboard/. Not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter30_dashboard_layout_sanity.py (new — 3 tests, all pass)"
+  ],
+  "success_rate": {"backend": "100% (3/3)", "frontend": "100% (8/8 review-request items)"},
+  "seed_data_creation": "None. Used existing seeded admin user (kishan).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Dashboard carousel testIDs: dash-carousel (wrapper), dash-carousel-page-0..3 (per-page containers), dash-carousel-dots (dot row), dash-carousel-dot-0..3 (individual dot TouchableOpacity). To measure active-dot state reliably, DO NOT use `[data-testid=...] > div` — RN-Web wraps TouchableOpacity in extra divs. Instead read the innermost styled View via `document.querySelector('[data-testid=\"dash-carousel-dot-i\"]').getBoundingClientRect()` OR check all descendant divs' backgroundColor (active=rgb(0,209,255) lime, inactive=rgb(100,116,139) textDim). Scroll offsets on tap: dot-0→scrollLeft=0, dot-1→370, dot-2→740, dot-3→1110 (each = i*(pageWidth+gap), pageWidth=358, gap=spacing.md=14 on 390px viewport). On RN-Web, mouse-wheel scroll advances the carousel visually but does NOT fire onMomentumScrollEnd/onScrollEndDrag so the active dot only re-syncs on a touch swipe or explicit dot tap — mention this if a follow-up review flags it as a 'drag doesn't update dot' bug.",
+  "rca_of_issue": "N/A — pure layout refactor implemented correctly. All acceptance criteria pass."
+}

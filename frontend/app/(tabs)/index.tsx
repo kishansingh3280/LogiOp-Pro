@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { NativeScrollEvent, NativeSyntheticEvent, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { subscribeQueue, getQueue, flushQueue } from "@/src/api/client";
@@ -125,39 +125,121 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Stat cards — horizontal carousel so operators can flick through
-            KPIs one at a time on phones; falls back to a 2×2 grid on
-            tablets where horizontal space is abundant. */}
-        {tablet ? (
-          <View style={[styles.statsGrid, styles.statsGridTablet]} testID="stat-grid">
-            <StatTile title="Delivered" value={String(s.delivered)} sub={`${pct(s.delivered)}% of total`} tint={colors.ok} icon="checkmark-done-outline" />
-            <StatTile title="In Transit" value={String(s.in_transit)} sub={`${pct(s.in_transit)}% of total`} tint={colors.info} icon="airplane-outline" />
-            <StatTile title="Pending" value={String(s.pending)} sub={`${pct(s.pending)}% of total`} tint={colors.warn} icon="time-outline" />
-            <StatTile title="Warehouse" value={String(s.warehouse_arrived)} sub={`${pct(s.warehouse_arrived)}% of total`} tint={colors.lime} icon="business-outline" />
+        {/* ---------------- Row 1 (FIXED — no horizontal scroll) ----------------
+            Ledger snapshot: 2 widgets side by side. Pinned near the top so
+            the operator sees the money position immediately. `flexDirection`
+            is forced to "row" (overrides the mobile default of column) so
+            the two cards always share the width, on every screen size. */}
+        <View style={[styles.row, styles.rowTablet]}>
+          <View style={[styles.col, styles.colTablet]}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => router.push("/ledger")}
+              testID="ledger-get-card"
+            >
+              <Card style={styles.ledgerCard}>
+                <View style={styles.ledgerHeader}>
+                  <View style={[styles.ledgerDot, { backgroundColor: colors.ok }]} />
+                  <Text style={styles.ledgerLabel}>Customer will pay</Text>
+                </View>
+                <Text style={styles.ledgerBig} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.receivable.inr, "INR")}</Text>
+                <Text style={styles.ledgerAlt} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.receivable.thb, "THB")}</Text>
+                {ledger.data?.top_get?.[0] ? (
+                  <Text style={styles.ledgerHint} numberOfLines={1}>
+                    Top: {ledger.data.top_get[0].name}
+                  </Text>
+                ) : null}
+              </Card>
+            </TouchableOpacity>
           </View>
-        ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            snapToInterval={168 + spacing.md}
-            decelerationRate="fast"
-            contentContainerStyle={styles.statsCarousel}
-            testID="stat-grid"
+          <View style={[styles.col, styles.colTablet]}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => router.push("/ledger")}
+              testID="ledger-give-card"
+            >
+              <Card style={styles.ledgerCard}>
+                <View style={styles.ledgerHeader}>
+                  <View style={[styles.ledgerDot, { backgroundColor: colors.danger }]} />
+                  <Text style={styles.ledgerLabel}>You pay carrier</Text>
+                </View>
+                <Text style={styles.ledgerBig} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.payable.inr, "INR")}</Text>
+                <Text style={styles.ledgerAlt} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.payable.thb, "THB")}</Text>
+                {ledger.data?.top_give?.[0] ? (
+                  <Text style={styles.ledgerHint} numberOfLines={1}>
+                    Top: {ledger.data.top_give[0].name}
+                  </Text>
+                ) : null}
+              </Card>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* ---------------- Row 2 (HORIZONTAL CAROUSEL) ----------------
+            4 widgets — Bangkok Warehouse, Delivered, In Transit, Pending.
+            Snaps one page at a time on phone, two per page on tablet.
+            Dot indicators below track the active page. Individual widget
+            content/colors/numbers are unchanged from the original render. */}
+        <DashCarousel tablet={tablet}>
+          {/* Widget 1 — Bangkok warehouse (same JSX as before, just wrapped) */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => router.push("/shipments")}
+            testID="warehouse-card"
           >
-            <View style={styles.statSnap}>
-              <StatTile title="Delivered" value={String(s.delivered)} sub={`${pct(s.delivered)}% of total`} tint={colors.ok} icon="checkmark-done-outline" />
-            </View>
-            <View style={styles.statSnap}>
-              <StatTile title="In Transit" value={String(s.in_transit)} sub={`${pct(s.in_transit)}% of total`} tint={colors.info} icon="airplane-outline" />
-            </View>
-            <View style={styles.statSnap}>
-              <StatTile title="Pending" value={String(s.pending)} sub={`${pct(s.pending)}% of total`} tint={colors.warn} icon="time-outline" />
-            </View>
-            <View style={styles.statSnap}>
-              <StatTile title="Warehouse" value={String(s.warehouse_arrived)} sub={`${pct(s.warehouse_arrived)}% of total`} tint={colors.lime} icon="business-outline" />
-            </View>
-          </ScrollView>
-        )}
+            <LinearGradient
+              colors={["#0a0a0a", "#0f0f0f"]}
+              style={styles.hero}
+            >
+              <View style={styles.heroTop}>
+                <View>
+                  <Text style={styles.heroLabel}>Bangkok warehouse</Text>
+                  <Text style={styles.heroValue}>{warehouse.data?.current_bags ?? 0}</Text>
+                  <Text style={styles.heroSub}>bags awaiting delivery</Text>
+                </View>
+                <View style={styles.heroRight}>
+                  <Text style={styles.heroLabel}>Total weight</Text>
+                  <Text style={styles.heroValueSmall}>{Math.round(warehouse.data?.current_kg || 0)} kg</Text>
+                  <Text style={styles.heroSub}>
+                    {Math.round(warehouse.data?.pct || 0)}% of {Math.round(warehouse.data?.capacity_kg || 0)} kg
+                  </Text>
+                </View>
+              </View>
+
+              {/* Capacity bar */}
+              <View style={styles.barTrack}>
+                <View
+                  style={[
+                    styles.barFill,
+                    { width: `${Math.min(100, warehouse.data?.pct || 0)}%` },
+                  ]}
+                />
+              </View>
+
+              <View style={styles.heroFooter}>
+                <View>
+                  <Text style={styles.heroLabel}>Not yet booked</Text>
+                  <Text style={styles.heroValueSmall}>{warehouse.data?.pending_deliveries ?? 0}</Text>
+                </View>
+                <View>
+                  <Text style={styles.heroLabel}>Booked</Text>
+                  <Text style={styles.heroValueSmall}>{warehouse.data?.booked_deliveries ?? 0}</Text>
+                </View>
+                <TouchableOpacity style={styles.heroCta} onPress={() => router.push("/shipments")}>
+                  <Text style={styles.heroCtaText}>view shipments</Text>
+                  <Ionicons name="arrow-forward" size={14} color={colors.bg} />
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+
+          {/* Widget 2 — Delivered */}
+          <StatTile title="Delivered" value={String(s.delivered)} sub={`${pct(s.delivered)}% of total`} tint={colors.ok} icon="checkmark-done-outline" />
+          {/* Widget 3 — In Transit */}
+          <StatTile title="In Transit" value={String(s.in_transit)} sub={`${pct(s.in_transit)}% of total`} tint={colors.info} icon="airplane-outline" />
+          {/* Widget 4 — Pending */}
+          <StatTile title="Pending" value={String(s.pending)} sub={`${pct(s.pending)}% of total`} tint={colors.warn} icon="time-outline" />
+        </DashCarousel>
 
         {/* Bullion module — reordered per operator's request:
               1. Active Carrier Trips (upcoming/in-flight bullion trips)
@@ -179,102 +261,6 @@ export default function DashboardScreen() {
           <Text style={styles.reportsShortcutText}>Open Reports Console</Text>
           <Ionicons name="chevron-forward" size={14} color={colors.textDim} />
         </TouchableOpacity>
-
-        {/* Warehouse card */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => router.push("/shipments")}
-          testID="warehouse-card"
-        >
-          <LinearGradient
-            colors={["#0a0a0a", "#0f0f0f"]}
-            style={styles.hero}
-          >
-            <View style={styles.heroTop}>
-              <View>
-                <Text style={styles.heroLabel}>Bangkok warehouse</Text>
-                <Text style={styles.heroValue}>{warehouse.data?.current_bags ?? 0}</Text>
-                <Text style={styles.heroSub}>bags awaiting delivery</Text>
-              </View>
-              <View style={styles.heroRight}>
-                <Text style={styles.heroLabel}>Total weight</Text>
-                <Text style={styles.heroValueSmall}>{Math.round(warehouse.data?.current_kg || 0)} kg</Text>
-                <Text style={styles.heroSub}>
-                  {Math.round(warehouse.data?.pct || 0)}% of {Math.round(warehouse.data?.capacity_kg || 0)} kg
-                </Text>
-              </View>
-            </View>
-
-            {/* Capacity bar */}
-            <View style={styles.barTrack}>
-              <View
-                style={[
-                  styles.barFill,
-                  { width: `${Math.min(100, warehouse.data?.pct || 0)}%` },
-                ]}
-              />
-            </View>
-
-            <View style={styles.heroFooter}>
-              <View>
-                <Text style={styles.heroLabel}>Not yet booked</Text>
-                <Text style={styles.heroValueSmall}>{warehouse.data?.pending_deliveries ?? 0}</Text>
-              </View>
-              <View>
-                <Text style={styles.heroLabel}>Booked</Text>
-                <Text style={styles.heroValueSmall}>{warehouse.data?.booked_deliveries ?? 0}</Text>
-              </View>
-              <TouchableOpacity style={styles.heroCta} onPress={() => router.push("/shipments")}>
-                <Text style={styles.heroCtaText}>view shipments</Text>
-                <Ionicons name="arrow-forward" size={14} color={colors.bg} />
-              </TouchableOpacity>
-            </View>
-          </LinearGradient>
-        </TouchableOpacity>
-
-        {/* Ledger snapshot */}
-        <View style={[styles.row, tablet && styles.rowTablet]}>
-          <TouchableOpacity
-            style={[styles.col, tablet && styles.colTablet]}
-            activeOpacity={0.85}
-            onPress={() => router.push("/ledger")}
-            testID="ledger-get-card"
-          >
-            <Card style={styles.ledgerCard}>
-              <View style={styles.ledgerHeader}>
-                <View style={[styles.ledgerDot, { backgroundColor: colors.ok }]} />
-                <Text style={styles.ledgerLabel}>Customer will pay</Text>
-              </View>
-              <Text style={styles.ledgerBig}>{fmtCurrency(fyLedger.receivable.inr, "INR")}</Text>
-              <Text style={styles.ledgerAlt}>{fmtCurrency(fyLedger.receivable.thb, "THB")}</Text>
-              {ledger.data?.top_get?.[0] ? (
-                <Text style={styles.ledgerHint} numberOfLines={1}>
-                  Top: {ledger.data.top_get[0].name}
-                </Text>
-              ) : null}
-            </Card>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.col, tablet && styles.colTablet]}
-            activeOpacity={0.85}
-            onPress={() => router.push("/ledger")}
-            testID="ledger-give-card"
-          >
-            <Card style={styles.ledgerCard}>
-              <View style={styles.ledgerHeader}>
-                <View style={[styles.ledgerDot, { backgroundColor: colors.danger }]} />
-                <Text style={styles.ledgerLabel}>You pay carrier</Text>
-              </View>
-              <Text style={styles.ledgerBig}>{fmtCurrency(fyLedger.payable.inr, "INR")}</Text>
-              <Text style={styles.ledgerAlt}>{fmtCurrency(fyLedger.payable.thb, "THB")}</Text>
-              {ledger.data?.top_give?.[0] ? (
-                <Text style={styles.ledgerHint} numberOfLines={1}>
-                  Top: {ledger.data.top_give[0].name}
-                </Text>
-              ) : null}
-            </Card>
-          </TouchableOpacity>
-        </View>
 
         {/* Modes + Direction */}
         <View style={[styles.row, tablet && styles.rowTablet]}>
@@ -451,6 +437,90 @@ function StatTile({
       </View>
       <Text style={[styles.statValue, { color: tint }]}>{value}</Text>
       <Text style={styles.statSub}>{sub}</Text>
+    </View>
+  );
+}
+
+/**
+ * DashCarousel — horizontal snap-carousel with dot indicators.
+ *
+ * • Renders each child on its own "page".
+ * • Mobile: 1 page fills the viewport width (minus the ScrollView's
+ *   horizontal padding). Tablet: 2 pages fit side-by-side.
+ * • `pagingEnabled` + `snapToInterval` gives auto-snap on scroll stop
+ *   on both touch (mobile) and mouse-drag / wheel (RN Web).
+ * • Dot count = child count (spec: always 4 dots).
+ */
+function DashCarousel({
+  tablet,
+  children,
+}: {
+  tablet: boolean;
+  children: React.ReactNode;
+}) {
+  const items = React.Children.toArray(children);
+  const { width: winWidth } = useWindowDimensions();
+  // Horizontal padding around the whole dashboard scroll view (styles.content).
+  // Kept in sync with the actual value below (see styles.content).
+  const contentPadH = spacing.lg * 2;
+  const perPage = tablet ? 2 : 1;
+  const gap = spacing.md;
+  const trackWidth = Math.max(280, winWidth - contentPadH);
+  const pageWidth = perPage === 2 ? (trackWidth - gap) / 2 : trackWidth;
+  const [active, setActive] = useState(0);
+  const scrollRef = useRef<ScrollView>(null);
+  const onScrollEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const x = e.nativeEvent.contentOffset.x;
+      // Snap unit = pageWidth + gap (each item occupies pageWidth then a gap).
+      const idx = Math.round(x / (pageWidth + gap));
+      const clamped = Math.max(0, Math.min(items.length - 1, idx));
+      if (clamped !== active) setActive(clamped);
+    },
+    [active, items.length, pageWidth, gap],
+  );
+  return (
+    <View testID="dash-carousel">
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        // Snap to each item's width so a single swipe moves exactly one
+        // widget (mobile) or one column (tablet).
+        snapToInterval={pageWidth + gap}
+        snapToAlignment="start"
+        decelerationRate="fast"
+        onMomentumScrollEnd={onScrollEnd}
+        onScrollEndDrag={onScrollEnd}
+        contentContainerStyle={{ gap }}
+      >
+        {items.map((child, i) => (
+          <View key={i} style={{ width: pageWidth }} testID={`dash-carousel-page-${i}`}>
+            {child}
+          </View>
+        ))}
+      </ScrollView>
+      {/* Dot indicators — one per child, always visible below the row.  */}
+      <View style={styles.dotRow} testID="dash-carousel-dots">
+        {items.map((_, i) => {
+          const isActive = i === active;
+          return (
+            <TouchableOpacity
+              key={i}
+              onPress={() => {
+                setActive(i);
+                scrollRef.current?.scrollTo({ x: i * (pageWidth + gap), animated: true });
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Go to widget ${i + 1}`}
+              testID={`dash-carousel-dot-${i}`}
+              hitSlop={10}
+            >
+              <View style={[styles.dot, isActive && styles.dotActive]} />
+            </TouchableOpacity>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -909,4 +979,27 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   reportsShortcutText: { color: colors.lime, fontSize: 13, fontWeight: "800", flex: 1 },
+
+  // ---- Dashboard carousel dot indicators (Row 2) ----
+  dotRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.textDim,
+    opacity: 0.5,
+  },
+  dotActive: {
+    width: 20,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.lime,
+    opacity: 1,
+  },
 });
