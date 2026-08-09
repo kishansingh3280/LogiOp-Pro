@@ -1,0 +1,37 @@
+{
+  "summary": "Iter29 re-verification after hard-reset + selective cherry-pick of the two Multi-Company Phase 1 commits (24f8fa3 + e4512bd). Backend 19/19 pytest PASSED (test_iter27_companies.py 12/12, test_iter28_papa_scope.py 5/5, NEW test_iter29_bullion_backcompat.py 2/2). Frontend Admin + Papa flows both verified via Playwright on the public preview URL. Every review-request checklist item passes. No functional bugs found. Cyber-Siri theme (deep space + electric blue + lime) is intact as expected — no JARVIS Aura remnants and no gold-theme regressions (correctly, per the agent-to-agent note). Only pre-existing non-blocking observations: (a) GoldAPI third-party returns HTTP 403 → app already falls back to mocked rate (unrelated to Multi-Company); (b) Metro websocket disconnects intermittently on a long-lived page (previously reported, cosmetic).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter27_companies.py",
+    "/app/backend/tests/test_iter28_papa_scope.py",
+    "/app/backend/tests/test_iter29_bullion_backcompat.py",
+    "/app/test_reports/pytest/iter29_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "companies.py:32 returns _clean() list; POST create_company also returns 200 (not 201 Created) — matches Iter27 test expectation but semantically POST-create should be 201. Minor REST-convention nit only, not a blocker.",
+    "company-context.tsx:39-59 hydrates from AsyncStorage on mount but does NOT re-read on user change; the Papa-scope pin effect (65-78) handles that path by overriding regardless of stored value. Clean.",
+    "seed_companies.py uses `os.environ['MONGO_URL']` directly — good, no default fallback. Re-run idempotency verified via pytest (TestSeedIdempotency)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter29_bullion_backcompat.py (new — covers route<->direction mirroring, 2 tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19)",
+    "frontend": "100% (Admin switcher toggle + persistence + Trips tab empty state, Papa auto-scope + hidden switcher + trips?company=singh_exports, skip list for /auth/login all verified)"
+  },
+  "seed_data_creation": "None. Used existing seeded data (kishan, bsingh, 8 Awadh bullion trips). Test create-then-delete pattern cleans up after itself.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Multi-Company Phase 1 is fully verified after the hard-reset cherry-pick. All three test files (test_iter27_companies.py, test_iter28_papa_scope.py, test_iter29_bullion_backcompat.py) run cleanly with `pytest -o addopts=''` when EXPO_PUBLIC_BACKEND_URL is exported. Frontend selectors: [data-testid=\"signin-username\"], [data-testid=\"signin-password\"], [data-testid=\"signin-submit\"], [data-testid=\"company-switcher\"]. CompanySwitcher is mounted only on the Home (index.tsx) tab header. Note: pill innerText contains Ionicon glyph private-use unicode chars around the label — assert substring 'Singh Exports' / 'Awadh Enterprise' rather than exact match. To reset AsyncStorage between test runs, `localStorage.clear()` in the browser works because Expo web falls back to localStorage. Papa login on a session that previously had 'active_company=singh_exports' persisted still works correctly because the Papa-scope pin effect overrides the hydration value.",
+  "rca_of_issue": "N/A — full pass on all 14 review-request items. Multi-Company implementation is stable: (1) Backend companies router uses variant matching (short + prefixed) so `?company=awadh_enterprise` and `?company=co_awadh_enterprise` both return the 8 seeded trips; (2) BullionTrip model mirrors direction<->route both ways for backward compat; (3) auth.py UserPublic carries `company` for Papa (co_singh_exports) and is null for Admin (kishan); (4) Frontend api client withCompanyParam auto-appends ?company= to every /api/* call except the skip list (/api/auth/*, /api/companies*, /api/assistant/tts, /api/assistant/stt) — verified in-network for /api/auth/login (no company param); (5) resetBullionCaches() + Zustand listener refetch on activeCompany change (visible switch from Awadh 8 trips to Singh 'No trips scheduled' with no pull-to-refresh)."
+}
