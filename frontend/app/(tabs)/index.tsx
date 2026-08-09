@@ -492,6 +492,11 @@ function DashCarousel({
         decelerationRate="fast"
         onMomentumScrollEnd={onScrollEnd}
         onScrollEndDrag={onScrollEnd}
+        // Also update active dot mid-scroll so desktop mouse-wheel (which
+        // never fires the momentum/drag-end events on RN Web) keeps the
+        // dot indicators in sync.
+        onScroll={onScrollEnd}
+        scrollEventThrottle={64}
         contentContainerStyle={{ gap }}
       >
         {items.map((child, i) => (
