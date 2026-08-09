@@ -559,7 +559,7 @@ function StatTile({
  *   horizontal padding). Tablet: 2 pages fit side-by-side.
  * • `pagingEnabled` + `snapToInterval` gives auto-snap on scroll stop
  *   on both touch (mobile) and mouse-drag / wheel (RN Web).
- * • Dot count = child count (spec: always 4 dots).
+ * • Dot count = child count (3 pages: Delivered / In Transit / Pending).
  */
 function DashCarousel({
   tablet,
