@@ -1,86 +1,88 @@
-// Cyber-Siri dark theme — deep space #020202 base, blue/purple/cyan ambient
-// orbs, and electric blue (#00D1FF) hair-line borders + CTAs. Replaces the
-// prior "black + lime" palette.
+// JARVIS Aura theme — dark #07070f base, four colour orbs (purple / gold /
+// cyan / green) drifting behind glass, gold particles floating upward, and
+// a neon-smoke tab bar. Numbers stay pure white; section headers glow
+// neon-green. This file is COLOUR-ONLY: token names & shapes match the
+// prior Cyber-Siri palette so no consumer needs to be touched.
 //
 // NOTE ON TOKEN NAMES: existing components use `colors.lime` / `limeGlow`
 // as the primary accent. Rather than rename every reference across the
 // codebase (hundreds of call sites), we keep the token names and point
-// them to the new electric-blue palette. New code should prefer the
-// semantic aliases `accent` / `accentGlow` / `accentSoft`.
+// them to the JARVIS Aura palette. New code should prefer the semantic
+// aliases `accent` / `accentGlow` / `accentSoft`.
 
 import { Platform } from "react-native";
 
 // ---------------------------------------------------------------------------
-// Raw palette
+// Raw palette — JARVIS Aura
 // ---------------------------------------------------------------------------
-const ELECTRIC_BLUE = "#00D1FF";       // primary CTA + hair-line border
-const ELECTRIC_BLUE_SOFT = "#38BDF8";  // softer blue for secondary UI
-const CYAN = "#00FFFF";                // ambient orb #1 + THB accent
-const PURPLE = "#7C3AED";              // ambient orb #2 + balance metric
-const PURPLE_SOFT = "#A78BFA";         // secondary purple
-const DEEP_BLUE = "#1E3A8A";           // ambient orb #3 (dark base)
+const NEON_GREEN = "#00FF88";         // primary accent (headers, active nav)
+const NEON_GREEN_SOFT = "#4DFFAF";    // softer green for secondary UI
+const NEON_CYAN = "#00F5FF";          // cyan orb + info glow
+const NEON_PURPLE = "#9B4DFF";        // purple orb + balance metric
+const NEON_GOLD = "#FFD700";          // gold particles + gold orb + gold metric
+const DEEP_BASE = "#07070f";          // global background
 
 export const colors = {
   // ------------------------------------------------------------------
-  // Base surfaces — deep space
+  // Base surfaces
   // ------------------------------------------------------------------
-  /** Global background — deep space so blue/purple orbs read as luminous. */
-  bg: "#020202",
-  /** Glass base — very dark, semi-transparent so ambient orbs bleed through. */
-  surface: "rgba(10, 12, 20, 0.62)",
-  surfaceAlt: "rgba(14, 18, 28, 0.60)",
-  glass: "rgba(12, 16, 26, 0.50)",         // low-elevation glass
-  glassStrong: "rgba(16, 22, 34, 0.62)",   // hover/active glass tint
-  /** Hair-line borders — subtle blue tint so the electric-blue glow reads */
-  border: "rgba(0, 209, 255, 0.10)",
-  borderStrong: "rgba(0, 209, 255, 0.22)",
+  /** Global background — deep near-black with a hint of indigo. */
+  bg: DEEP_BASE,
+  /** Frosted card base — dark cool tint, semi-transparent so orbs bleed. */
+  surface: "rgba(12, 12, 30, 0.82)",
+  surfaceAlt: "rgba(14, 14, 34, 0.74)",
+  glass: "rgba(12, 12, 30, 0.82)",         // low-elevation frosted card
+  glassStrong: "rgba(16, 16, 38, 0.88)",   // hover/active glass tint
+  /** Hair-line borders — subtle white tint, per JARVIS Aura spec. */
+  border: "rgba(255, 255, 255, 0.10)",
+  borderStrong: "rgba(255, 255, 255, 0.16)",
 
   // ------------------------------------------------------------------
-  // Typography
+  // Typography — numbers stay pure white always.
   // ------------------------------------------------------------------
-  text: "#F5F7FA",
-  textMuted: "#A5B4C4",
-  textDim: "#64748B",
+  text: "#FFFFFF",
+  textMuted: "rgba(255, 255, 255, 0.60)",
+  textDim: "rgba(255, 255, 255, 0.45)",
 
   // ------------------------------------------------------------------
-  // Primary accent — was lime, now electric blue.
+  // Primary accent — neon green.
   // Token names preserved for backwards compat across the app.
   // ------------------------------------------------------------------
-  lime: ELECTRIC_BLUE,
-  limeSoft: ELECTRIC_BLUE_SOFT,
-  limeGlow: "rgba(0, 209, 255, 0.18)",
+  lime: NEON_GREEN,
+  limeSoft: NEON_GREEN_SOFT,
+  limeGlow: "rgba(0, 255, 136, 0.18)",
 
   /** Preferred aliases for new code. */
-  accent: ELECTRIC_BLUE,
-  accentSoft: ELECTRIC_BLUE_SOFT,
-  accentGlow: "rgba(0, 209, 255, 0.18)",
+  accent: NEON_GREEN,
+  accentSoft: NEON_GREEN_SOFT,
+  accentGlow: "rgba(0, 255, 136, 0.18)",
 
   // ------------------------------------------------------------------
   // Ambient orb palette — used by <AmbientBackground/> and metric glows.
-  // Cyber-Siri swaps to Blue / Purple / Cyan for the drifting orbs.
+  // JARVIS Aura orbs: purple / gold / cyan / green.
   // ------------------------------------------------------------------
-  purple: PURPLE,
-  purpleSoft: PURPLE_SOFT,
-  purpleGlow: "rgba(124, 58, 237, 0.30)",
-  blue: ELECTRIC_BLUE,
-  blueDeep: DEEP_BLUE,
-  blueGlow: "rgba(0, 209, 255, 0.28)",
-  cyan: CYAN,
-  cyanGlow: "rgba(0, 255, 255, 0.28)",
-  amber: "#F5C518",
-  amberGlow: "rgba(245, 197, 24, 0.25)",
+  purple: NEON_PURPLE,
+  purpleSoft: "#B98BFF",
+  purpleGlow: "rgba(155, 77, 255, 0.30)",
+  blue: NEON_CYAN,
+  blueDeep: "#1E1E4A",
+  blueGlow: "rgba(0, 245, 255, 0.28)",
+  cyan: NEON_CYAN,
+  cyanGlow: "rgba(0, 245, 255, 0.28)",
+  amber: NEON_GOLD,
+  amberGlow: "rgba(255, 215, 0, 0.28)",
 
   // ------------------------------------------------------------------
   // Status tints
   // ------------------------------------------------------------------
-  danger: "#F87171",
-  warn: "#F59E0B",
-  ok: "#34D399",
-  info: ELECTRIC_BLUE_SOFT,
+  danger: "#FF6B8A",
+  warn: "#FFB84D",
+  ok: NEON_GREEN,
+  info: NEON_CYAN,
 
   // Legacy compat
-  chipBg: "rgba(0, 209, 255, 0.06)",
-  chipSelected: ELECTRIC_BLUE,
+  chipBg: "rgba(0, 255, 136, 0.06)",
+  chipSelected: NEON_GREEN,
 } as const;
 
 export const spacing = {
@@ -118,17 +120,18 @@ export const font = {
   }) as string,
 } as const;
 
-/** Metric colour tokens — for the "glow-in-brand-colour" headline numbers.
- *  Consumers pick the semantic bucket rather than a raw hex. */
+/** Metric colour tokens — numbers are ALWAYS pure white per JARVIS Aura
+ *  spec; only the surrounding glow carries the semantic colour so the
+ *  number itself stays legible on any glass surface. */
 export const metric = {
-  gold: { color: colors.amber, glow: colors.amberGlow },
-  inr: { color: colors.accent, glow: colors.accentGlow },
-  usd: { color: colors.accent, glow: colors.accentGlow },
-  thb: { color: colors.cyan, glow: colors.cyanGlow },
-  balance: { color: colors.purple, glow: colors.purpleGlow },
-  info: { color: colors.blue, glow: colors.blueGlow },
-  ok: { color: colors.ok, glow: "rgba(52, 211, 153, 0.25)" },
-  danger: { color: colors.danger, glow: "rgba(248, 113, 113, 0.25)" },
+  gold: { color: "#FFFFFF", glow: colors.amberGlow },
+  inr: { color: "#FFFFFF", glow: colors.accentGlow },
+  usd: { color: "#FFFFFF", glow: colors.accentGlow },
+  thb: { color: "#FFFFFF", glow: colors.cyanGlow },
+  balance: { color: "#FFFFFF", glow: colors.purpleGlow },
+  info: { color: "#FFFFFF", glow: colors.blueGlow },
+  ok: { color: "#FFFFFF", glow: "rgba(0, 255, 136, 0.28)" },
+  danger: { color: "#FFFFFF", glow: "rgba(255, 107, 138, 0.28)" },
 } as const;
 
 export const TABLET_WIDTH = 900;

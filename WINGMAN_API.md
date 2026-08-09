@@ -8,7 +8,7 @@ Base URL   : {DEPLOYED_APP_URL}
 API prefix : /api
 ```
 
-For preview / dev: `https://logistics-ai-hub-18.preview.emergentagent.com`.
+For preview / dev: `https://cyber-logistics-hub-1.preview.emergentagent.com`.
 
 Optional auth: set the `WINGMAN_API_KEY` env var on the backend to require
 `X-Wingman-Key: <value>` (or `Authorization: Bearer <value>`) on every

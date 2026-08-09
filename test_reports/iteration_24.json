@@ -26,5 +26,5 @@
   "retest_needed": false,
   "should_main_agent_self_test": false,
   "context_for_next_testing_agent": "Sign-in event-leak bug is closed. Primary username+password login is fully functional via all 3 UI entry points. Floating Jarvis sidebar opens post-login and Wingman chat history renders correctly. Deprecation warnings in console are cosmetic only.",
-  "rca_of_issue": "Original bug (iter23): onPress={onSubmit} passed the RN GestureResponderEvent as the first arg (overrideUsername), then `.trim()` on the event object threw a TypeError red-screen. Fix (iter24): wrapping with `() => onSubmit()` at all 3 sites (Pressable onPress lines 109 & 177, TextInput onSubmitEditing line 161) prevents the event from being passed. Verified end-to-end in the web preview at https://logistics-ai-hub-18.preview.emergentagent.com."
+  "rca_of_issue": "Original bug (iter23): onPress={onSubmit} passed the RN GestureResponderEvent as the first arg (overrideUsername), then `.trim()` on the event object threw a TypeError red-screen. Fix (iter24): wrapping with `() => onSubmit()` at all 3 sites (Pressable onPress lines 109 & 177, TextInput onSubmitEditing line 161) prevents the event from being passed. Verified end-to-end in the web preview at https://cyber-logistics-hub-1.preview.emergentagent.com."
 }
