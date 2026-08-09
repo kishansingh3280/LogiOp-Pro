@@ -28,11 +28,11 @@ export const colors = {
   // ------------------------------------------------------------------
   /** Global background — deep near-black with a hint of indigo. */
   bg: DEEP_BASE,
-  /** Frosted card base — dark cool tint, semi-transparent so orbs bleed. */
-  surface: "rgba(12, 12, 30, 0.82)",
-  surfaceAlt: "rgba(14, 14, 34, 0.74)",
-  glass: "rgba(12, 12, 30, 0.82)",         // low-elevation frosted card
-  glassStrong: "rgba(16, 16, 38, 0.88)",   // hover/active glass tint
+  /** Frosted card base — 65 % opaque per JARVIS Aura v2 (was 0.82). */
+  surface: "rgba(12, 12, 30, 0.65)",
+  surfaceAlt: "rgba(14, 14, 34, 0.58)",
+  glass: "rgba(12, 12, 30, 0.65)",         // low-elevation frosted card
+  glassStrong: "rgba(16, 16, 38, 0.75)",   // hover/active glass tint
   /** Hair-line borders — subtle white tint, per JARVIS Aura spec. */
   border: "rgba(255, 255, 255, 0.10)",
   borderStrong: "rgba(255, 255, 255, 0.16)",

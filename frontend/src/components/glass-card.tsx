@@ -11,6 +11,7 @@ import { BlurView } from "expo-blur";
 import React from "react";
 import { Platform, StyleSheet, View, type ViewProps, type ViewStyle } from "react-native";
 
+import { useCardBreathing } from "@/src/hooks/use-card-breathing";
 import { colors, radii } from "@/src/theme";
 
 type Tone = "default" | "elevated" | "flat";
@@ -44,6 +45,7 @@ export function GlassCard({
   children,
   ...rest
 }: GlassCardProps) {
+  const breathe = useCardBreathing({ blur: false });
   const padValue =
     padded === true ? PAD.md : padded === false || padded == null ? 0 : PAD[padded];
   const borderRadius = radii[radius];
@@ -64,10 +66,10 @@ export function GlassCard({
       padding: padValue,
       overflow: "hidden",
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...(({ backdropFilter: "blur(28px) saturate(180%)", WebkitBackdropFilter: "blur(28px) saturate(180%)" } as any) ),
+      ...(({ backdropFilter: "blur(20px) saturate(160%)", WebkitBackdropFilter: "blur(20px) saturate(160%)" } as any) ),
     };
     return (
-      <View style={[webStyle, style]} {...rest}>
+      <View style={[webStyle, breathe, style]} {...rest}>
         {children}
       </View>
     );

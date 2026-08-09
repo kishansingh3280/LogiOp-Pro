@@ -17,6 +17,7 @@ import { CompanySwitcher } from "@/src/components/company-switcher";
 import { FYPicker } from "@/src/components/fy-picker";
 import { Card } from "@/src/components/ui";
 import { useFY } from "@/src/context/fy-context";
+import { useCardBreathing } from "@/src/hooks/use-card-breathing";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, relTime, shortDate } from "@/src/utils/format";
@@ -237,56 +238,10 @@ export default function DashboardScreen() {
 
         {/* ---------------- Row 2a (FIXED — Bangkok Warehouse on its own full-width row) ----------------
             Warehouse widget is always visible; not part of the carousel. */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => router.push("/shipments")}
-          testID="warehouse-card"
-        >
-          <LinearGradient
-            colors={["#0a0a0a", "#0f0f0f"]}
-            style={styles.hero}
-          >
-            <View style={styles.heroTop}>
-              <View>
-                <Text style={styles.heroLabel}>Bangkok warehouse</Text>
-                <Text style={styles.heroValue}>{warehouse.data?.current_bags ?? 0}</Text>
-                <Text style={styles.heroSub}>bags awaiting delivery</Text>
-              </View>
-              <View style={styles.heroRight}>
-                <Text style={styles.heroLabel}>Total weight</Text>
-                <Text style={styles.heroValueSmall}>{Math.round(warehouse.data?.current_kg || 0)} kg</Text>
-                <Text style={styles.heroSub}>
-                  {Math.round(warehouse.data?.pct || 0)}% of {Math.round(warehouse.data?.capacity_kg || 0)} kg
-                </Text>
-              </View>
-            </View>
-
-            {/* Capacity bar */}
-            <View style={styles.barTrack}>
-              <View
-                style={[
-                  styles.barFill,
-                  { width: `${Math.min(100, warehouse.data?.pct || 0)}%` },
-                ]}
-              />
-            </View>
-
-            <View style={styles.heroFooter}>
-              <View>
-                <Text style={styles.heroLabel}>Not yet booked</Text>
-                <Text style={styles.heroValueSmall}>{warehouse.data?.pending_deliveries ?? 0}</Text>
-              </View>
-              <View>
-                <Text style={styles.heroLabel}>Booked</Text>
-                <Text style={styles.heroValueSmall}>{warehouse.data?.booked_deliveries ?? 0}</Text>
-              </View>
-              <TouchableOpacity style={styles.heroCta} onPress={() => router.push("/shipments")}>
-                <Text style={styles.heroCtaText}>view shipments</Text>
-                <Ionicons name="arrow-forward" size={14} color={colors.bg} />
-              </TouchableOpacity>
-            </View>
-          </LinearGradient>
-        </TouchableOpacity>
+        <WarehouseHero
+          warehouseData={warehouse.data}
+          onOpen={() => router.push("/shipments")}
+        />
 
         {/* ---------------- Row 2b (HORIZONTAL CAROUSEL — 3 widgets) ----------------
             Delivered / In Transit / Pending. Each tile shows the last 4
@@ -493,6 +448,61 @@ function fmtKgDash(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
+/**
+ * WarehouseHero — Bangkok warehouse full-width card. Extracted so we can
+ * hook `useCardBreathing` at the component root (hooks can't sit in-line
+ * inside the JSX tree of DashboardScreen).
+ */
+function WarehouseHero({
+  warehouseData,
+  onOpen,
+}: {
+  warehouseData: WarehouseSummary | null | undefined;
+  onOpen: () => void;
+}) {
+  const breathe = useCardBreathing({ blur: false });
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={onOpen} testID="warehouse-card">
+      <LinearGradient colors={["#0a0a0a", "#0f0f0f"]} style={[styles.hero, breathe]}>
+        <View style={styles.heroTop}>
+          <View>
+            <Text style={styles.heroLabel}>Bangkok warehouse</Text>
+            <Text style={styles.heroValue}>{warehouseData?.current_bags ?? 0}</Text>
+            <Text style={styles.heroSub}>bags awaiting delivery</Text>
+          </View>
+          <View style={styles.heroRight}>
+            <Text style={styles.heroLabel}>Total weight</Text>
+            <Text style={styles.heroValueSmall}>{Math.round(warehouseData?.current_kg || 0)} kg</Text>
+            <Text style={styles.heroSub}>
+              {Math.round(warehouseData?.pct || 0)}% of {Math.round(warehouseData?.capacity_kg || 0)} kg
+            </Text>
+          </View>
+        </View>
+
+        {/* Capacity bar */}
+        <View style={styles.barTrack}>
+          <View style={[styles.barFill, { width: `${Math.min(100, warehouseData?.pct || 0)}%` }]} />
+        </View>
+
+        <View style={styles.heroFooter}>
+          <View>
+            <Text style={styles.heroLabel}>Not yet booked</Text>
+            <Text style={styles.heroValueSmall}>{warehouseData?.pending_deliveries ?? 0}</Text>
+          </View>
+          <View>
+            <Text style={styles.heroLabel}>Booked</Text>
+            <Text style={styles.heroValueSmall}>{warehouseData?.booked_deliveries ?? 0}</Text>
+          </View>
+          <TouchableOpacity style={styles.heroCta} onPress={onOpen}>
+            <Text style={styles.heroCtaText}>view shipments</Text>
+            <Ionicons name="arrow-forward" size={14} color={colors.bg} />
+          </TouchableOpacity>
+        </View>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
+
 
 export type StatItem = {
   key: string;
@@ -516,8 +526,9 @@ function StatTile({
   icon: keyof typeof Ionicons.glyphMap;
   items?: StatItem[];
 }) {
+  const breathe = useCardBreathing();
   return (
-    <View style={styles.stat} testID={`stat-${title}`}>
+    <View style={[styles.stat, breathe]} testID={`stat-${title}`}>
       <View style={styles.statHead}>
         <Text style={styles.statTitle}>{title}</Text>
         <View style={[styles.statIcon, { borderColor: tint + "55" }]}>

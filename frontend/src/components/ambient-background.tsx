@@ -57,7 +57,7 @@ const ORBS: Orb[] = [
     dx: 0.15,
     dy: 0.12,
     period: 32000,
-    opacity: 0.34,
+    opacity: 0.28,
   },
   {
     // Gold — mid-right drift
@@ -68,7 +68,7 @@ const ORBS: Orb[] = [
     dx: -0.18,
     dy: 0.10,
     period: 36000,
-    opacity: 0.28,
+    opacity: 0.23,
   },
   {
     // Cyan — bottom-left drift
@@ -79,7 +79,7 @@ const ORBS: Orb[] = [
     dx: 0.22,
     dy: -0.14,
     period: 30000,
-    opacity: 0.25,
+    opacity: 0.20,
   },
   {
     // Neon green — top-right accent
@@ -90,7 +90,7 @@ const ORBS: Orb[] = [
     dx: -0.10,
     dy: 0.18,
     period: 38000,
-    opacity: 0.22,
+    opacity: 0.18,
   },
 ];
 
@@ -174,7 +174,7 @@ function buildParticles(): Particle[] {
     swayFreq: 1 + Math.floor(rnd(i, 4) * 3),        // 1–3 cycles per rise
     period: 14000 + rnd(i, 5) * 12000,              // 14–26 s per rise
     delay: rnd(i, 6) * 15000,                       // stagger start
-    opacity: 0.6 + rnd(i, 7) * 0.25,                // 0.6–0.85 (spec)
+    opacity: Math.min(1, (0.6 + rnd(i, 7) * 0.25) * 1.3), // 0.6–0.85 × 1.3 = 0.78–1.0 (spec +30%)
   }));
 }
 
@@ -250,30 +250,14 @@ export function AmbientBackground() {
         <ParticleView key={`p-${i}`} p={p} />
       ))}
 
-      {/* Layer 4 — Black glass scrim. Spec suggested 50 % but the heavy
-          backdrop-blur was crushing the particles/orbs on web. Reduced to
-          30 % (still fulfils the "black glass" darkening role) and blur
-          20 px so particles + orbs remain crisply visible through the
-          overlay. */}
-      <View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            backgroundColor: "rgba(3, 2, 10, 0.30)",
-            ...(Platform.OS === "web"
-              ? ({
-                  backdropFilter: "blur(20px)",
-                  WebkitBackdropFilter: "blur(20px)",
-                } as unknown as object)
-              : {}),
-          },
-        ]}
-      />
-      {/* Very light top-to-bottom vignette so the bar area recedes. */}
+      {/* NOTE: the previous internal black scrim has been moved to a
+          GLOBAL fixed overlay in app/_layout.tsx (per JARVIS Aura spec
+          v2 — black-tinted blur glass layer above orbs/particles, below
+          content). Keeping only a very light top-to-bottom vignette here
+          so the top of the viewport recedes gracefully. */}
       <LinearGradient
         pointerEvents="none"
-        colors={["rgba(7,7,15,0.10)", "rgba(7,7,15,0.04)", "rgba(7,7,15,0.32)"]}
+        colors={["rgba(7,7,15,0.06)", "rgba(7,7,15,0.02)", "rgba(7,7,15,0.20)"]}
         style={StyleSheet.absoluteFill}
         start={{ x: 0.5, y: 0.0 }}
         end={{ x: 0.5, y: 1 }}

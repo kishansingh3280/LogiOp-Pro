@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from "@/src/auth/context";
 import { AmbientBackground } from "@/src/components/ambient-background";
 import { BlockerBell } from "@/src/components/blocker-bell";
 import { FloatingJarvis } from "@/src/components/floating-jarvis";
+import { GlassOverlay } from "@/src/components/glass-overlay";
 import { ToastHost } from "@/src/components/toast";
 import { CompanyProvider } from "@/src/context/company-context";
 import { FYProvider } from "@/src/context/fy-context";
@@ -35,6 +36,19 @@ if (Platform.OS === "web" && typeof document !== "undefined") {
     }
     /* Extremely sharp Apple/Inter-style typography for the Siri 2.0 theme. */
     body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Segoe UI', Roboto, sans-serif !important; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; letter-spacing: -0.01em; }
+
+    /* JARVIS Aura v2 — breathing glow keyframe applied to every glass
+       card. Each Card sets its own animation-delay via inline style so
+       cards don't all pulse in lockstep. */
+    @keyframes cardBreathe {
+      0%   { box-shadow: 0 4px 24px rgba(0,0,0,0.4), 0 0 12px rgba(0,255,136,0.08); }
+      50%  { box-shadow: 0 4px 24px rgba(0,0,0,0.4), 0 0 20px rgba(0,255,136,0.16); }
+      100% { box-shadow: 0 4px 24px rgba(0,0,0,0.4), 0 0 12px rgba(0,255,136,0.08); }
+    }
+    .jarvis-breathe {
+      animation: cardBreathe 4s ease-in-out infinite;
+      will-change: box-shadow;
+    }
   `;
   const style = document.createElement("style");
   style.setAttribute("data-app-theme", "siri");
@@ -85,6 +99,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <SafeAreaProvider>
         <AmbientBackground />
+        <GlassOverlay />
         <AuthProvider>
           <CompanyProvider>
             <FYProvider>

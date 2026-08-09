@@ -1,10 +1,13 @@
+import React from "react";
 import { StyleProp, StyleSheet, Text, TextStyle, View, ViewStyle } from "react-native";
 
+import { useCardBreathing } from "@/src/hooks/use-card-breathing";
 import { colors, radii, spacing } from "@/src/theme";
 
 export function Card({ children, style, testID }: { children: React.ReactNode; style?: StyleProp<ViewStyle>; testID?: string }) {
+  const breathe = useCardBreathing();
   return (
-    <View style={[styles.card, style]} testID={testID}>
+    <View style={[styles.card, breathe, style]} testID={testID}>
       {children}
     </View>
   );
@@ -78,8 +81,6 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 15,
     fontWeight: "700",
-    letterSpacing: 0.3,
-    textTransform: "uppercase",
   },
   kv: {
     flexDirection: "row",
@@ -88,42 +89,29 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   kvLabel: {
-    color: colors.textMuted,
+    color: colors.textDim,
     fontSize: 13,
   },
   kvValue: {
     color: colors.text,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
-    marginLeft: spacing.md,
-    flexShrink: 1,
+    flex: 1,
     textAlign: "right",
+    marginLeft: spacing.md,
   },
   pill: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: radii.pill,
+    borderRadius: 999,
     alignSelf: "flex-start",
   },
-  pillText: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.4,
-  },
+  pillText: { fontSize: 11, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5 },
   empty: {
-    padding: spacing.xl,
     alignItems: "center",
     justifyContent: "center",
+    padding: spacing.xl,
   },
-  emptyTitle: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  emptySub: {
-    color: colors.textDim,
-    fontSize: 13,
-    marginTop: 6,
-    textAlign: "center",
-  },
+  emptyTitle: { color: colors.text, fontSize: 15, fontWeight: "700" },
+  emptySub: { color: colors.textDim, fontSize: 13, marginTop: 6, textAlign: "center" },
 });
