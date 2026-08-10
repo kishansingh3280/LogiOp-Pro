@@ -368,6 +368,75 @@ function MicButtonWeb(props: {
 }
 
 // ---------------------------------------------------------------------------
+// ChatBubble — one row in the conversation log.
+//
+// Renders user turns as right-aligned cyan bubbles and assistant turns as
+// left-aligned dark-glass bubbles. When `speakingWordIdx >= 0` the assistant
+// bubble's text is broken into words and each word is coloured based on its
+// position vs the current speaking index:
+//   • Already spoken → white
+//   • Currently spoken → neon green + text-shadow glow
+//   • Not yet spoken → muted white 50%
+// ---------------------------------------------------------------------------
+function ChatBubble({
+  role,
+  content,
+  speakingWordIdx,
+}: {
+  role: "user" | "assistant";
+  content: string;
+  speakingWordIdx: number;
+}) {
+  const isUser = role === "user";
+  const words = useMemo(() => content.split(/(\s+)/), [content]); // keep spaces
+  const showKaraoke = !isUser && speakingWordIdx >= 0;
+  let wordCounter = -1;
+
+  return (
+    <View
+      style={[styles.bubbleRow, isUser ? styles.bubbleRowUser : styles.bubbleRowAi]}
+      testID={`chat-bubble-${role}`}
+    >
+      <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAi]}>
+        {showKaraoke ? (
+          <Text style={styles.bubbleText}>
+            {words.map((w, i) => {
+              // Preserve whitespace as-is.
+              if (/^\s+$/.test(w)) return <Text key={i}>{w}</Text>;
+              wordCounter += 1;
+              const idx = wordCounter;
+              const isNow = idx === speakingWordIdx;
+              const isPast = idx < speakingWordIdx;
+              const color = isNow
+                ? colors.accent
+                : isPast
+                  ? "#FFFFFF"
+                  : "rgba(255,255,255,0.5)";
+              return (
+                <Text
+                  key={i}
+                  style={{
+                    color,
+                    fontWeight: isNow ? "800" : "500",
+                    textShadowColor: isNow ? "rgba(0,255,136,0.55)" : "transparent",
+                    textShadowOffset: { width: 0, height: 0 },
+                    textShadowRadius: isNow ? 6 : 0,
+                  }}
+                >
+                  {w}
+                </Text>
+              );
+            })}
+          </Text>
+        ) : (
+          <Text style={styles.bubbleText}>{content}</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main card
 // ---------------------------------------------------------------------------
 export function NowBriefCard(props: Props) {
@@ -384,14 +453,42 @@ export function NowBriefCard(props: Props) {
   const [showText, setShowText] = useState<boolean>(false);
   const [textInput, setTextInput] = useState<string>("");
   const [history, setHistory] = useState<WingmanTurn[]>([]);
-  // Ephemeral toast used to nudge the operator when they release the mic
-  // too fast ("Thoda der hold karein 🎤"). Shown for 1.6s.
+  // Karaoke sync — index of the word currently being spoken by TTS in the
+  // most-recent assistant turn. -1 when nothing is being spoken.
+  const [speakingWordIdx, setSpeakingWordIdx] = useState<number>(-1);
+  const karaokeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopKaraoke = useCallback(() => {
+    if (karaokeTimerRef.current) clearInterval(karaokeTimerRef.current);
+    karaokeTimerRef.current = null;
+    setSpeakingWordIdx(-1);
+  }, []);
+  const startKaraoke = useCallback((text: string, estMs: number) => {
+    if (karaokeTimerRef.current) clearInterval(karaokeTimerRef.current);
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.length === 0) return;
+    // Distribute word timing evenly across estimated TTS duration. Bias a
+    // touch faster so highlight leads the audio slightly (feels tighter).
+    const perWord = Math.max(90, Math.floor(estMs / words.length) * 0.92);
+    let i = 0;
+    setSpeakingWordIdx(0);
+    karaokeTimerRef.current = setInterval(() => {
+      i += 1;
+      if (i >= words.length) {
+        setSpeakingWordIdx(words.length); // "all spoken"
+        if (karaokeTimerRef.current) clearInterval(karaokeTimerRef.current);
+        karaokeTimerRef.current = null;
+        return;
+      }
+      setSpeakingWordIdx(i);
+    }, perWord);
+  }, []);
+  // Ephemeral toast (short-hold nudge / permission errors)
   const [toast, setToast] = useState<string>("");
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = useCallback((msg: string) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast(msg);
-    toastTimerRef.current = setTimeout(() => setToast(""), 1600);
+    toastTimerRef.current = setTimeout(() => setToast(""), 1800);
   }, []);
 
   const lastBriefAt = useRef<number>(0);
@@ -422,59 +519,77 @@ export function NowBriefCard(props: Props) {
   }, [stopTts]);
 
   // -------------------------------------------------------------------
-  // Play a response — typewriter + (if not muted) narrate via TTS.
+  // Play a response — INSTANT display + karaoke word-highlight during TTS.
+  // Optionally re-arms the mic after speaking finishes so the operator can
+  // hold a continuous back-and-forth conversation without tapping.
   // -------------------------------------------------------------------
+  const autoReListenRef = useRef<boolean>(false);
   const playResponse = useCallback(
     (text: string, autoNarrate: boolean) => {
       const clean = (text || "").trim();
       if (!clean) return;
-      // Reset any prior narration.
       stopTts();
+      stopKaraoke();
+      // Show the full text INSTANTLY (no typewriter — the karaoke highlight
+      // is what conveys "AI is speaking now").
       setAiText(clean);
       setTypeTarget(clean);
-      setTyping(true);
+      setTyping(false);
       setUiState("responding");
-
-      // Estimate typewriter duration (~22ms/char) to release UI back to idle.
-      const estMs = Math.max(1200, clean.length * 22 + 400);
-      setTimeout(() => {
-        setTyping(false);
-      }, estMs);
 
       if (autoNarrate) {
         setUiState("speaking");
+        // Karaoke word timing — approx 260ms per word until TTS reports
+        // a true duration (we don't currently thread that back).
+        const words = clean.split(/\s+/).filter(Boolean).length;
+        const estMs = Math.max(1200, words * 260);
+        startKaraoke(clean, estMs);
         const handle = speakStreaming({
           text: clean,
-          voice: "shimmer",
-          onStart: () => {
-            // No-op — the "speaking" state is already set.
-          },
+          // "alloy" is the closest OpenAI TTS voice to a natural Indian
+          // English accent. ElevenLabs (env-set voice ID) is tried first
+          // and this is the fallback when ElevenLabs 401s or fails.
+          voice: "alloy",
+          onStart: () => {},
           onError: (err) => {
-            // Fall back silently; the text is already shown.
             // eslint-disable-next-line no-console
             console.warn("[wingman] TTS error:", err.message);
           },
         });
         ttsHandleRef.current = handle;
-        // When narration finishes, drop back to responding then idle.
         handle.promise
           .catch(() => undefined)
           .finally(() => {
             ttsHandleRef.current = null;
+            stopKaraoke();
             setUiState((s) => (s === "speaking" ? "responding" : s));
             setTimeout(() => {
               setUiState((s) => (s === "responding" ? "idle" : s));
-            }, 600);
+              // Continuous conversation — auto re-arm the mic 1.5s after
+              // narration ends, but ONLY if the user last engaged via
+              // voice (autoReListenRef) and mic is unmuted.
+              if (autoReListenRef.current && !muted) {
+                setTimeout(() => {
+                  // Guard: don't re-arm if state has moved elsewhere.
+                  setUiState((s) => (s === "idle" ? s : s));
+                  triggerMicToggleRef.current?.(true);
+                }, 1500);
+              }
+            }, 400);
           });
       } else {
-        // Text-only response — return to idle after typewriter finishes.
+        // Text-only response — no re-listen loop.
         setTimeout(() => {
           setUiState((s) => (s === "responding" ? "idle" : s));
-        }, estMs + 200);
+        }, 400);
       }
     },
-    [stopTts],
+    [stopTts, stopKaraoke, startKaraoke, muted],
   );
+
+  // Late-bound reference so playResponse can invoke toggleListening without
+  // creating a circular useCallback dependency.
+  const triggerMicToggleRef = useRef<((forceStart: boolean) => void) | null>(null);
 
   // -------------------------------------------------------------------
   // Generate the daily Now-Brief greeting.
@@ -547,70 +662,67 @@ export function NowBriefCard(props: Props) {
   );
 
   // -------------------------------------------------------------------
-  // Hold-to-speak handlers.
+  // Tap-to-speak — single small circular button toggles listening on/off.
+  // Continuous recording (no hold gesture). Tap again → stop + send.
+  // Native mic permission is checked explicitly before the recorder is
+  // started so denied permissions don't silently swallow audio.
   // -------------------------------------------------------------------
-  const recordingStartedAtRef = useRef<number>(0);
-  const onMicPressIn = useCallback(async () => {
-    // Instant visual feedback — flip to listening state BEFORE we await
-    // anything. If permissions are still pending or the audio-context
-    // takes a beat, the pulse ring + waveform frame is already on-screen
-    // so the operator gets confirmation that we heard the tap.
+  const listening = uiState === "listening";
+  const ensureMicPermission = useCallback(async (): Promise<boolean> => {
+    if (Platform.OS === "web") return true; // getUserMedia prompts inline
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const ExpoAudio = require("expo-audio");
+      const perm = await ExpoAudio.requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        showToast("Mic permission do 🎤");
+        return false;
+      }
+      return true;
+    } catch {
+      // If the module isn't loadable we fall through — startNative will
+      // surface a clearer error.
+      return true;
+    }
+  }, [showToast]);
+
+  const startListening = useCallback(async () => {
     stopTts();
+    stopKaraoke();
     setErrorMsg("");
+    const ok = await ensureMicPermission();
+    if (!ok) return;
     setUiState("listening");
-    recordingStartedAtRef.current = Date.now();
     try {
       await mic.start();
     } catch (e) {
-      // Permission denied / hardware unavailable → surface a clear msg
-      // and drop back to idle. The user can tap the keyboard toggle to
-      // type instead.
       setUiState("error");
       setErrorMsg(
         (e as Error).message ||
           "Microphone access nahi mila. Settings me permission dein, ya keypad se type karein.",
       );
     }
-  }, [mic, stopTts]);
+  }, [ensureMicPermission, mic, stopTts, stopKaraoke]);
 
-  const onMicPressOut = useCallback(async () => {
-    // Guard against short holds (< 500ms) where the recorder likely never
-    // captured meaningful audio — nudge the user to hold longer via toast,
-    // skip STT, and drop back to idle.
-    const heldMs = Date.now() - recordingStartedAtRef.current;
-    if (heldMs < 500) {
-      try {
-        await mic.stop();
-      } catch {
-        /* ignore */
-      }
-      setUiState((s) => (s === "listening" ? "idle" : s));
-      showToast("Thoda der hold karein 🎤");
-      return;
-    }
-
+  const stopListeningAndSend = useCallback(async () => {
     setUiState("processing");
     try {
       const result = await mic.stop();
       if (!result || (!result.uri && !result.blob)) {
-        // No audio captured — silently drop back to idle.
         setUiState("idle");
         return;
       }
       const text = await transcribeAudio(result);
       if (!text) {
-        // Whisper returned empty — likely silence. Nudge the user.
         setUiState("idle");
-        setAiText("Kuch sunayi nahi diya, Sir. Dobara try karein? 🎤");
-        setTypeTarget("Kuch sunayi nahi diya, Sir. Dobara try karein? 🎤");
-        setTyping(false);
+        showToast("Kuch sunayi nahi diya 🎤");
         return;
       }
+      // Mark the auto-re-listen flag so we keep the conversation going.
+      autoReListenRef.current = true;
       await sendMessage(text);
     } catch (e) {
       setUiState("error");
-      // Sanitize any raw HTML that might have leaked through ingress
-      // error pages before showing it in the response area.
       const raw = (e as Error).message || "Voice ko samajh nahi paya";
       const looksLikeHtml = /<!doctype|<html|<body|<style/i.test(raw);
       setErrorMsg(
@@ -621,6 +733,31 @@ export function NowBriefCard(props: Props) {
     }
   }, [mic, sendMessage, showToast]);
 
+  const toggleListening = useCallback(
+    (forceStart?: boolean) => {
+      if (forceStart === true) {
+        startListening();
+        return;
+      }
+      if (uiState === "listening") {
+        stopListeningAndSend();
+      } else if (uiState === "speaking" || uiState === "responding") {
+        // Interrupt narration → immediately start listening for next input.
+        stopTts();
+        stopKaraoke();
+        startListening();
+      } else if (uiState !== "processing") {
+        startListening();
+      }
+    },
+    [uiState, startListening, stopListeningAndSend, stopTts, stopKaraoke],
+  );
+
+  // Publish the toggle reference so playResponse can re-arm the mic.
+  useEffect(() => {
+    triggerMicToggleRef.current = toggleListening;
+  }, [toggleListening]);
+
   // -------------------------------------------------------------------
   // Text input handlers.
   // -------------------------------------------------------------------
@@ -629,6 +766,10 @@ export function NowBriefCard(props: Props) {
     if (!t) return;
     setTextInput("");
     setShowText(false);
+    // Text-initiated turns must NOT trigger the voice auto-re-arm loop,
+    // otherwise the mic would pop open unexpectedly after the AI replies
+    // to a typed message.
+    autoReListenRef.current = false;
     await sendMessage(t);
   }, [textInput, sendMessage]);
 
@@ -765,17 +906,55 @@ export function NowBriefCard(props: Props) {
         </TouchableOpacity>
       </View>
 
-      {/* ---------------- Response body ---------------- */}
+      {/* ---------------- Response body — CHAT BUBBLES ---------------- */}
       <ScrollView
         style={styles.body}
         contentContainerStyle={styles.bodyContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {uiState === "processing" && !aiText ? (
-          <Text style={styles.bodyText}>Wingman soch raha hai…</Text>
-        ) : uiState === "error" ? (
-          <View>
+        {history.length === 0 && !aiText && uiState !== "processing" && uiState !== "error" ? (
+          <Text style={styles.bodyText}>
+            {`Namaste ${auth.user?.display_name || "Sir"}! 🙏 Neeche mic dabaake baat karein.`}
+          </Text>
+        ) : null}
+
+        {history.map((turn, i) => (
+          <ChatBubble
+            key={`${turn.at}-${i}`}
+            role={turn.role}
+            content={turn.content}
+            // Karaoke: only the MOST RECENT assistant turn gets word
+            // highlighting while TTS is playing.
+            speakingWordIdx={
+              turn.role === "assistant" &&
+              i === history.length - 1 &&
+              (uiState === "speaking" || uiState === "responding")
+                ? speakingWordIdx
+                : -1
+            }
+          />
+        ))}
+
+        {/* Show the "in-flight" assistant text (from daily-brief which
+            doesn't hit the history array). */}
+        {aiText && history.length === 0 ? (
+          <ChatBubble
+            role="assistant"
+            content={aiText}
+            speakingWordIdx={uiState === "speaking" ? speakingWordIdx : -1}
+          />
+        ) : null}
+
+        {uiState === "processing" ? (
+          <View style={styles.thinkingRow}>
+            <ActivityIndicator size="small" color="#B98BFF" />
+            <Text style={styles.thinkingText}>Wingman soch raha hai…</Text>
+          </View>
+        ) : null}
+
+        {uiState === "error" ? (
+          <View style={styles.errorBubble}>
             <Text style={[styles.bodyText, { color: "#FF9AA8" }]}>
               {errorMsg || "Kuch galat ho gaya. Dobara try karein?"}
             </Text>
@@ -788,12 +967,7 @@ export function NowBriefCard(props: Props) {
               <Text style={styles.retryText}>Retry</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <Text style={styles.bodyText}>
-            {typing ? shownText : aiText || `Namaste ${auth.user?.display_name || "Sir"}! 🙏 Mic dabaake baat karein.`}
-            {typing ? <Text style={styles.caret}>▌</Text> : null}
-          </Text>
-        )}
+        ) : null}
       </ScrollView>
 
       {/* ---------------- Stop-speaking button (mid-narration) ---------------- */}
@@ -844,7 +1018,10 @@ export function NowBriefCard(props: Props) {
       {/* ---------------- Divider ---------------- */}
       <View style={styles.divider} />
 
-      {/* ---------------- Input row ---------------- */}
+      {/* ---------------- Input row — SMALL TAP-TO-SPEAK toggle ----------------
+          The old hold-to-speak button is replaced with a compact 48-px
+          circular mic toggle in the bottom-right of the card. Tap once →
+          listen (continuous); tap again → stop + send + AI reply. */}
       {showText ? (
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -886,55 +1063,19 @@ export function NowBriefCard(props: Props) {
           </TouchableOpacity>
         </KeyboardAvoidingView>
       ) : (
-        <View style={styles.inputRow}>
-          {/* Hold-to-speak main button — platform-specific gesture wiring.
-              Web: raw pointer events (onPointerDown / onPointerUp /
-              onPointerLeave / onPointerCancel) sustain the hold reliably
-              across mouse + touch + pen inputs. RN's Pressable can drop
-              press-out on scroll or when a parent view repaints.
-              Native: standard Pressable onPressIn / onPressOut. */}
-          <View style={styles.micWrap}>
-            <MicPulseRing active={uiState === "listening"} />
-            {Platform.OS === "web" ? (
-              <MicButtonWeb
-                onDown={onMicPressIn}
-                onUp={onMicPressOut}
-                disabled={uiState === "processing"}
-                listening={uiState === "listening"}
-                processing={uiState === "processing"}
-                micLevel={mic.level}
-              />
-            ) : (
-              <Pressable
-                onPressIn={onMicPressIn}
-                onPressOut={onMicPressOut}
-                disabled={uiState === "processing"}
-                delayLongPress={99999}
-                style={({ pressed }) => [
-                  styles.micBtn,
-                  uiState === "listening" ? styles.micBtnListening : null,
-                  pressed ? { opacity: 0.85 } : null,
-                ]}
-                testID="now-brief-mic"
-              >
-                {uiState === "listening" ? (
-                  <Waveform level={mic.level} active />
-                ) : (
-                  <>
-                    <Ionicons
-                      name="mic"
-                      size={18}
-                      color={uiState === "processing" ? colors.textMuted : "#0A0A14"}
-                    />
-                    <Text style={styles.micBtnText}>
-                      {uiState === "processing" ? "Processing…" : "Hold to Speak"}
-                    </Text>
-                  </>
-                )}
-              </Pressable>
-            )}
+        <View style={styles.tapMicRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.tapMicLabel}>
+              {listening
+                ? "Listening…"
+                : uiState === "processing"
+                  ? "Processing…"
+                  : uiState === "speaking"
+                    ? "Speaking…"
+                    : "Tap to speak"}
+            </Text>
           </View>
-
+          {/* Keyboard toggle (kept, minimal) */}
           <TouchableOpacity
             onPress={() => setShowText(true)}
             style={styles.iconBtn}
@@ -943,6 +1084,23 @@ export function NowBriefCard(props: Props) {
           >
             <Ionicons name="keypad" size={16} color={colors.textMuted} />
           </TouchableOpacity>
+          {/* Small 48px round mic toggle (bottom-right) */}
+          <View style={styles.tapMicWrap}>
+            {listening ? <MicPulseRing active={true} /> : null}
+            <TouchableOpacity
+              onPress={() => toggleListening()}
+              style={[styles.tapMic, listening ? styles.tapMicActive : null]}
+              testID="now-brief-mic"
+              accessibilityLabel={listening ? "Stop listening" : "Tap to speak"}
+              disabled={uiState === "processing"}
+            >
+              <Ionicons
+                name={listening ? "stop" : "mic"}
+                size={20}
+                color={listening ? "#FFFFFF" : "#0A0A14"}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -1063,6 +1221,111 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "500",
+  },
+
+  // ---- Chat bubbles ---------------------------------------------------
+  bubbleRow: {
+    flexDirection: "row",
+    marginBottom: 8,
+  },
+  bubbleRowUser: {
+    justifyContent: "flex-end",
+  },
+  bubbleRowAi: {
+    justifyContent: "flex-start",
+  },
+  bubble: {
+    maxWidth: "85%",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  bubbleUser: {
+    backgroundColor: "rgba(0, 245, 255, 0.14)",
+    borderColor: "rgba(0, 245, 255, 0.55)",
+    borderTopRightRadius: 4,
+  },
+  bubbleAi: {
+    backgroundColor: "rgba(0, 0, 0, 0.35)",
+    borderColor: "rgba(155, 77, 255, 0.35)",
+    borderTopLeftRadius: 4,
+  },
+  bubbleText: {
+    color: colors.text,
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  thinkingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+  },
+  thinkingText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontStyle: "italic",
+  },
+  errorBubble: {
+    padding: 8,
+  },
+
+  // ---- Tap-to-speak toggle -------------------------------------------
+  tapMicRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingTop: 2,
+  },
+  tapMicLabel: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  tapMicWrap: {
+    width: 48,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  tapMic: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2,
+    ...Platform.select({
+      web: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ boxShadow: "0 0 18px rgba(0,255,136,0.45)", cursor: "pointer" } as any),
+      },
+      default: {
+        shadowColor: colors.accent,
+        shadowOpacity: 0.55,
+        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 0 },
+      },
+    }),
+  },
+  tapMicActive: {
+    backgroundColor: "#FF3355",
+    ...Platform.select({
+      web: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ boxShadow: "0 0 24px rgba(255,51,85,0.75)" } as any),
+      },
+      default: {
+        shadowColor: "#FF3355",
+        shadowOpacity: 0.75,
+        shadowRadius: 18,
+      },
+    }),
   },
   caret: {
     color: colors.accent,

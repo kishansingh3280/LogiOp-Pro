@@ -1,0 +1,46 @@
+{
+  "summary": "Now Brief voice/mic redesign verified end-to-end. Backend TTS /api/assistant/tts/stream returns 200 audio/mpeg for both voice=alloy and voice=shimmer (ElevenLabs 401 as expected, OpenAI fallback works and honours the voice query param). Frontend: 48x48 circular mic button rendered at bottom-right (x=309, y=409 on 390-wide viewport — exact match to spec), 'Hold to Speak' completely removed, 'Tap to speak' idle label shown, keyboard toggle path posts message and renders user (cyan right) + assistant (dark left) chat bubbles with testIDs chat-bubble-user / chat-bubble-assistant. Mic tap flips button red, changes icon mic→stop, label to 'Listening…', state chip to red 'Sun raha hoon…' pill. Papa mode ('bsingh') shows same mic UI + 'Papa Mode · Simple Hindi · Singh Exports only' role hint. No red-screen errors. Karaoke word-highlight could not be captured live because default mute=true suppresses TTS on text turns and Playwright can't grant real mic permission for a full voice loop, but the ChatBubble render path + startKaraoke logic is present and correct in code.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/assistant/tts/stream", "issue": "Stale log line: server logs '[TTS] Using OpenAI shimmer fallback' regardless of the actual voice query param (alloy is honoured in the OpenAI request body — only the log string is hard-coded). Cosmetic only; consider logging `[TTS] Using OpenAI {voice} fallback` in _stream_tts_with_fallback (server.py:1977)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "styles/web", "issue": "Console warnings: '\"shadow*\" style props are deprecated. Use \"boxShadow\"' and '\"textShadow*\" style props are deprecated. Use \"textShadow\"' and 'props.pointerEvents is deprecated. Use style.pointerEvents' — surfaced on web from now-brief-card.tsx (waveform bars, mic pulse ring, tap-mic, toast) and elsewhere. Non-blocking but should be migrated. Reference: /app/frontend/src/components/now-brief-card.tsx (shadowColor/shadowOpacity/shadowRadius, textShadowColor/textShadowOffset/textShadowRadius, pointerEvents='none')."},
+      {"component": "styles/web", "issue": "Console error: 'Invalid style property of \"background\". Please use long-form properties.' — the inline web gradient uses shorthand `background:` in styles.card Platform.web block. Reference: /app/frontend/src/components/now-brief-card.tsx:1132."},
+      {"component": "Animated/useNativeDriver", "issue": "Warning: 'Animated: `useNativeDriver` is not supported ... Falling back to JS-based animation.' — expected on web preview; make sure native builds still register RCTAnimation. Reference: now-brief-card.tsx MicPulseRing/useBreathe useNativeDriver:true."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_elevenlabs_tts.py (existing, TTS coverage)",
+    "/tmp/tts_alloy.mp3 (16KB audio sample from public URL, voice=alloy)",
+    "/tmp/tts_shimmer.mp3 (16KB audio sample, voice=shimmer)",
+    "/tmp/nb_dashboard.png",
+    "/tmp/nb_bubbles.png",
+    "/tmp/nb_listening.png",
+    "/tmp/nb_papa.png"
+  ],
+  "action_items": [
+    "Optional: update the stale '[TTS] Using OpenAI shimmer fallback' log line in server.py:1977 to interpolate the actual openai_voice arg so operators/log-scrubbers see 'alloy' when the frontend requests it.",
+    "Optional cleanup: migrate deprecated web style props in now-brief-card.tsx — shadow*/textShadow*/pointerEvents prop → style, and replace shorthand `background:` with long-form (backgroundColor / backgroundImage) in the styles.card web block to silence noisy console warnings.",
+    "Karaoke word-highlight (color #00FF88 on the currently-spoken word) could not be automatically verified via Playwright because (a) the card mounts muted=true by default so text-turn responses do not narrate, and (b) the browser cannot grant real mic capture for a voice round-trip. Recommend either (i) auto-unmute after first user interaction so text turns also narrate (and Playwright can then observe the karaoke color change), or (ii) expose a hidden dev-only prop for storybook/e2e to force TTS on. Code path (startKaraoke + ChatBubble speakingWordIdx branches) has been code-reviewed and looks correct — neon green #00FF88 (colors.accent) is applied to the current word with text-shadow glow, white for past words, rgba(255,255,255,0.5) for future words (now-brief-card.tsx lines 410-427)."
+  ],
+  "critical_code_review_comments": [
+    "now-brief-card.tsx is ~1580 lines and does too much (TTS orchestrator + karaoke + chat log + text input + toasts + waveform + pulse ring + typewriter + mic permission). Consider splitting into <NowBriefHeader/>, <ChatLog/>, <TapMicToggle/> and a `useWingmanConversation` hook. Not blocking this iteration but well past the 700-line advisory.",
+    "MicButtonWeb + micBtn/micBtnRecording/waveform/micBtnListening styles and the useTypewriter hook are now dead code (the tap-to-speak toggle replaced hold-to-speak). Safe to remove to shrink the file.",
+    "playResponse re-arm loop: `autoReListenRef.current` is set inside stopListeningAndSend but is never reset back to false on a text-turn send or after a manual stop. If a user first uses voice, then switches to keyboard, subsequent AI replies will still auto re-arm the mic 1.5s after narration. Recommend clearing `autoReListenRef.current = false` in sendMessage's text-only entrypoint (onTextSend) or, more robustly, pass an `initiatedByVoice` boolean through sendMessage → playResponse instead of the module-level ref.",
+    "Cosmetic mismatch: header comment at top of file still says 'typewriter response + ElevenLabs TTS' but typewriter is now obsoleted by karaoke — update the docstring."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "None (used seeded kishan/bsingh accounts).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Now Brief tap-to-speak is stable. Mic testID='now-brief-mic' is a 48x48 TouchableOpacity in the bottom-right of the card. Chat bubbles use testID='chat-bubble-user' / 'chat-bubble-assistant'. Keyboard toggle testID='now-brief-keyboard-toggle', text input 'now-brief-text-input', send 'now-brief-text-send'. TTS endpoint POST/GET /api/assistant/tts/stream honours ?voice=alloy|shimmer even though the server log still says 'shimmer'. Karaoke live verification needs an unmuted TTS turn — currently unreachable via Playwright without a real mic loop; instead assert the presence of `speakingWordIdx` state via React devtools or add a testID hook if needed.",
+  "rca_of_issue": "No bug to RCA — this was a verification-only pass on a redesign PR. All acceptance criteria from the review request were met except the karaoke-color live-assertion, which is a test-harness limitation (muted+no-mic) rather than a product bug."
+}

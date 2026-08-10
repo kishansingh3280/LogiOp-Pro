@@ -1974,7 +1974,7 @@ async def _stream_tts_with_fallback(
             logging.warning(f"[TTS] ElevenLabs failed ({e.detail}) — falling back to OpenAI")
     # Fallback path
     import logging
-    logging.info("[TTS] Using OpenAI shimmer fallback")
+    logging.info(f"[TTS] Using OpenAI {openai_voice} fallback")
     async for chunk in _stream_openai_tts(text, openai_voice, speed):
         yield chunk
 

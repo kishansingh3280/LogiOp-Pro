@@ -13,7 +13,8 @@
       "bundleIdentifier": "com.emergent.nativelogisticshub.ay4275",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Attach product photos to items in your catalog",
-        "NSCameraUsageDescription": "Take product photos to add to your catalog"
+        "NSCameraUsageDescription": "Take product photos to add to your catalog",
+        "NSMicrophoneUsageDescription": "Voice commands ke liye — talk to Wingman AI"
       }
     },
     "android": {
@@ -25,7 +26,8 @@
       "package": "com.emergent.nativelogisticshub.ay4275",
       "permissions": [
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -45,7 +47,12 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-audio"
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Voice commands ke liye — talk to Wingman AI"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
