@@ -1,0 +1,42 @@
+{
+  "summary": "Read-only focused diagnostic of OpenAI Realtime Voice Assistant. CRITICAL BUG FOUND: Frontend SDP POST hits the deprecated Beta endpoint (/v1/realtime?model=), which OpenAI now rejects with 400 'beta_api_shape_disabled'. Data channel never opens, so scenarios 2-4 could not be exercised. Backend /api/realtime-token itself works (200, gpt-realtime, ephemeral_key valid). Full markdown report at /app/test_reports/voice_assistant_focused.md.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/realtime-token", "issue": "Uses optional_current_user, so anonymous callers still get 200 + working ephemeral_key. Fine per current design, but means the orb will never surface a 401-driven red state via this endpoint."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "voice-orb / use-realtime-voice.ts", "issue": "SDP POST to https://api.openai.com/v1/realtime?model=gpt-realtime returns 400 beta_api_shape_disabled. GA endpoint is /v1/realtime/calls. Root cause of orb being non-functional. Reference: frontend/src/hooks/use-realtime-voice.ts:425-436", "testID": "voice-orb", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [
+      {"flow": "Voice Orb WebRTC handshake", "issue": "PeerConnection never reaches connected; data channel oai-events never opens because the SDP POST is on the deprecated Beta URL. Verified by intercepting the OpenAI response body: 'The Realtime Beta API is no longer supported. Please use /v1/realtime for the GA API.'", "affected_testIDs": ["voice-orb", "voice-orb-panel"]},
+      {"flow": "Live-data voice queries", "issue": "No function tool exposed for live shipment/ledger stats. Model only sees the page_data_summary snapshot supplied at token mint. 'Kitne shipments pending hain?' will not return authoritative numbers even after the SDP bug is fixed.", "affected_testIDs": []}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "critical_code_review_comments": [
+    "backend/server.py:2446-2448 — comment lists 'onyx' as the intended voice ('deep male business tone') but the config actually sends voice='verse'. Either update the comment or switch to onyx.",
+    "frontend/src/hooks/use-realtime-voice.ts:146-273 — handleServerEvent does not handle 'response.cancelled' or 'response.output_audio_buffer.stopped', so a barge-in that cancels a response mid-stream leaves the placeholder assistant bubble stuck with isFinal:false.",
+    "frontend/src/hooks/use-realtime-voice.ts:425 — hardcoded Beta URL '/v1/realtime?model=…' (P0)."
+  ],
+  "test_report_links": [
+    "/app/test_reports/voice_assistant_focused.md"
+  ],
+  "action_items": [
+    "P0: Change frontend/src/hooks/use-realtime-voice.ts:425 to POST to 'https://api.openai.com/v1/realtime/calls?model=<model>' (GA WebRTC endpoint). This unblocks the entire orb.",
+    "P2: Resolve verse-vs-onyx comment/config mismatch in backend/server.py:2446-2448.",
+    "P3: Handle 'response.cancelled' + 'response.output_audio_buffer.stopped' in useRealtimeVoice so interrupted turns close cleanly.",
+    "P3: Add a live-data function tool (e.g. query_dashboard/query_shipments) so voice can cite real numbers instead of relying on the page-data snapshot.",
+    "P4 (optional): Decide whether /api/realtime-token should require auth (currently optional_current_user)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (mint endpoint healthy)", "frontend": "0% (voice orb blocked by SDP 400)"},
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After the P0 URL fix, re-run the same Playwright flow: login via signin-quick-demo, grant mic permission, click [data-testid='voice-orb'], and verify (a) pc.connectionState reaches 'connected', (b) window.__rtc_dc__.readyState === 'open', then inject dc.send(conversation.item.create + response.create) with 'Namaste, mera naam kya hai?' and measure delta between response.created and first response.audio.delta. Target < 2000 ms. Also verify 'Kitne shipments pending hain?' — model is expected to rely on page_data_summary until a live-data tool is added.",
+  "rca_of_issue": "Symptom: Voice Orb never connects; error toast shows 'Voice mode unavailable'. Reproduction: Login as kishan on http://localhost:3000, click voice-orb. Observation: /api/realtime-token returns 200 with valid ephemeral_key & model=gpt-realtime, mic track (kind=audio, live) is added, SDP offer generated correctly contains 'm=audio 9 UDP/TLS/RTP/SAVPF 111 …', but POST https://api.openai.com/v1/realtime?model=gpt-realtime returns 400 with body {error:{code:'beta_api_shape_disabled', message:'The Realtime Beta API is no longer supported. Please use /v1/realtime for the GA API.'}}. Cause: OpenAI migrated the WebRTC SDP endpoint from '/v1/realtime?model=...' (Beta) to '/v1/realtime/calls' (GA) sometime after this code was written. Backend mint call already uses the GA '/v1/realtime/client_secrets' path, but frontend SDP POST was not migrated. Mitigation: change frontend/src/hooks/use-realtime-voice.ts:425 URL to 'https://api.openai.com/v1/realtime/calls?model=<model>'. Ref: https://developers.openai.com/api/docs/guides/realtime-webrtc."
+}
