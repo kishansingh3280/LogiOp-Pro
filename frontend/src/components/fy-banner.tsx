@@ -41,7 +41,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingHorizontal: 14,
+    paddingLeft: 14,
+    paddingRight: 72, // leave clearance for the BlockerBell in the top-right
     paddingVertical: 8,
     backgroundColor: "rgba(255, 215, 0, 0.15)",
     borderColor: "rgba(255, 215, 0, 0.55)",
