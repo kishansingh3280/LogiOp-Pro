@@ -15,7 +15,9 @@ import type { BullionTxn, CarrierTrip } from "@/src/bullion/types";
 import { tripCapacityKg } from "@/src/bullion/types";
 import { CompanySwitcher } from "@/src/components/company-switcher";
 import { FYPicker } from "@/src/components/fy-picker";
+import { NowBriefCard } from "@/src/components/now-brief-card";
 import { Card } from "@/src/components/ui";
+import { VaultSnapshotSection } from "@/src/components/vault-snapshot-section";
 import { useFY } from "@/src/context/fy-context";
 import { useCardBreathing } from "@/src/hooks/use-card-breathing";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
@@ -186,6 +188,20 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {/* JARVIS Aura v3 — AI Now Brief card sits at the very top so it's
+            the first thing the user sees. Auto-fetches once on mount from
+            /api/dashboard/now-brief (Claude Haiku 4.5); refresh button
+            regenerates on demand. */}
+        <NowBriefCard
+          pending={s.pending}
+          inTransit={s.in_transit + s.warehouse_arrived}
+          delivered={s.delivered}
+          warehouseBags={warehouse.data?.current_bags ?? 0}
+          warehouseKg={warehouse.data?.current_kg ?? 0}
+          activeTrips={(trips.data || []).filter((t) => ["pending","in_transit","partial_delivered"].includes((t.status || "").toLowerCase())).length}
+          overdueLedger={0}
+        />
+
         {/* ---------------- Row 1 (FIXED — no horizontal scroll) ----------------
             Ledger snapshot: 2 widgets side by side. Pinned near the top so
             the operator sees the money position immediately. `flexDirection`
@@ -242,6 +258,11 @@ export default function DashboardScreen() {
           warehouseData={warehouse.data}
           onOpen={() => router.push("/shipments")}
         />
+
+        {/* JARVIS Aura v3 — Vault snapshot: warehouse-wise bags / currency /
+            gold breakdown. Bangkok is live, Delhi is a coming-soon
+            placeholder. Selector switches between them. */}
+        <VaultSnapshotSection warehouseData={warehouse.data} trips={trips.data} />
 
         {/* ---------------- Row 2b (HORIZONTAL CAROUSEL — 3 widgets) ----------------
             Delivered / In Transit / Pending. Each tile shows the last 4

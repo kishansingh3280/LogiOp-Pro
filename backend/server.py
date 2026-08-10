@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import Any, List, Optional, Dict, Annotated, Tuple
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import httpx
 
 # Auth: JWT + RBAC + audit stamping. Imported early so the auth router can be
@@ -2048,6 +2048,102 @@ async def assistant_stt(request: Request):
     except Exception as e:
         raise HTTPException(502, f"STT upstream error: {e}")
     return {"text": result.get("text") if isinstance(result, dict) else str(result)}
+
+
+# --------------------------------------------------------------------------
+# JARVIS Aura v3 — /dashboard/now-brief
+#
+# Generates a short "Now Brief" for the top of the dashboard using Claude
+# Haiku 4.5 (cheap + fast). Greets the user by name and summarises today's
+# operational context in 3-4 sentences using data pulled from the remote
+# proxy (shipments) + local Mongo (ledger context can be added later).
+#
+# Payload the frontend sends:
+#   { pending: int, in_transit: int, delivered: int, warehouse_bags: int,
+#     warehouse_kg: float, active_trips: int, overdue_ledger: int,
+#     tz_offset_minutes: int }
+# We hand these numbers to Claude Haiku 4.5 with a strict prompt and
+# return the plain-text brief. Callers should show a shimmer while
+# awaiting the response and cache the result client-side for ~5 min.
+# --------------------------------------------------------------------------
+class NowBriefIn(BaseModel):
+    pending: int = 0
+    in_transit: int = 0
+    delivered: int = 0
+    warehouse_bags: int = 0
+    warehouse_kg: float = 0.0
+    active_trips: int = 0
+    overdue_ledger: int = 0
+    tz_offset_minutes: int = 330  # IST default
+
+
+@api_router.post("/dashboard/now-brief")
+async def dashboard_now_brief(body: NowBriefIn, current: UserPublic = Depends(get_current_user)):
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+
+    # Local time-of-day → greeting bucket
+    try:
+        offset = int(body.tz_offset_minutes or 330)
+    except Exception:
+        offset = 330
+    now_local = datetime.now(timezone.utc) + timedelta(minutes=offset)
+    hour = now_local.hour
+    tod = (
+        "morning" if 5 <= hour < 12
+        else "afternoon" if 12 <= hour < 17
+        else "evening" if 17 <= hour < 21
+        else "night"
+    )
+
+    def _g(k: str, default: str = ""):
+        if isinstance(current, dict):
+            return current.get(k, default) or default
+        return getattr(current, k, default) or default
+
+    name = (_g("display_name") or _g("username") or "Boss").strip()
+    honorific = _g("honorific").strip()
+    salutation = f"{name} {honorific}".strip()
+
+    prompt = (
+        f"You are Wingman, an executive assistant for a small logistics + bullion trading business. "
+        f"Write a short punchy 'Now Brief' for {salutation} for this {tod}. "
+        f"Rules: (1) Start with the exact greeting 'Good {tod} {salutation}!' followed by an appropriate emoji. "
+        f"(2) In 2-3 short sentences, summarise what needs attention today based on the numbers below. "
+        f"(3) End with ONE single suggested next action prefixed with '👉 '. "
+        f"(4) No markdown, no bullet lists — plain sentences. Keep under 55 words.\n\n"
+        f"Today's numbers:\n"
+        f"- Pending shipments: {body.pending}\n"
+        f"- In-transit shipments: {body.in_transit}\n"
+        f"- Delivered (FY): {body.delivered}\n"
+        f"- Bangkok warehouse: {body.warehouse_bags} bags · {int(body.warehouse_kg)} kg\n"
+        f"- Active carrier trips: {body.active_trips}\n"
+        f"- Ledger accounts flagged overdue: {body.overdue_ledger}"
+    )
+
+    try:
+        chat = (
+            LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"nowbrief-{_g('username','user')}",
+                system_message="You write concise, warm executive briefs for a busy business owner.",
+            )
+            .with_model("anthropic", "claude-haiku-4-5")
+        )
+        text = await chat.send_message(UserMessage(text=prompt))
+        content = (text or "").strip()
+    except Exception as e:
+        # Graceful fallback so the dashboard still renders something useful.
+        content = (
+            f"Good {tod} {salutation}! ✨ "
+            f"{body.pending} pending, {body.in_transit} in transit, "
+            f"{body.warehouse_bags} bags in Bangkok. 👉 Review pending shipments."
+        )
+        logging.warning(f"now-brief LLM failed, using fallback: {e}")
+
+    return {"brief": content, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
 app.include_router(api_router)
