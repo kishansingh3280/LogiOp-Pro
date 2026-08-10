@@ -12,18 +12,39 @@ import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
+import { useAuth } from "@/src/auth/context";
 import { useFY } from "@/src/context/fy-context";
 import { currentFYKey, fyLabel } from "@/src/utils/fy";
 
 export function FYBanner() {
   const { fy, setFY } = useFY();
+  const { user } = useAuth();
+  const isAdmin = (user?.role || "").toLowerCase() === "admin";
   const current = currentFYKey();
   if (!fy || fy === current) return null;
+  // Non-admins: gate is HARD locked → show lock icon + Hinglish text
+  // Admins: still show a soft "Read-only" nudge so they know they're in
+  // history mode, but keep the icon accent as a warning triangle.
   return (
-    <View style={styles.wrap} testID="fy-readonly-banner">
-      <Ionicons name="warning-outline" size={16} color="#FFD700" />
+    <View
+      style={[styles.wrap, !isAdmin ? styles.wrapLocked : null]}
+      testID="fy-readonly-banner"
+    >
+      <Ionicons
+        name={isAdmin ? "warning-outline" : "lock-closed"}
+        size={16}
+        color="#FFD700"
+      />
       <Text style={styles.text}>
-        You are viewing {fyLabel(fy)}  <Text style={styles.dim}>(Read-only)</Text>
+        {isAdmin ? (
+          <>
+            You are viewing {fyLabel(fy)}  <Text style={styles.dim}>(Read-only)</Text>
+          </>
+        ) : (
+          <>
+            {fyLabel(fy)} <Text style={styles.dim}>locked — only Admin can edit</Text>
+          </>
+        )}
       </Text>
       <TouchableOpacity
         onPress={() => setFY(current)}
@@ -47,6 +68,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 215, 0, 0.15)",
     borderColor: "rgba(255, 215, 0, 0.55)",
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  wrapLocked: {
+    backgroundColor: "rgba(255, 100, 100, 0.10)",
+    borderColor: "rgba(255, 180, 0, 0.75)",
   },
   text: {
     color: "#FFFFFF",

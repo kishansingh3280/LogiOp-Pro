@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useApi } from "@/src/api/hooks";
 import type { LedgerEntry, Party } from "@/src/api/types";
 import { Card } from "@/src/components/ui";
+import { FYLockedButton } from "@/src/components/fy-gate";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
@@ -60,10 +61,10 @@ export default function PartiesScreen() {
           <Text style={styles.title}>Parties</Text>
           <Text style={styles.subtitle}>{list.length} of {parties.data?.length || 0}</Text>
         </View>
-        <TouchableOpacity style={styles.newBtn} onPress={() => router.push("/party/new")} testID="new-party-btn">
+        <FYLockedButton style={styles.newBtn} onPress={() => router.push("/party/new")} testID="new-party-btn" accessibilityLabel="New party">
           <Ionicons name="add" size={18} color={colors.bg} />
           <Text style={styles.newBtnText}>New</Text>
-        </TouchableOpacity>
+        </FYLockedButton>
       </View>
 
       <View style={styles.searchWrap}>

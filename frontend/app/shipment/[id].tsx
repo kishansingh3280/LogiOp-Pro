@@ -30,6 +30,7 @@ import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
 import { generatePackingListPdf } from "@/src/utils/packing-list-pdf";
 import { usePapaMode } from "@/src/hooks/use-papa-mode";
+import { useFYEditGate } from "@/src/hooks/use-fy-edit-gate";
 
 // ---------------------------------------------------------------------------
 // Shipment Console 2.0 — multi-party detail screen
@@ -119,6 +120,7 @@ export default function ShipmentDetail({
   const id = idOverride || params.id;
   const router = useRouter();
   const isPapa = usePapaMode();
+  const fyGate = useFYEditGate();
 
   const shipment = useApi<Shipment>(id ? `/api/shipments/${id}` : null);
   const bags = useApi<ShipmentBag[]>(id ? `/api/shipments/${id}/bags` : null);
@@ -337,20 +339,36 @@ export default function ShipmentDetail({
   const nextIdx = STATUS_FLOW.indexOf(s.status);
   const nextLabel = nextIdx >= 0 && nextIdx < STATUS_FLOW.length - 1 ? STATUS_FLOW[nextIdx + 1] : null;
   const inWarehouse = s.status === "warehouse_arrived";
-  const canModify = s.status === "pending";
+  // A shipment can be modified only if:
+  //   1. Its status is still `pending` (business rule — locked once dispatched)
+  //   2. AND either the user is admin OR the shipment's dispatch date falls
+  //      inside the current Financial Year (so historical shipments stay
+  //      read-only for non-admins even in the `pending` bucket).
+  const canModifyByStatus = s.status === "pending";
+  const canModifyByFY = fyGate.canEditDate(s.dispatch_date);
+  const canModify = canModifyByStatus && canModifyByFY;
   const modifyLockedReason = !canModify
-    ? s.status === "delivered"
-      ? "Delivered · locked"
-      : s.status === "in_transit"
-        ? "Dispatched · locked"
-        : s.status === "warehouse_arrived"
-          ? "At warehouse · locked"
-          : "Locked"
+    ? !canModifyByFY
+      ? `${fyGate.activeFY ? "FY " + fyGate.activeFY : "This FY"} locked — Admin only`
+      : s.status === "delivered"
+        ? "Delivered · locked"
+        : s.status === "in_transit"
+          ? "Dispatched · locked"
+          : s.status === "warehouse_arrived"
+            ? "At warehouse · locked"
+            : "Locked"
     : null;
   const shipTone = toneFor(s.status);
 
   const openModify = () => {
-    if (!canModify) {
+    if (!canModifyByFY) {
+      Alert.alert(
+        "FY locked",
+        `${fyGate.blockReason || "Older Financial Years are locked for non-admins."}`,
+      );
+      return;
+    }
+    if (!canModifyByStatus) {
       Alert.alert(
         "Shipment locked",
         `This shipment is ${s.status.replace("_", " ")}. Modifications are only allowed while the shipment is pending. To make changes, first roll back the status.`,
@@ -402,7 +420,7 @@ export default function ShipmentDetail({
           >
             <Ionicons name="document-text-outline" size={20} color={colors.lime} />
           </TouchableOpacity>
-          {!isPapa ? (
+          {!isPapa && fyGate.canEditDate(s.dispatch_date) ? (
             <TouchableOpacity onPress={remove} style={styles.iconBtn} testID="delete-btn">
               <Ionicons name="trash-outline" size={20} color={colors.danger} />
             </TouchableOpacity>

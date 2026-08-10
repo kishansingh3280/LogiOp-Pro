@@ -15,6 +15,7 @@ import {
 } from "react-native";
 
 import { useFY } from "@/src/context/fy-context";
+import { useAuth } from "@/src/auth/context";
 import { colors, radii, spacing } from "@/src/theme";
 import { currentFYKey, fyLabel, listFYKeys, type FYKey } from "@/src/utils/fy";
 
@@ -26,6 +27,10 @@ interface Props {
 
 export function FYPicker({ earliest, compact }: Props) {
   const { fy, setFY } = useFY();
+  const { user } = useAuth();
+  const isAdmin = (user?.role || "").toLowerCase() === "admin";
+  const currentFY = currentFYKey();
+  const isReadOnlyNow = fy !== currentFY && !isAdmin;
   const [open, setOpen] = useState(false);
   const options = useMemo(() => listFYKeys(earliest), [earliest]);
 
@@ -36,8 +41,12 @@ export function FYPicker({ earliest, compact }: Props) {
         onPress={() => setOpen(true)}
         testID="fy-picker"
       >
-        <Ionicons name="calendar-outline" size={12} color={colors.lime} />
-        <Text style={styles.chipText}>{fyLabel(fy)}</Text>
+        <Ionicons
+          name={isReadOnlyNow ? "lock-closed" : "calendar-outline"}
+          size={12}
+          color={isReadOnlyNow ? "#FFD700" : colors.lime}
+        />
+        <Text style={[styles.chipText, isReadOnlyNow ? styles.chipTextLocked : null]}>{fyLabel(fy)}</Text>
         <Ionicons name="chevron-down" size={12} color={colors.textDim} />
       </TouchableOpacity>
 
@@ -55,6 +64,8 @@ export function FYPicker({ earliest, compact }: Props) {
                 {options.map((k: FYKey) => {
                   const active = fy === k;
                   const isCurrent = k === currentFYKey();
+                  // Non-current FYs are locked for non-admin users.
+                  const isLockedForUser = !isCurrent && !isAdmin;
                   return (
                     <TouchableOpacity
                       key={k}
@@ -66,6 +77,9 @@ export function FYPicker({ earliest, compact }: Props) {
                       testID={`fy-option-${k}`}
                     >
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                        {isLockedForUser ? (
+                          <Ionicons name="lock-closed" size={13} color="#FFD700" />
+                        ) : null}
                         <Text style={[styles.rowText, active && styles.rowTextActive]}>
                           {fyLabel(k)}
                         </Text>
@@ -75,7 +89,10 @@ export function FYPicker({ earliest, compact }: Props) {
                           </View>
                         ) : (
                           <View style={styles.tagReadonly}>
-                            <Text style={styles.tagReadonlyText}>Read-only</Text>
+                            <Ionicons name="lock-closed" size={9} color="#FFD700" />
+                            <Text style={styles.tagReadonlyText}>
+                              {isAdmin ? "Read-only" : "Locked"}
+                            </Text>
                           </View>
                         )}
                       </View>
@@ -109,6 +126,7 @@ const styles = StyleSheet.create({
   },
   chipCompact: { paddingHorizontal: 8, paddingVertical: 4 },
   chipText: { color: colors.lime, fontSize: 12, fontWeight: "800", letterSpacing: 0.3 },
+  chipTextLocked: { color: "#FFD700" },
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.7)",
@@ -157,6 +175,9 @@ const styles = StyleSheet.create({
   },
   tagCurrentText: { color: "#000000", fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
   tagReadonly: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 999,

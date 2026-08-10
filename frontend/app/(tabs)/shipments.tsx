@@ -16,6 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useApi } from "@/src/api/hooks";
 import type { Party, Shipment, ShipmentStatus } from "@/src/api/types";
 import { Card, StatusPill } from "@/src/components/ui";
+import { FYLockedButton } from "@/src/components/fy-gate";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
@@ -71,14 +72,15 @@ export default function ShipmentsScreen() {
           <Text style={styles.title}>Shipments</Text>
           <Text style={styles.subtitle}>{list.length} of {shipments.data?.length || 0}</Text>
         </View>
-        <TouchableOpacity
+        <FYLockedButton
           style={styles.newBtn}
           onPress={() => router.push("/shipment/new")}
           testID="new-shipment-btn"
+          accessibilityLabel="New shipment"
         >
           <Ionicons name="add" size={18} color={colors.bg} />
           <Text style={styles.newBtnText}>New</Text>
-        </TouchableOpacity>
+        </FYLockedButton>
       </View>
 
       <View style={styles.searchWrap}>

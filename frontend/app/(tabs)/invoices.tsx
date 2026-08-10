@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useApi } from "@/src/api/hooks";
 import type { Invoice, Party } from "@/src/api/types";
 import { Card, StatusPill } from "@/src/components/ui";
+import { FYLockedButton } from "@/src/components/fy-gate";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
 
@@ -36,10 +37,10 @@ export default function InvoicesScreen() {
           <Text style={styles.title}>Invoices</Text>
           <Text style={styles.subtitle}>{list.length} total</Text>
         </View>
-        <TouchableOpacity style={styles.newBtn} onPress={() => router.push("/invoice/new")} testID="new-invoice-btn">
+        <FYLockedButton style={styles.newBtn} onPress={() => router.push("/invoice/new")} testID="new-invoice-btn" accessibilityLabel="New invoice">
           <Ionicons name="add" size={18} color={colors.bg} />
           <Text style={styles.newBtnText}>New</Text>
-        </TouchableOpacity>
+        </FYLockedButton>
       </View>
 
       <FlatList

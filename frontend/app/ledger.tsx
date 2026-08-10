@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useApi } from "@/src/api/hooks";
 import type { LedgerEntry, Party } from "@/src/api/types";
 import { FYPicker } from "@/src/components/fy-picker";
+import { FYLockedButton } from "@/src/components/fy-gate";
 import { useFY } from "@/src/context/fy-context";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
@@ -423,15 +424,15 @@ export default function LedgerScreen() {
       />
 
       {/* Floating action button — quick add entry */}
-      <TouchableOpacity
+      <FYLockedButton
         style={styles.fab}
         onPress={() => setPickForFab(true)}
-        activeOpacity={0.9}
         testID="fab-add-entry"
+        accessibilityLabel="Add ledger entry"
       >
         <Ionicons name="add" size={28} color={colors.bg} />
         <Text style={styles.fabText}>Add entry</Text>
-      </TouchableOpacity>
+      </FYLockedButton>
 
       {pickForFab && (
         <Pressable style={styles.backdrop} onPress={() => setPickForFab(false)}>

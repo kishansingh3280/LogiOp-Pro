@@ -29,6 +29,7 @@ import { AssetMap } from "@/src/bullion/AssetMap";
 import { SplitSheet } from "@/src/bullion/SplitSheet";
 import { usedWeightKgFor, useTrips, useTxns } from "@/src/bullion/store";
 import { FYPicker } from "@/src/components/fy-picker";
+import { FYLockedButton } from "@/src/components/fy-gate";
 import { useFY } from "@/src/context/fy-context";
 import {
   computeTxn,
@@ -407,14 +408,14 @@ export default function BullionScreen() {
         />
       )}
 
-      <TouchableOpacity
+      <FYLockedButton
         style={[styles.fab, { bottom: insets.bottom + 168 }]}
         onPress={() => setFabOpen(true)}
-        activeOpacity={0.9}
         testID="bullion-fab"
+        accessibilityLabel="Create new bullion entry"
       >
         <Ionicons name="add" size={26} color={colors.bg} />
-      </TouchableOpacity>
+      </FYLockedButton>
 
       {fabOpen && (
         <Pressable style={styles.backdrop} onPress={() => setFabOpen(false)}>
