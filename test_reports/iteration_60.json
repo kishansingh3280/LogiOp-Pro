@@ -1,0 +1,44 @@
+{
+  "summary": "Phase-3 Voice Orb + Now Brief refactor VERIFIED end-to-end on mobile viewport 390x844 as Kishan Sir (Admin). All 5 acceptance checks pass. (1) Now Brief card is transcript-only — inner HTML contains NO 'now-brief-mic' and NO 'now-brief-keyboard-toggle', only the greeting chat bubble + mute + refresh chips. Screenshot confirmed. (2) Voice Orb is rendered at bottom-right on the Dashboard. Long-press (mouse down → 750ms → mouse up) opens the glass panel above the orb with 'voice-orb-panel-input', 'voice-orb-panel-close', and green 'voice-orb-panel-send' testIDs — panel visually uses the purple+green+cyan AI gradient. Close × dismisses cleanly. Typing 'hi wingman' + tapping send closed the panel with NO crash / no red screen (sendText correctly is a safe no-op when disconnected). (3) Tapping the orb once fires the connect flow; getUserMedia fails silently in headless Playwright and the orb stays rendered — no unhandled error. (4) RealtimeStatusBar is CORRECTLY hidden on '/' Dashboard (bar not in DOM). (5) Orb persists on /shipments, /parties, /ledger, /invoices, /bullion — all 5 routes show voice-orb present. RealtimeStatusBar correctly stays hidden on those routes while state is idle and no transcript exists — matches the 'visible only when active OR fresh assistant message' spec. No backend testing per E1's instruction (frontend-only iteration).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "voice-orb.tsx",
+        "issue": "Pre-existing cosmetic warnings persist: 'props.pointerEvents is deprecated. Use style.pointerEvents' and 'Invalid style property of \"background\"' on the animated card. Not new to this iteration. Reference: /app/frontend/src/components/voice-orb.tsx and /app/frontend/src/components/now-brief-card.tsx"
+      },
+      {
+        "component": "shadow*/textShadow* style props",
+        "issue": "React-native-web deprecation warnings: '\"shadow*\" style props are deprecated. Use \"boxShadow\"' and '\"textShadow*\" style props are deprecated. Use \"textShadow\"' — emitted repeatedly on every screen (pre-existing across many components). Cosmetic. Consider a repo-wide sweep."
+      },
+      {
+        "component": "Animated useNativeDriver on web",
+        "issue": "'useNativeDriver is not supported because the native animated module is missing. Falling back to JS-based animation.' — cosmetic web-only warning, not a bug (spin ring uses useNativeDriver:true which is correct for native). Reference: /app/frontend/src/components/voice-orb.tsx:106"
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "None blocking. All Phase-3 acceptance criteria met. Optional cleanup: migrate remaining shadow*/textShadow* inline style keys to boxShadow/textShadow to silence the RN-web deprecation warnings globally (not specific to this iteration).",
+    "Optional: real mic-permission testing (listening → speaking → handsfree re-arm) requires a real browser + user gesture; Playwright headless cannot verify. Code paths (sendText via data channel, response.done → 'listening' state, handsfree re-arm) are wired correctly in use-realtime-voice.ts and voice-orb-context.tsx (confirmed by static inspection)."
+  ],
+  "critical_code_review_comments": [
+    "voice-orb.tsx: Hooks ordering remains correct — all useRef/useEffect are ABOVE the `if (hidden) return null;` guard (iteration-59 hotfix preserved). Long-press uses Pressable's built-in onLongPress with delayLongPress={500} — matches spec.",
+    "voice-orb.tsx: While state === 'listening', two Animated.loop ring animations expand scale 1→2.4 and fade opacity 0.6/0.5→0. Orb size correctly grows from 60×60 → 80×80 via `orbLarge` style toggle.",
+    "voice-orb-context.tsx: `sendText` is threaded through the context surface and exposed to consumers; the safe default no-op is present in useVoiceOrb() fallback so components mounted outside the provider don't crash.",
+    "realtime-status-bar.tsx: Correctly excludes Dashboard ('/' | '/(tabs)' | '' | '/index') and sign-in routes via `onDashboard || onSignIn` guard at the top of the component AND at return. Uses `position: fixed` on web and `insets.top` for positioning. AUTO_DISMISS_MS=4000 matches spec. testID `realtime-status-close` is present on the × button.",
+    "now-brief-card.tsx: The Input row block for mic/keyboard-toggle is fully removed (only a comment placeholder remains at line ~1237). ScrollView with chat bubbles + mute/refresh header/history pills remain intact.",
+    "use-realtime-voice.ts: `sendText` sends `conversation.item.create` + `response.create` events on the data channel and swallows failures. On `response.done`, if `dcRef.current.readyState === 'open'` it transitions to 'listening' (handsfree re-arm), else 'idle' — correct.",
+    "_layout.tsx: `<RealtimeStatusBar />` is mounted directly after `<VoiceOrb />` inside VoiceOrbProvider — correct provider hierarchy so it can consume useVoiceOrb()."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "N/A (not tested this iteration per E1)", "frontend": "100% (5/5 acceptance checks pass)" },
+  "seed_data_creation": "None — used existing seeded kishan admin user.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase-3 Voice Orb single-input-surface refactor is stable. NowBriefCard is transcript-only (no mic/keyboard buttons); VoiceOrb has tap-to-toggle + long-press-500ms for text panel with testIDs voice-orb-panel, voice-orb-panel-input, voice-orb-panel-close, voice-orb-panel-send. RealtimeStatusBar (testID realtime-status-bar) is mounted in _layout.tsx and correctly hidden on Dashboard '/' + sign-in. Handsfree re-arm lives in use-realtime-voice.ts line ~219 (dcRef.readyState==='open' → 'listening' on response.done). To test real listening/speaking states you MUST use a non-headless browser with mic permission granted (Playwright's context.grant_permissions(['microphone']) will only help partially — getUserMedia still needs a real audio device). Cosmetic warnings (shadow*/textShadow*/pointerEvents/background style/useNativeDriver on web) are pre-existing and non-blocking.",
+  "rca_of_issue": "N/A — no bugs found in this iteration."
+}

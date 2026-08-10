@@ -31,6 +31,7 @@ interface VoiceOrbCtx {
   page: string;
   setPageContext: (page: string, summary?: string) => void;
   toggle: () => void; // start or stop the realtime session
+  sendText: (message: string) => void;
 }
 
 const VoiceOrbContext = createContext<VoiceOrbCtx | null>(null);
@@ -64,8 +65,9 @@ export function VoiceOrbProvider({ children }: { children: React.ReactNode }) {
       page,
       setPageContext,
       toggle,
+      sendText: rv.sendText,
     }),
-    [rv.supported, rv.isConnected, rv.state, rv.micLevel, rv.transcript, rv.error, page, setPageContext, toggle],
+    [rv.supported, rv.isConnected, rv.state, rv.micLevel, rv.transcript, rv.error, page, setPageContext, toggle, rv.sendText],
   );
 
   return <VoiceOrbContext.Provider value={value}>{children}</VoiceOrbContext.Provider>;
@@ -85,6 +87,7 @@ export function useVoiceOrb(): VoiceOrbCtx {
       page: "dashboard",
       setPageContext: () => undefined,
       toggle: () => undefined,
+      sendText: () => undefined,
     };
   }
   return ctx;

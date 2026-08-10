@@ -18,6 +18,7 @@ import { ScreenContextProvider } from "@/src/context/screen-context";
 import { SidebarProvider } from "@/src/context/sidebar-context";
 import { VoiceOrbProvider } from "@/src/context/voice-orb-context";
 import { VoiceOrb } from "@/src/components/voice-orb";
+import { RealtimeStatusBar } from "@/src/components/realtime-status-bar";
 import { GhostUserProvider } from "@/src/ghost/ghost-user";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { colors } from "@/src/theme";
@@ -186,6 +187,8 @@ export default function RootLayout() {
                       <ToastHost />
                       {/* Floating Wingman voice orb — visible on every screen */}
                       <VoiceOrb />
+                      {/* Top status bar surfaces AI messages on non-dashboard screens */}
+                      <RealtimeStatusBar />
                     </VoiceOrbProvider>
                   </SidebarProvider>
                 </GhostUserProvider>

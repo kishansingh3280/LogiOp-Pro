@@ -35,6 +35,7 @@ export interface UseRealtimeVoiceResult {
   micLevel: number;
   connect: (pageCtx: { page: string; summary?: string }) => Promise<void>;
   disconnect: () => void;
+  sendText: (message: string) => void;
   isConnected: boolean;
 }
 
@@ -210,7 +211,12 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
           next[idx] = { ...next[idx], isFinal: true };
           return next;
         });
-        setState("idle");
+        // Handsfree — server VAD keeps the mic hot. As soon as the AI
+        // finishes, we flip visual state back to `listening` so the
+        // orb re-enters its cyan-pulse state and the user can jump in
+        // without tapping. The mic track is never actually stopped
+        // during the session; server-side VAD handles turn boundaries.
+        setState(dcRef.current && dcRef.current.readyState === "open" ? "listening" : "idle");
       }
       if (type === "error") {
         // eslint-disable-next-line no-console
@@ -318,6 +324,38 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
     };
   }, [disconnect]);
 
+  // ---------------- Send a typed text message through the channel ----
+  const sendText = useCallback((message: string) => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") return;
+    const clean = (message || "").trim();
+    if (!clean) return;
+    // Mirror the user turn locally so the UI shows it instantly.
+    const uid = `u-${Date.now()}`;
+    setTranscript((prev) => [
+      ...prev,
+      { id: uid, role: "user", content: clean, at: Date.now(), isFinal: true },
+    ]);
+    // Two-step protocol per OpenAI Realtime spec: create a conversation
+    // item, then trigger a response.
+    try {
+      dc.send(
+        JSON.stringify({
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: clean }],
+          },
+        }),
+      );
+      dc.send(JSON.stringify({ type: "response.create" }));
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[realtime] sendText failed", e);
+    }
+  }, []);
+
   return {
     supported,
     state,
@@ -326,6 +364,7 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
     micLevel,
     connect,
     disconnect,
+    sendText,
     isConnected,
   };
 }
