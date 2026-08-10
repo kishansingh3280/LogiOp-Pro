@@ -1,0 +1,45 @@
+{
+  "summary": "Voice AI overhaul (final master snippet) — all backend endpoints verified. 27/27 pytest cases passed against the live preview URL. /api/wingman-chat deterministic brain returns real DB answers for all 9 target commands with the exact numbers cited in the spec (Abhishek 'denge INR 48,800', Lalit 'lene hain INR 5,750' + 'THB 5,000', Deepak Adavani fuzzy match, net INR dena ₹4,523 + THB dena 20,218). /api/voice-memory GET/POST/DELETE round-trip works (upsert idempotent, list newest-first, delete verified). /api/realtime-token successfully mints ephemeral key with model=gpt-realtime; injected business context (parties + balances + memories) does NOT throw. voice='echo' is sent to OpenAI in the session body (verified by code inspection at server.py:2589, comment locks it against being reverted to 'marin'/'onyx'). Regression endpoints (/api/auth/login kishan, /api/parties, /api/shipments, /api/invoices, /api/dashboard/stats, /api/voice/query pending_shipments) all healthy. Edge cases handled: empty message returns triple-null, unknown party returns 'Yeh party nahi mili', unknown intent falls back with answer=null, create_form returns answer=null so client can invoke fill_form tool.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/wingman-chat (party_ledger) vs /api/voice/query (party_balance)",
+        "issue": "Ledger convention drift. wingman-chat /_party_balance uses `bal += debit - credit` (server.py:2986) → positive = receivable. But /api/voice/query party_balance metric uses `credit - debit` (server.py:2741-2744) → opposite sign. Both endpoints coexist and disagree. Not called by user-facing voice flow (Realtime brain routes through wingman-chat), but leave for cleanup."
+      },
+      {
+        "endpoint": "/api/wingman-chat (net_position vs party_ledger)",
+        "issue": "Cosmetic: net_position formats currency as '₹1,234' via _format_inr; party_ledger formats as 'INR 1,234' via _direction_phrase. Same info, different symbols in the same channel. Realtime voice speaks 'INR' either way, but visual logs / debug UI look mixed."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter72_voice_wingman.py",
+    "/app/test_reports/pytest/iter72_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Unify ledger sign convention between /api/voice/query (party_balance metric) and /api/wingman-chat (party_ledger) — they currently return opposite signs.",
+    "OPTIONAL: Standardise INR formatting (either always '₹' or always 'INR') across net_position / party_ledger / daily_brief answers.",
+    "OPTIONAL: Add rate limit / max-entries guard on /api/voice-memory to avoid runaway 'yaad rakh' loops bloating MongoDB."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 3442 lines — well past the 700-line soft cap. Split voice AI stack (realtime-token, voice-memory, wingman-chat, voice/query, voice-command) into /app/backend/routers/voice.py.",
+    "Wingman patterns list is order-sensitive (server.py:2918-2930). A dev adding 'summary' or 'kitna' to a wrong slot will silently mis-route. Recommend a unit test that exercises each pattern with a canonical phrase and asserts action name.",
+    "_build_business_context (server.py:2413) swallows all Exceptions silently — a stalled proxy would ship '(no context available yet)' to the Realtime prompt with no signal. Add log.warning inside each except.",
+    "OpenAI API key is committed in /app/backend/.env line 27 in plaintext — flag for secret rotation & .env hygiene.",
+    "Send-message intent in wingman-chat writes directly to whatsapp_broadcast_log (server.py:3275) — this is MOCKED (not actually sent to Meta) but works as a queue; ensure downstream sender picks it up or document that these entries are for audit only."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (27/27)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "Test created and deleted `TEST_iter72_key` memory via /api/voice-memory. Wingman save_memory test writes key 'party:Yashwant Singh' which is cleaned up by TestZCleanup. No permanent seed data added.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Live DB snapshot at time of testing: 17 parties, 5 shipments (1 pending, 2 in_transit, 2 delivered), 2 unpaid invoices (₹23,896 outstanding), 0 active bullion trips (test_trip_query correctly returns 'koi active trip nahi'), 30 ledger entries. Real party balances used to validate answers: Abhishek Singh = -₹48,800 (payable), Lalit = +₹5,750 & +THB 5,000 (receivable), Deepak Adavani = +₹26,396, Yashwant Singh = 0. Net position: INR net dena ₹4,523; THB net dena THB 20,218. Auth is optional on /api/wingman-chat and /api/voice-memory (tests ran unauthenticated). /api/realtime-token requires OPENAI_API_KEY (present) and hits live OpenAI — takes ~1-2s per call. Frontend voice testing (WebRTC data channel + interceptor) intentionally skipped as it requires mic + WebRTC + OpenAI live traffic and cannot run in headless environments.",
+  "rca_of_issue": "N/A — no bugs found. All 24 spec-requested behaviours confirmed. Notable positive: fuzzy party matching correctly resolves 'Deepak' → 'Deepak Adavani', 'Yashwant' → 'Yashwant Singh', 'Abhishek' → 'Abhishek Singh', 'Lalit' → exact match. Pattern-order in _WINGMAN_PATTERNS correctly places net_position BEFORE party_ledger so 'kitna total dena hai' routes to net_position (not party_ledger, since 'kitna' also appears in party_ledger regex). daily_brief pattern includes 'summary' + 'aaj ka' + 'today' → confirmed match. save_memory correctly strips the 'yaad rakh ki' prefix and stores only content ('Yashwant Bangkok mein hai')."
+}

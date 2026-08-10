@@ -116,8 +116,9 @@ const NAV_ITEMS: NavItem[] = [
     icon: "ellipsis-horizontal",
     route: "/(tabs)/more",
     // More is the umbrella tab for admin / warehouses / reports /
-    // wingman / notifications — routes that don't have their own nav
-    // entry. Highlighting More on these keeps orientation consistent.
+    // wingman / notifications / items / lalamove — routes that don't
+    // have their own nav entry. Highlighting More on these keeps
+    // orientation consistent. Fix 1: added /items (list) and /lalamove.
     match: (p) =>
       p === "/more" ||
       p === "/(tabs)/more" ||
@@ -127,7 +128,10 @@ const NAV_ITEMS: NavItem[] = [
       p.startsWith("/reports") ||
       p.startsWith("/wingman") ||
       p.startsWith("/notifications") ||
-      p.startsWith("/item"),
+      p.startsWith("/items") ||
+      p.startsWith("/item/") ||
+      p === "/item" ||
+      p.startsWith("/lalamove"),
     glow: "#FFFFFF",
   },
 ];
@@ -232,6 +236,15 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const stats = useApi<DashboardStats>("/api/dashboard/stats");
+  // Fix 2 — Sidebar quick stats auto-refresh every 2 minutes so the numbers
+  // stay live without the operator having to leave/re-enter the screen.
+  useEffect(() => {
+    const id = setInterval(() => {
+      stats.refresh();
+    }, 120_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const showLabels = expanded;
   // Papa-mode gets a trimmed nav with simple Hindi labels.
   const isPapa = user?.role === "Papa";
@@ -313,12 +326,15 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
         {/* Divider */}
         <View style={styles.divider} />
 
-        {/* Quick stats (expanded only) */}
+        {/* Quick stats (expanded only) — Fix 2: read the correct nested
+            shape from DashboardStats and refresh every 2 min (see useEffect
+            above). */}
         {showLabels ? (
           <View style={styles.quickStats} testID="sidebar-quick-stats">
-            <QuickStat label="Total Shipments" value={String(stats.data?.total ?? 0)} />
-            <QuickStat label="Pending" value={String(stats.data?.pending ?? 0)} />
-            <QuickStat label="In Transit" value={String(stats.data?.in_transit ?? 0)} />
+            <QuickStat label="Total Shipments" value={String(stats.data?.shipments?.total ?? 0)} />
+            <QuickStat label="Pending" value={String(stats.data?.shipments?.pending ?? 0)} />
+            <QuickStat label="In Transit" value={String(stats.data?.shipments?.in_transit ?? 0)} />
+            <QuickStat label="Delivered" value={String(stats.data?.shipments?.delivered ?? 0)} />
           </View>
         ) : null}
       </ScrollView>

@@ -19,6 +19,27 @@ import type { Item, Party } from "@/src/api/types";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
 
+// Fix 4 — Safe photo renderer for catalog cards. Falls back to a clean
+// placeholder tile if the URL is missing, invalid, or fails to load.
+function SafeCatalogImage({ uri }: { uri: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!uri || failed) {
+    return (
+      <View style={styles.cardPhotoPh}>
+        <Ionicons name="image-outline" size={32} color={colors.textDim} />
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri }}
+      style={styles.cardPhoto}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 // AI Product Catalog — big-photo grid of every item, filterable by tag
 // and supplier. Rows are clickable and route to /item/[id] for editing.
 // Photos are stored as data-uri (base64) on the item record; grid uses a
@@ -156,13 +177,10 @@ export default function ItemsScreen() {
             onPress={() => router.push(`/item/${item.id}` as never)}
             testID={`catalog-card-${item.id}`}
           >
-            {item.photo_url ? (
-              <Image source={{ uri: item.photo_url }} style={styles.cardPhoto} resizeMode="cover" />
-            ) : (
-              <View style={styles.cardPhotoPh}>
-                <Ionicons name="image-outline" size={32} color={colors.textDim} />
-              </View>
-            )}
+            {/* Fix 4 — Product catalog photo with error fallback.
+                Broken/expired URLs no longer show a black square; we
+                fall through to the clean placeholder. */}
+            <SafeCatalogImage uri={item.photo_url || null} />
             <View style={styles.cardBody}>
               <Text style={styles.cardName} numberOfLines={1}>
                 {item.name}

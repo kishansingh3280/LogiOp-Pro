@@ -142,6 +142,85 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
     setState("idle");
   }, [stopLevelMeter]);
 
+  // ---------------- Wingman interceptor ----------------
+  // Called from `handleServerEvent` on every finalized user transcript.
+  // Talks to /api/wingman-chat and injects the answer back into the
+  // Realtime data channel as an override on `response.create`.
+  const routeThroughWingman = useCallback(async (userText: string) => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") return;
+    const clean = (userText || "").trim();
+    if (!clean) return;
+
+    // Fetch a Wingman answer (deterministic keyword brain).
+    let answer: string | null = null;
+    let action: string | null = null;
+    try {
+      const token = getAuthTokenSync();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4500);
+      const res = await fetch(`${API_BASE}/api/wingman-chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ message: clean }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = (await res.json()) as {
+          answer: string | null;
+          action: string | null;
+        };
+        answer = (data && typeof data.answer === "string") ? data.answer : null;
+        action = data?.action ?? null;
+      }
+    } catch (e) {
+      // Silent fallback — let OpenAI answer naturally on network hiccup.
+      // eslint-disable-next-line no-console
+      console.warn("[wingman] intercept failed, falling back:", e);
+    }
+
+    // Guard: channel may have closed during the fetch.
+    const liveDc = dcRef.current;
+    if (!liveDc || liveDc.readyState !== "open") return;
+
+    try {
+      if (answer && answer.trim()) {
+        // Wingman has a canned answer — tell OpenAI to speak it verbatim.
+        // The system prompt (see backend) instructs the model to obey any
+        // `response.create.instructions` that begin with "SPEAK_EXACTLY:".
+        liveDc.send(
+          JSON.stringify({
+            type: "response.create",
+            response: {
+              modalities: ["audio", "text"],
+              instructions:
+                "SPEAK_EXACTLY: " + answer.trim() +
+                "\n\nRules: Read the text between SPEAK_EXACTLY: and the newline verbatim in warm Hinglish (Hindi in Latin script). Do NOT translate, paraphrase, add greetings, or extend. Stop after the last word.",
+            },
+          }),
+        );
+      } else {
+        // Unknown intent or creation flow → let OpenAI take over so it can
+        // invoke fill_form / query_dashboard tools normally.
+        liveDc.send(
+          JSON.stringify({
+            type: "response.create",
+            response: { modalities: ["audio", "text"] },
+          }),
+        );
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[wingman] response.create failed:", e);
+    }
+    // Return action so callers could log if they want (unused for now).
+    void action;
+  }, []);
+
   // ---------------- Event handler for data channel messages ----------------
   const handleServerEvent = useCallback((ev: MessageEvent) => {
     try {
@@ -176,6 +255,17 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
           next[idx] = { ...next[idx], content: text, isFinal: true };
           return next;
         });
+        // WINGMAN INTERCEPTOR ------------------------------------------------
+        // Route every finalized transcript through /api/wingman-chat first.
+        // Wingman is the DETERMINISTIC brain — it runs keyword matching +
+        // fuzzy party lookup + live DB queries and returns a Hinglish
+        // answer. OpenAI Realtime then just SPEAKS that answer verbatim
+        // (no hallucinated numbers, no "sync nahi ho paya" hedges).
+        //
+        // If Wingman returns answer=null (unknown intent or a creation
+        // flow that needs the `fill_form` tool), we fall through and let
+        // the model generate its own response naturally.
+        void routeThroughWingman(text);
       }
       if (type === "input_audio_buffer.speech_started") {
         // A fresh user turn is starting → open a placeholder bubble.
@@ -353,7 +443,7 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
       // eslint-disable-next-line no-console
       console.warn("[realtime] event parse failed", e);
     }
-  }, []);
+  }, [routeThroughWingman]);
 
   // ---------------- Connect flow ----------------
   const connect = useCallback(

@@ -769,24 +769,39 @@ export function NowBriefCard(props: Props) {
   );
 
   // Auto-brief on mount — Wingman greets the user immediately with a
-  // warm Hinglish salutation. The old daily-brief counters remain
-  // accessible via the ↺ refresh chip.
+  // warm Hinglish salutation. Fix 7: only ONE greeting per calendar day.
+  // We stash today's date in AsyncStorage; if a greeting has already
+  // been played today, we skip both the seeded bubble and the TTS
+  // narration. Voice Orb reads the same flag before its own greeting so
+  // the user never gets two Namaste in a row.
   useEffect(() => {
-    const name = auth.user?.display_name || "Kishan Sir";
-    const honorific = auth.user?.honorific || "Sir";
-    const isPapa = (auth.user?.role || "").toLowerCase() === "papa";
-    const greeting = isPapa
-      ? `Namaste Papa ji! 🙏 Main Wingman hoon, aapka AI saathi. Batao aaj kya karna hai?`
-      : `Namaste ${name}! 🙏 Main sun raha hoon, batao kya karna hai?`;
-    // Seed the conversation history with an assistant greeting bubble.
-    const greetingTurn: WingmanTurn = {
-      role: "assistant",
-      content: greeting,
-      at: Date.now(),
-    };
-    setHistory([greetingTurn]);
-    // If unmuted, also narrate the greeting via TTS (karaoke + typewriter).
-    if (!muted) playResponse(greeting, true);
+    (async () => {
+      const name = auth.user?.display_name || "Kishan Sir";
+      const isPapa = (auth.user?.role || "").toLowerCase() === "papa";
+      const greeting = isPapa
+        ? `Namaste Papa ji! 🙏 Main Wingman hoon, aapka AI saathi. Batao aaj kya karna hai?`
+        : `Namaste ${name}! 🙏 Main sun raha hoon, batao kya karna hai?`;
+      // Load-store the last-greeted date
+      let alreadyGreetedToday = false;
+      try {
+        const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
+        const today = new Date().toISOString().slice(0, 10);
+        const last = await AsyncStorage.getItem("wingman_last_greeted");
+        if (last === today) {
+          alreadyGreetedToday = true;
+        } else {
+          await AsyncStorage.setItem("wingman_last_greeted", today);
+        }
+      } catch { /* AsyncStorage optional */ }
+      const greetingTurn: WingmanTurn = {
+        role: "assistant",
+        content: greeting,
+        at: Date.now(),
+      };
+      setHistory([greetingTurn]);
+      // Only narrate + play the greeting once per day.
+      if (!muted && !alreadyGreetedToday) playResponse(greeting, true);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

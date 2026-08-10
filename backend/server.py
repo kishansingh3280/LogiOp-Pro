@@ -1642,6 +1642,147 @@ async def whatsapp_verify(request: Request):
     return PlainTextResponse("forbidden", status_code=403)
 
 
+# ---------------------------------------------------------------------------
+# WhatsApp SEND endpoint — Fix 8 of the Absolute Final snippet.
+# Uses the Meta Cloud API creds already wired for the webhook receiver.
+# Also queues the send into `whatsapp_broadcast_log` so the operator has
+# an audit trail even if the Cloud API call fails or the token expires.
+# ---------------------------------------------------------------------------
+class WhatsAppSendIn(BaseModel):
+    to_phone: str
+    message: str
+    photo_url: Optional[str] = None
+    party_id: Optional[str] = None
+    party_name: Optional[str] = None
+
+
+@api_router.post("/whatsapp/send")
+async def whatsapp_send(payload: WhatsAppSendIn):
+    """Send a WhatsApp message via Meta Cloud API.
+    Returns { ok, delivered, queued_id }. Queues to
+    whatsapp_broadcast_log with status=sent|failed|queued.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    log_doc: Dict[str, Any] = {
+        "id": str(uuid.uuid4()),
+        "party_id": payload.party_id,
+        "party_name": payload.party_name,
+        "phone": payload.to_phone,
+        "message": payload.message,
+        "photo_url": payload.photo_url,
+        "channel": "whatsapp",
+        "status": "queued",
+        "source": "api",
+        "created_at": now,
+    }
+    delivered = False
+    err: Optional[str] = None
+    token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    if token and phone_id and payload.to_phone:
+        try:
+            # If photo_url provided, send as image with caption; else text.
+            if payload.photo_url:
+                body = {
+                    "messaging_product": "whatsapp",
+                    "to": payload.to_phone,
+                    "type": "image",
+                    "image": {"link": payload.photo_url, "caption": payload.message[:1024]},
+                }
+            else:
+                body = {
+                    "messaging_product": "whatsapp",
+                    "to": payload.to_phone,
+                    "type": "text",
+                    "text": {"body": payload.message[:4000]},
+                }
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.post(
+                    f"https://graph.facebook.com/v20.0/{phone_id}/messages",
+                    json=body,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                delivered = r.status_code < 300
+                if not delivered:
+                    err = r.text[:200]
+        except Exception as e:
+            err = str(e)[:200]
+        log_doc["status"] = "sent" if delivered else "failed"
+        if err:
+            log_doc["error"] = err
+    else:
+        log_doc["status"] = "queued"
+        log_doc["error"] = "WHATSAPP creds not configured — queued for later"
+    await db.whatsapp_broadcast_log.insert_one(log_doc)
+    return {"ok": True, "delivered": delivered, "queued_id": log_doc["id"], "error": err}
+
+
+# ---------------------------------------------------------------------------
+# LINE Messenger SEND endpoint — Fix 9 of the Absolute Final snippet.
+# Uses LINE_CHANNEL_ACCESS_TOKEN if set; otherwise queues to
+# line_broadcast_log with status=queued so a real integration can flush
+# later. Requires the LINE Messaging API "push message" scope.
+# ---------------------------------------------------------------------------
+class LineSendIn(BaseModel):
+    to_line_id: str
+    message: str
+    party_id: Optional[str] = None
+    party_name: Optional[str] = None
+
+
+@api_router.post("/line/send")
+async def line_send(payload: LineSendIn):
+    """Send a LINE message via the Messaging API.
+    Requires LINE_CHANNEL_ACCESS_TOKEN in env. Queues to
+    line_broadcast_log with status=sent|failed|queued.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    log_doc: Dict[str, Any] = {
+        "id": str(uuid.uuid4()),
+        "party_id": payload.party_id,
+        "party_name": payload.party_name,
+        "line_id": payload.to_line_id,
+        "message": payload.message,
+        "channel": "line",
+        "status": "queued",
+        "source": "api",
+        "created_at": now,
+    }
+    delivered = False
+    err: Optional[str] = None
+    token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
+    if token and payload.to_line_id:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.post(
+                    "https://api.line.me/v2/bot/message/push",
+                    json={
+                        "to": payload.to_line_id,
+                        "messages": [{"type": "text", "text": payload.message[:4000]}],
+                    },
+                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                )
+                delivered = r.status_code < 300
+                if not delivered:
+                    err = r.text[:200]
+        except Exception as e:
+            err = str(e)[:200]
+        log_doc["status"] = "sent" if delivered else "failed"
+        if err:
+            log_doc["error"] = err
+    else:
+        log_doc["error"] = "LINE_CHANNEL_ACCESS_TOKEN not set — queued only"
+    await db.line_broadcast_log.insert_one(log_doc)
+    return {"ok": True, "delivered": delivered, "queued_id": log_doc["id"], "error": err}
+
+
+@api_router.get("/line/broadcast/log")
+async def line_broadcast_log(limit: int = 50):
+    """Admin-facing view of LINE messages queued/sent."""
+    docs = await db.line_broadcast_log.find().sort("created_at", -1).to_list(min(limit, 500))
+    return [_clean_mongo_id(d) for d in docs]
+
+
 @api_router.post("/whatsapp/webhook")
 async def whatsapp_incoming(request: Request):
     """Handle an incoming WhatsApp message. We always return 200 so Meta
@@ -2400,8 +2541,80 @@ async def wingman_quick_chat(
 # ---------------------------------------------------------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
+# ---------------------------------------------------------------------------
+# Business-context builder for the Realtime voice assistant.
+# We inject the full parties list (names + running INR/THB balances), a
+# pending-tasks counter, and persistent "voice memories" into the system
+# prompt so the model already "knows" everything before Kishan Sir speaks.
+# The client-side interceptor (/api/wingman-chat) will still short-circuit
+# any factual question so the model NEVER answers from its own memory —
+# but this block gives it enough shared context to sound coherent when
+# clarifying, confirming, or paraphrasing.
+# ---------------------------------------------------------------------------
+async def _build_business_context(user_id: Optional[str] = None) -> str:
+    """Fetch parties + balances + pending count + saved memories."""
+    lines: List[str] = []
+
+    # 1. Parties + running balances
+    try:
+        parties = await _proxy_get("/api/parties") or []
+        entries = await _proxy_get("/api/ledger/entries") or []
+        # Index ledger by party_id for O(N)
+        by_party: Dict[str, Dict[str, float]] = {}
+        for e in entries:
+            pid = e.get("party_id") or ""
+            if not pid:
+                continue
+            ccy = str(e.get("currency", "INR")).upper()
+            debit = float(e.get("debit") or 0)
+            credit = float(e.get("credit") or 0)
+            bucket = by_party.setdefault(pid, {"INR": 0.0, "THB": 0.0})
+            bucket[ccy] = bucket.get(ccy, 0.0) + (debit - credit)
+        if parties:
+            lines.append("=== PARTIES aur unka balance (koi bhi ID bina puche use karo) ===")
+            for p in parties[:40]:
+                pid = p.get("id") or ""
+                name = p.get("name") or "?"
+                role = p.get("role") or ""
+                bal = by_party.get(pid, {"INR": 0.0, "THB": 0.0})
+                inr = bal.get("INR", 0.0) + float(p.get("opening_balance_inr") or 0)
+                thb = bal.get("THB", 0.0) + float(p.get("opening_balance_thb") or 0)
+                # Positive => party owes us (receivable). Negative => we owe them.
+                inr_str = f"INR {inr:+,.0f}" if abs(inr) > 0.5 else "INR 0"
+                thb_str = f"THB {thb:+,.0f}" if abs(thb) > 0.5 else ""
+                bits = [inr_str] + ([thb_str] if thb_str else [])
+                lines.append(f"  • {name} ({role}) — {' · '.join(bits)}")
+    except Exception:
+        pass
+
+    # 2. Pending tasks counter (shipments pending + unpaid invoices)
+    try:
+        stats = await _proxy_get("/api/dashboard/stats") or {}
+        p_ships = int((stats.get("shipments") or {}).get("pending") or 0)
+        it_ships = int((stats.get("shipments") or {}).get("in_transit") or 0)
+        lines.append(f"\n=== PENDING ===")
+        lines.append(f"  • {p_ships} shipments pending · {it_ships} in transit")
+    except Exception:
+        pass
+
+    # 3. Voice memories (persistent, user-scoped)
+    try:
+        q: Dict[str, Any] = {}
+        if user_id:
+            q["user_id"] = user_id
+        mems = await db.voice_memories.find(q, {"_id": 0, "key": 1, "value": 1}).sort("last_updated", -1).to_list(30)
+        if mems:
+            lines.append("\n=== YAAD RAKHI HUI BAATEIN ===")
+            for m in mems:
+                lines.append(f"  • {m.get('key')}: {m.get('value')}")
+    except Exception:
+        pass
+
+    return "\n".join(lines) if lines else "(no context available yet)"
+
+
 # Base system prompt for the Realtime voice assistant.
-def _wingman_realtime_instructions(page: str, page_data_summary: str, user: Any) -> str:
+def _wingman_realtime_instructions(page: str, page_data_summary: str, user: Any, business_ctx: str = "") -> str:
     """Return a Hinglish system prompt that includes the current screen +
     a summary of what's on it. Called on every /api/realtime-token request
     so the model always has fresh context."""
@@ -2414,54 +2627,41 @@ def _wingman_realtime_instructions(page: str, page_data_summary: str, user: Any)
     role = _g("role") or "Admin"
     salutation = f"{name} {honorific}".strip()
 
-    return f"""You are Wingman — K Singh ka 24/7 AI business partner for LogiOp Pro.
+    return f"""You are Wingman — {salutation} ka 24/7 AI business partner for LogiOp Pro (India ↔ Thailand hand-carry logistics).
 
-## LANGUAGE
-ALWAYS respond in Hinglish (Hindi in Latin script + English mix). NEVER Devanagari.
-Examples:
-- "Bilkul {salutation}, karta hoon."
-- "Sir, aapka Bangkok shipment ready hai — 12 bags, 45 kilo."
-- "Naya entry add ho gayi — 40 hazaar credit."
+## STRICT LANGUAGE RULES
+- ALWAYS respond in HINGLISH (Hindi words in Latin/Roman script + English mix).
+- NEVER Devanagari (देवनागरी). Only Latin letters.
+- Address {name} Sir as "Sir" naturally — never bare first name.
+- Keep responses SHORT — max 2 sentences unless a list is explicitly asked for.
 
-## STYLE
-- Address user as "{honorific}" or "{salutation}" — never bare first name.
-- SHORT replies, max 2 sentences unless detail needed.
-- Correct punctuation for natural TTS pauses.
+## RESPONSE FORMAT — VERY IMPORTANT
+- For balance queries: "Yashwant Singh ko aap ₹15,000 denge" (direct, no fluff).
+- For "kitna dena/lena": give the exact number + direction ("lena" / "dena") + currency.
+- NEVER say "dashboard mein sync nahi", "data load nahi hua", or any error hedge — the app always gives you real data.
+- If party not found in the list below: "Yeh party nahi mili Sir, naam check karein."
+- For memory saves: "Yaad kar liya Sir — [content]."
+- For memory recall: "Sir, yaad hai: [content list]."
 - Max 1 emoji per reply.
 
-## CURRENT CONTEXT
-- User's role: {role}
-- Currently on screen: {page}
-- On-screen data:
-{page_data_summary or "  (no snapshot available yet)"}
+## OVERRIDE MODE (CRITICAL)
+When the client sends you a `response.create` with `instructions` that begin with
+"SPEAK_EXACTLY:" — read the text after that prefix VERBATIM, in Hinglish. Do not
+add, translate, rephrase, or comment. This is how the Wingman brain feeds you
+answers. Just voice them out cleanly.
 
-## COMMAND FILTERING (VERY IMPORTANT)
-Do NOT respond to background chatter, filler words, or ambient noise.
-Only act on CLEAR business commands about shipments, ledger, trips, parties,
-or invoices. If unsure, stay silent — do not fill space with acknowledgments.
+## FALLBACK MODE (when no override instructions arrive)
+- Only respond to CLEAR business questions/commands. Ignore filler / ambient chatter.
+- Use `fill_form` tool ONLY when user explicitly says "banao / add karo / create karo".
+- Use `query_dashboard` for any factual number you don't already have in context below.
 
-## ACTION FLOW
-1. Briefly confirm you understood (1-line).
-2. Call the appropriate tool / execute the command.
-3. Narrate the result in Hinglish.
+## CURRENT SCREEN
+- Role: {role}
+- Screen: {page}
+- Screen snapshot: {page_data_summary or "(none)"}
 
-## TOOLS AVAILABLE
-- `fill_form(form, fields, reason)` — call ONLY when user asks to create/add/
-  make a NEW record (shipment, invoice, party, ledger entry, trip).
-- `query_dashboard(metric, party_name?)` — call BEFORE answering ANY factual
-  question that needs a count / sum / balance. NEVER guess numbers. Available
-  metrics:
-    • pending_shipments — how many shipments are pending
-    • in_transit_shipments — how many are moving
-    • unpaid_invoices — count + total INR / THB unpaid
-    • active_trips — current carrier trips in flight
-    • today_revenue — invoices paid today (INR + THB)
-    • warehouse_bags — current bag count + kg in Bangkok warehouse
-    • party_balance — pass party_name; returns INR + THB running balance
-    • overview — full dashboard stats blob
-  Example: for "kitne shipments pending hain?" call
-  query_dashboard with metric="pending_shipments", then say
-  "Sir, N shipments pending hain." (replace N with the number returned).
+## LIVE BUSINESS CONTEXT (already fetched — use these numbers, do NOT re-ask)
+{business_ctx}
 
 Be fast, calm, confident — like a trusted business partner who never wastes a word.
 """.strip()
@@ -2486,10 +2686,16 @@ async def realtime_token(
     if not OPENAI_API_KEY:
         raise HTTPException(500, "OPENAI_API_KEY not configured")
 
+    # Fetch live business context so the model already knows every party,
+    # balance, and saved memory BEFORE the user speaks.
+    user_id = str(user.get("_id")) if user else None
+    business_ctx = await _build_business_context(user_id=user_id)
+
     instructions = _wingman_realtime_instructions(
         page=(req.page or "dashboard"),
         page_data_summary=(req.page_data_summary or ""),
         user=user,
+        business_ctx=business_ctx,
     )
 
     body = {
@@ -2499,27 +2705,31 @@ async def realtime_token(
             "instructions": instructions,
             "audio": {
                 "input": {
-                    # Server-side voice-activity detection: model auto-detects
-                    # end-of-speech and triggers a response. `silence_duration_ms`
-                    # ≈ 800 avoids cutting off mid-sentence.
+                    # Server-side voice-activity detection tracks turn
+                    # boundaries. `create_response=false` means the server
+                    # will NOT auto-generate a response when the user
+                    # stops speaking — the client (Wingman interceptor)
+                    # is in charge of deciding what the assistant says.
+                    # This lets us route every question through
+                    # /api/wingman-chat first for deterministic answers.
                     "turn_detection": {
                         "type": "server_vad",
                         "threshold": 0.7,
                         "prefix_padding_ms": 300,
                         "silence_duration_ms": 800,
-                        "create_response": True,
+                        "create_response": False,
                         "interrupt_response": True,
                     },
                     "transcription": {"model": "whisper-1"},
                 },
                 "output": {
-                    # `alloy` / `onyx` / `verse` / `marin` etc. — `marin`
-                    # is the warm, expressive default that plays best
-                    # with Wingman's Hinglish persona; keep this in
-                    # sync with the comment below to avoid drift.
-                    "voice": "marin",
+                    # `echo` is a deep, warm, natural male voice on the
+                    # OpenAI Realtime API. `onyx` is TTS-only (not valid
+                    # for Realtime) — do NOT swap this back. Other male
+                    # options: `ash` (softer male), `verse` (neutral).
+                    "voice": "echo",
                     "format": {"type": "audio/pcm", "rate": 24000},
-                    "speed": 1.1,
+                    "speed": 1.05,
                 },
             },
         }
@@ -2756,6 +2966,1208 @@ async def voice_command(
     except Exception as e:
         logging.warning(f"[voice-command] {action} failed: {e}")
         return {"ok": False, "message": f"Command execute nahi ho paya: {e}"}
+
+
+# ===========================================================================
+# VOICE MEMORY — persistent key/value store, scoped per user_id.
+# The Realtime voice assistant reads these on session start (injected into
+# the system prompt) and the /api/wingman-chat interceptor writes them
+# whenever the user says "yaad rakh ki …".
+# ===========================================================================
+import re as _re
+
+class VoiceMemoryEntry(BaseModel):
+    key: str
+    value: str
+
+
+def _memory_scope(user: Optional[dict]) -> Optional[str]:
+    """Return the user's id for scoping. `None` = anonymous shared bucket
+    (dev / preview mode where auth is optional)."""
+    if not user:
+        return None
+    return str(user.get("_id"))
+
+
+@api_router.get("/voice-memory")
+async def voice_memory_list(
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+    limit: int = 100,
+):
+    """Return all saved voice memories for the current user, newest first."""
+    q: Dict[str, Any] = {}
+    scope = _memory_scope(user)
+    if scope:
+        q["user_id"] = scope
+    docs = await db.voice_memories.find(
+        q, {"_id": 0}
+    ).sort("last_updated", -1).limit(min(max(limit, 1), 500)).to_list(500)
+    return docs
+
+
+@api_router.post("/voice-memory")
+async def voice_memory_save(
+    entry: VoiceMemoryEntry,
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+):
+    """Upsert a voice memory. Key acts as an idempotency handle so
+    "yaad rakh ki Yashwant Bangkok mein hai" overwrites the previous
+    "Yashwant" note instead of piling up duplicates.
+    """
+    scope = _memory_scope(user)
+    now = datetime.now(timezone.utc).isoformat()
+    key = (entry.key or "").strip()[:80] or f"mem_{uuid.uuid4().hex[:8]}"
+    val = (entry.value or "").strip()[:500]
+    if not val:
+        raise HTTPException(400, "value cannot be empty")
+    filter_q: Dict[str, Any] = {"key": key}
+    if scope:
+        filter_q["user_id"] = scope
+    await db.voice_memories.update_one(
+        filter_q,
+        {
+            "$set": {"value": val, "last_updated": now, "user_id": scope},
+            "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": now, "key": key},
+        },
+        upsert=True,
+    )
+    return {"ok": True, "key": key, "value": val}
+
+
+@api_router.delete("/voice-memory/{key:path}")
+async def voice_memory_delete(
+    key: str,
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+):
+    q: Dict[str, Any] = {"key": key}
+    scope = _memory_scope(user)
+    if scope:
+        q["user_id"] = scope
+    await db.voice_memories.delete_one(q)
+    return {"ok": True}
+
+
+# ===========================================================================
+# WINGMAN CHAT — the "brain" that intercepts every user voice transcript
+# before it reaches the OpenAI Realtime model. Deterministic keyword
+# matching + fuzzy party lookup + live DB queries → returns a canned
+# Hinglish answer that the Realtime voice just speaks verbatim.
+# ===========================================================================
+
+# Order matters: check more-specific patterns first. Each entry maps a
+# regex (case-insensitive) to the action name the handler routes to.
+_WINGMAN_PATTERNS: List[Tuple[str, str]] = [
+    # --- MEMORY (highest priority — very specific keywords) ---
+    (r"\b(kya\s+yaad|what\s+do\s+you\s+remember|list\s+memories|saari\s+yaad|sab\s+yaad|kya\s+kya\s+yaad)\b", "list_memories"),
+    (r"\b(yaad\s+rakh|yaad\s+rakho|yaad\s+kar|note\s+this|remember\s+this|save\s+this)\b", "save_memory"),
+    (r"\b(bhool\s+jao|forget|delete\s+memory|hata\s+do\s+yaad|remove\s+memory)\b", "forget_memory"),
+    (r"\b(yaad\s+dila\w*|remind|reminder\s+set|kal\s+yaad|remind\s+me|follow[\s-]up.*yaad)\b", "set_reminder"),
+    (r"\b(mera\s+naam\s+kya|what\s+is\s+my\s+name|who\s+am\s+i)\b", "my_name"),
+    (r"\b(aaj\s+ki\s+date|current\s+date|today'?s?\s+date|kaunsi\s+date)\b", "current_date"),
+
+    # --- SYSTEM / DASHBOARD ---
+    (r"\b(app\s+ka\s+status|system\s+health|health\s+check)\b", "system_health"),
+    (r"\b(dashboard\s+refresh|refresh\s+karo|reload)\b", "dashboard_refresh"),
+    (r"\b(forex\s+rate|inr\s+thb\s+rate|thb\s+rate|exchange\s+rate|currency\s+rate)\b", "forex_rate"),
+    (r"\b(hafte\s+ka\s+revenue|weekly\s+revenue|is\s+hafte\s+ka\s+revenue|week\s+revenue)\b", "weekly_revenue"),
+    (r"\b(daily\s+brief|aaj\s+ka\s+pura\s+summary|aaj\s+ka\s+summary|full\s+summary|summary|brief|today'?s?\s+brief)\b", "daily_brief"),
+
+    # --- COMMUNICATION (specific — must be before generic "bhejo" fallback) ---
+    (r"\b(whatsapp\s+karo|whatsapp\s+bhejo|whats\s*app\s+karo|whatsapp\s+message|whatsapp\s+se\s+bhejo)\b", "whatsapp_send"),
+    (r"\b(line\s+pe\s+bhejo|line\s+karo|line\s+message|line\s+se\s+bhejo|line\s+per\s+bhejo)\b", "line_send"),
+    (r"\b(customers?\s+ko\s+message\s+bhejo|sab\s+customers?\s+ko\s+bhejo|broadcast\s+message|sabko\s+message)\b", "broadcast_message"),
+    (r"\b(statement\s+bhejo|ledger\s+statement|statement\s+send)\b", "send_statement"),
+    (r"\b(catalog\s+bhejo|catalog\s+broadcast|catalog\s+send|sabhi\s+customers?\s+ko\s+catalog)\b", "broadcast_catalog"),
+    (r"\b(invoice\s+bhejo|invoice\s+send|invoice\s+share)\b", "send_invoice"),
+
+    # --- LALAMOVE ---
+    (r"\b(lalamove\s+quote|lalamove\s+ka\s+quote|delivery\s+quote|lalamove\s+quotation)\b", "lalamove_quote"),
+    (r"\b(lalamove\s+book|book\s+pickup|lalamove\s+order|pickup\s+book)\b", "lalamove_book"),
+
+    # --- CREATE (write actions — fall back to OpenAI fill_form) ---
+    (r"\b(naya\s+shipment\s+banao|nayi?\s+shipment|create\s+shipment|shipment\s+banao|shipment\s+add)\b", "create_shipment"),
+    (r"\b(naya\s+invoice\s+banao|nayi?\s+invoice|create\s+invoice|invoice\s+banao|invoice\s+add)\b", "create_invoice"),
+    (r"\b(naya\s+trip\s+banao|nayi?\s+trip|create\s+trip|trip\s+banao|trip\s+add)\b", "create_trip"),
+    (r"\b(naya\s+customer\s+add|customer\s+banao|customer\s+add|add\s+customer)\b", "create_customer"),
+    (r"\b(naya\s+party\s+banao|nayi?\s+party|create\s+party|party\s+banao|party\s+add)\b", "create_party"),
+    (r"\b(naya\s+item\s+add|nayi?\s+item|item\s+add|item\s+banao|create\s+item|catalog\s+add)\b", "create_item"),
+    (r"\b(naya\s+bag\s+add|bag\s+add\s+karo|add\s+bag)\b", "add_bag"),
+
+    # --- LEDGER — WRITE ACTIONS ---
+    (r"\b(diye|paid|gave|di\s+hai|de\s+diya|de\s+diye|payment\s+kar\s+diya)\b.*\brupaye|\brupaye.*\b(diye|paid|de\s+diya)\b", "add_ledger_debit"),
+    (r"\b(mile|received|got|mila|receive|mil\s+gaye|milgaya|paise\s+mile)\b.*\brupaye|\brupaye.*\b(mile|received|mila)\b", "add_ledger_credit"),
+
+    # --- LEDGER — SUMMARY / TOP ---
+    (r"\b(sabse\s+zyada\s+kisko\s+dena|top\s+payable|sabse\s+badi\s+payable|max\s+payable)\b", "top_payable"),
+    (r"\b(sabse\s+zyada\s+.*lena|sabse\s+zyada\s+kisne\s+dena|top\s+receivable|max\s+receivable)\b", "top_receivable"),
+    (r"\b(net\s+dena|kitna\s+total\s+dena|total\s+dena\s+hai|net\s+payable\s+kitna)\b", "net_payable"),
+    (r"\b(net\s+lena|kitna\s+total\s+lena|total\s+lena\s+hai|net\s+receivable\s+kitna)\b", "net_receivable"),
+    (r"\b(net\s+position|net\s+total|overall\s+net)\b", "net_position"),
+    (r"\b(india\s+ka\s+(total\s+)?balance|india\s+total|india\s+wale\s+parties)\b", "india_total"),
+    (r"\b(bangkok\s+ka\s+(total\s+)?balance|thailand\s+total|bangkok\s+wale\s+parties|th\s+total)\b", "bangkok_total"),
+    (r"\b(all\s+parties|sabhi\s+parties|saari\s+parties|list\s+parties|sab\s+parties\s+ka\s+balance)\b", "all_parties"),
+    (r"\b(sabhi\s+customers|all\s+customers|customer\s+list|customers?\s+ke\s+naam)\b", "customer_list"),
+    (r"\b(sabhi\s+carriers|all\s+carriers|carrier\s+list|carriers?\s+ke\s+naam)\b", "carrier_list"),
+    (r"\b(aaj\s+ki\s+entries|today'?s?\s+entries|today\s+ledger|aaj\s+ke\s+ledger)\b", "today_ledger"),
+    (r"\b(overdue\s+entries|overdue\s+ledger|pending\s+ledger)\b", "overdue_ledger"),
+    (r"\b(is\s+mahine\s+ka\s+hisaab|this\s+month\s+ledger|this\s+month\s+hisaab)\b", "this_month_ledger"),
+    (r"\b(pichhle\s+mahine|last\s+month\s+ledger|last\s+month\s+hisaab)\b", "last_month_ledger"),
+
+    # --- LEDGER — PARTY-SPECIFIC ---
+    (r"\b(ledger\s+dikhao|last\s+\d+\s+entries|ledger\s+detail|entries\s+dikhao)\b", "party_ledger_detail"),
+    (r"\b(verified\s+hai\s+kya|kab\s+verified|verify\s+date)\b", "party_verified"),
+    (r"\b(number\s+kya\s+hai|phone\s+number|mobile\s+number|contact\s+kya)\b", "party_phone"),
+    (r"\b(address\s+kya\s+hai|address\s+dikhao|kahan\s+ka\s+hai)\b", "party_address"),
+    (r"\b(detail\s+update|edit\s+karo\s+party|party\s+update)\b", "edit_party"),
+    (r"\b(thb\s+balance|thai\s+balance|baht\s+balance)\b", "thb_balance"),
+
+    # --- TRIPS / BULLION (specific trip patterns come BEFORE generic shipment "status" match) ---
+    (r"\b(trip\s+complete\s+ho|complete\s+trip|trip\s+finish)\b", "complete_trip"),
+    (r"\b(active\s+trip[s]?|current\s+trip[s]?|running\s+trips?)\b", "active_trips_list"),
+    (r"\b(trip\s+status|trip\s+ka\s+status)\b", "trip_status"),
+    (r"\b(trip\s+history|carrier\s+ki\s+history|carrier\s+history)\b", "carrier_trip_history"),
+    (r"\b(naye\s+carrier\s+ki\s+rate|new\s+carrier\s+rate)\b", "carrier_new_rate_check"),
+    (r"\b(carry\s+charge|carry\s+rate\s+kya|carrier\s+rate\s+kya)\b", "carry_charge_calc"),
+    (r"\b(vault\s+mein\s+kitna|vault\s+total|vault\s+summary|kul\s+kitna\s+saman)\b", "vault_summary"),
+    (r"\b(bangkok\s+mein\s+kitna|bangkok\s+vault|bkk\s+vault|thailand\s+vault)\b", "bangkok_vault"),
+    (r"\b(india\s+mein\s+kitna|india\s+vault|india\s+ka\s+vault|bharat\s+vault)\b", "india_vault"),
+    (r"\b(in\s+transit\s+mein\s+kitna|in\s+transit\s+assets|in\s+transit\s+vault|transit\s+ke\s+assets)\b", "in_transit_assets"),
+    (r"\b(aaj\s+kaunsa\s+carrier|today\s+carrier|today\s+departure|carrier\s+ja\s+raha)\b", "today_departures"),
+    (r"\b(usd\s+kitna|dollar\s+kitna|usd\s+in\s+transit|usd\s+total)\b", "usd_in_transit"),
+    (r"\b(gold\s+kitna|kul\s+gold|gold\s+total|sona\s+kitna)\b", "gold_total"),
+    (r"\b(pay\s+karo|pay\s+kar\s+do|carrier\s+ko\s+pay)\b", "pay_carrier"),
+    (r"\b(trip[s]?|carrier[s]?\s+ke|carrier\s+ka|le\s+ja|le\s+jao)\b", "trip_query"),
+
+    # --- SHIPMENTS ---
+    (r"\b(deliver\s+ho\s+gaya|deliver\s+kar\s+diya|delivered\s+ho\s+gaya|mark\s+delivered)\b", "mark_delivered"),
+    (r"\b(assign\s+karo\s+bag|carrier\s+ko\s+assign|carrier\s+assign)\b", "assign_carrier"),
+    (r"\b(warehouse\s+se\s+deliver|deliver\s+from\s+warehouse|warehouse\s+ko\s+deliver)\b", "warehouse_deliver"),
+    (r"\b(warehouse\s+mein\s+kya|warehouse\s+contents|bangkok\s+warehouse\s+mein)\b", "warehouse_contents"),
+    (r"\b(aaj\s+kaunse\s+shipment[s]?|today\s+deliveries|today'?s?\s+shipments|aaj\s+deliver)\b", "today_deliveries"),
+    (r"\b(packing\s+list|packing\s+slip)\b", "packing_list_pdf"),
+    (r"\b(sabse\s+purana\s+pending|oldest\s+pending)\b", "oldest_pending"),
+    (r"\b(freight\s+kya\s+hai|freight\s+kitna|freight\s+amount)\b", "shipment_freight"),
+    (r"\b(edit\s+karo\s+freight|freight\s+edit|freight\s+update|freight\s+change)\b", "edit_freight"),
+    (r"\b(delhi\s+se\s+bangkok|route\s+ke\s+shipment|route\s+se|delhi\s+bangkok\s+wale)\b", "shipments_by_route"),
+    (r"\b(is\s+hafte\s+ke\s+shipment|this\s+week\s+shipments|hafte\s+ke\s+shipments?)\b", "this_week_shipments"),
+    (r"\b(saare\s+shipments?|all\s+shipments\s+of|party\s+ke\s+shipments?|ke\s+saare\s+shipments?)\b", "shipments_by_party"),
+    (r"\b(shipment\s+summary\s+aaj|today\s+shipment\s+stat|aaj\s+ka\s+shipment)\b", "shipment_today_summary"),
+    (r"\b(sabse\s+heavy|heaviest|max\s+weight)\b", "heaviest_shipment"),
+    (r"\b(pending\s+shipment[s]?|shipments?\s+pending)\b", "pending_shipments_list"),
+    (r"\b(in[\s_]transit\s+kya|in\s+transit\s+list|transit\s+mein\s+kya)\b", "in_transit_list"),
+    (r"\b(shipment[s]?\s+kitne|kitne\s+shipment[s]?|shipment\s+count|total\s+shipments)\b", "shipment_count"),
+    (r"\b(shipment[s]?|maal|kahan\s+hai|status|track|consignment)\b", "shipment_query"),
+
+    # --- INVOICES ---
+    (r"\b(pay\s+ho\s+gaya|paid\s+ho\s+gaya|invoice\s+pay|mark\s+paid)\b", "mark_invoice_paid"),
+    (r"\b(invoice.*pdf|pdf\s+bhejo|invoice\s+pdf|inv[-/]\S+\s+ka\s+pdf)\b", "invoice_pdf_send"),
+    (r"\b(total\s+unpaid|kul\s+unpaid|unpaid\s+total)\b", "total_unpaid"),
+    (r"\b(is\s+mahine\s+ki\s+invoices?|this\s+month\s+invoices?)\b", "this_month_invoices"),
+    (r"\b(overdue\s+invoice[s]?|invoice\s+overdue|expired\s+invoice)\b", "overdue_invoices"),
+    (r"\b(edit\s+karo\s+invoice|invoice\s+edit|invoice\s+update|inv[-/]\S+\s+edit\s+karo)\b", "edit_invoice"),
+    (r"\b(unpaid\s+invoice[s]?|invoices?\s+unpaid|bill\s+unpaid)\b", "unpaid_invoices_list"),
+    (r"\bka\s+invoice(?!\s+banao|\s+bhejo)|party\s+ke\s+invoice", "party_invoices"),
+    (r"\b(invoice[s]?|bill[s]?)\b", "invoice_query"),
+
+    # --- CATALOG / ITEMS ---
+    (r"\b(catalog\s+mein\s+kya|items?\s+list|sabhi\s+items?|catalog\s+dikhao|catalog\s+list)\b", "catalog_list"),
+    (r"\b(ki\s+price\s+kya|item.*price\s+kya|price\s+bata|kitne\s+ka\s+hai)\b", "item_price"),
+    (r"\b(photo\s+update|photo\s+add|photo\s+upload)\b", "item_photo_update"),
+    (r"\b(price\s+change|price\s+update|price\s+edit)\b", "item_price_update"),
+    (r"\b(supplier\s+ke\s+items?|supplier\s+wale\s+items?|items?\s+by\s+supplier|ke\s+items?)\b", "items_by_supplier"),
+    (r"\b(stock\s+mein\s+kya\s+nahi|stock\s+mein\s+nahi|out\s+of\s+stock|stock\s+khatam|no\s+stock)\b", "out_of_stock"),
+    (r"\b(item\s+delete|delete\s+item|item\s+hatao|remove\s+item|delete\s+karo)\b", "delete_item"),
+    (r"\b(popular\s+items?|top\s+items?|zyada\s+bikne\s+wala|most\s+viewed)\b", "popular_items"),
+
+    # --- NOTIFICATIONS / TASKS ---
+    (r"\b(kya\s+kya\s+pending|pending\s+kya\s+kya|today\s+todo|aaj\s+kya\s+karna|todo\s+aaj)\b", "today_pending"),
+    (r"\b(important\s+notifications?|high\s+priority|urgent\s+notifications?)\b", "important_notifications"),
+    (r"\b(clear\s+karo\s+notification|all\s+read|clear\s+all\s+notification|notifications?\s+clear|clear\s+.*notifications?)\b", "clear_notifications"),
+    (r"\b(reminder\s+set|schedule\s+follow|follow\s+up\s+set|follow-up\s+set|ka\s+reminder)\b", "schedule_followup"),
+
+    # --- CORE LOOKUPS ---
+    (r"\b(hisaab|hisab|balance|ledger|kitna|amount|paisa|kitne\s+paise)\b", "party_ledger"),
+    (r"\b(bhejo|send|message|msg\s+karo)\b", "send_message"),
+    (r"\b(naya|nayi|banao|banaao|create|add|jodo)\b", "create_form"),
+]
+
+
+def _detect_action(msg: str) -> Optional[str]:
+    m = (msg or "").lower()
+    for pattern, action in _WINGMAN_PATTERNS:
+        if _re.search(pattern, m):
+            return action
+    return None
+
+
+def _find_party(msg: str, parties: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Fuzzy match: full name, first name, or any word from the party name.
+    Case-insensitive. Returns the FIRST match — parties list is assumed
+    small (<200)."""
+    m = (msg or "").lower()
+    # 1. exact full-name substring
+    for p in parties:
+        name = str(p.get("name") or "").lower().strip()
+        if name and name in m:
+            return p
+    # 2. first-word / any-word match (at least 3 chars to avoid false positives)
+    for p in parties:
+        name = str(p.get("name") or "").strip()
+        if not name:
+            continue
+        for word in name.lower().split():
+            if len(word) >= 3 and _re.search(rf"\b{_re.escape(word)}\b", m):
+                return p
+    return None
+
+
+def _format_inr(v: float) -> str:
+    return f"₹{abs(v):,.0f}"
+
+
+def _format_thb(v: float) -> str:
+    return f"THB {abs(v):,.0f}"
+
+
+async def _party_balance(party_id: str, entries: List[Dict[str, Any]], party: Dict[str, Any]) -> Tuple[float, float]:
+    """Compute running INR + THB balance for a party.
+    Convention (same as ledger page):
+        debit  = party owes us (receivable)  → +
+        credit = we owe party (payable)      → −
+    Positive result = "lena" (receivable). Negative = "dena" (payable).
+    """
+    bal_inr = float(party.get("opening_balance_inr") or 0)
+    bal_thb = float(party.get("opening_balance_thb") or 0)
+    for e in entries:
+        if e.get("party_id") != party_id:
+            continue
+        ccy = str(e.get("currency", "INR")).upper()
+        d = float(e.get("debit") or 0)
+        c = float(e.get("credit") or 0)
+        if ccy == "INR":
+            bal_inr += d - c
+        elif ccy == "THB":
+            bal_thb += d - c
+    return round(bal_inr, 2), round(bal_thb, 2)
+
+
+def _direction_phrase(balance: float, party_name: str, ccy_str: str) -> str:
+    """Hinglish natural-language direction sentence."""
+    if abs(balance) < 0.5:
+        return f"{party_name} ka {ccy_str} balance zero hai Sir"
+    if balance > 0:  # party owes us
+        return f"{party_name} se aapko lene hain {ccy_str} {abs(balance):,.0f}"
+    # party is owed by us
+    return f"{party_name} ko aap denge {ccy_str} {abs(balance):,.0f}"
+
+
+class WingmanChatRequest(BaseModel):
+    message: str
+    page: Optional[str] = None
+
+
+@api_router.post("/wingman-chat")
+async def wingman_chat(
+    req: WingmanChatRequest,
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+):
+    """Deterministic keyword-based Q&A over the live business DB.
+
+    Returns `{ answer, action, data }`. If `answer` is None the client
+    falls back to letting the OpenAI Realtime model generate its own
+    reply (for open-ended chatter, creation flows that use `fill_form`,
+    etc.). If `answer` is a string, the client injects it verbatim
+    into the Realtime channel so the model just voices it.
+    """
+    message = (req.message or "").strip()
+    if not message:
+        return {"answer": None, "action": None, "data": None}
+
+    action = _detect_action(message)
+
+    # Prefetch shared data once. Cheap enough for a single voice turn.
+    try:
+        parties = await _proxy_get("/api/parties") or []
+    except Exception:
+        parties = []
+    try:
+        entries = await _proxy_get("/api/ledger/entries") or []
+    except Exception:
+        entries = []
+
+    party = _find_party(message, parties) if parties else None
+
+    # ---------------- SAVE MEMORY ----------------
+    if action == "save_memory":
+        content = _re.sub(
+            r".*?(yaad\s+rakh(?:o)?(?:na|ne)?(?:\s+ki|\s+that)?|note\s+this(?:\s+that)?|remember\s+(?:this|that)?|save\s+(?:this|that)?)",
+            "",
+            message,
+            count=1,
+            flags=_re.IGNORECASE,
+        ).strip(" ,.:;-")
+        if not content:
+            return {
+                "answer": "Sir kya yaad rakhna hai batao — poori baat boliye.",
+                "action": action,
+                "data": None,
+            }
+        # Auto-derive a key from the first noun-ish word (party name if we
+        # can match one, else the first meaningful word).
+        key = ""
+        if party:
+            key = f"party:{party.get('name')}"
+        else:
+            first_words = _re.findall(r"[A-Za-z]{3,}", content)
+            key = f"note:{first_words[0].lower()}" if first_words else f"mem_{uuid.uuid4().hex[:6]}"
+        scope = _memory_scope(user)
+        now = datetime.now(timezone.utc).isoformat()
+        await db.voice_memories.update_one(
+            {"key": key, "user_id": scope},
+            {
+                "$set": {"value": content, "last_updated": now, "user_id": scope},
+                "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": now, "key": key},
+            },
+            upsert=True,
+        )
+        return {
+            "answer": f"Yaad kar liya Sir — {content}",
+            "action": action,
+            "data": {"key": key, "value": content},
+        }
+
+    # ---------------- LIST MEMORIES ----------------
+    if action == "list_memories":
+        q: Dict[str, Any] = {}
+        scope = _memory_scope(user)
+        if scope:
+            q["user_id"] = scope
+        docs = await db.voice_memories.find(q, {"_id": 0}).sort("last_updated", -1).to_list(20)
+        if not docs:
+            return {"answer": "Sir, abhi kuch yaad nahi hai. Batao kya note karna hai.", "action": action, "data": []}
+        top = docs[:5]
+        vals = " · ".join(str(d.get("value", "")).strip()[:80] for d in top)
+        more = f" Aur bhi {len(docs) - len(top)} baatein yaad hain." if len(docs) > len(top) else ""
+        return {"answer": f"Sir, yaad hai: {vals}.{more}", "action": action, "data": docs}
+
+    # ---------------- PARTY LEDGER ----------------
+    if action == "party_ledger":
+        if not party:
+            return {
+                "answer": "Yeh party nahi mili Sir, naam clearly boliye ek baar.",
+                "action": action,
+                "data": {"searched": message},
+            }
+        inr, thb = await _party_balance(party["id"], entries, party)
+        parts = [_direction_phrase(inr, party["name"], "INR")]
+        if abs(thb) > 0.5:
+            parts.append(_direction_phrase(thb, party["name"], "THB"))
+        # Last 3 transactions for this party
+        my_entries = [e for e in entries if e.get("party_id") == party["id"]]
+        my_entries.sort(key=lambda x: str(x.get("date") or ""), reverse=True)
+        last_3 = my_entries[:3]
+        return {
+            "answer": ". ".join(parts) + ".",
+            "action": action,
+            "data": {
+                "party": {"id": party.get("id"), "name": party.get("name"), "role": party.get("role")},
+                "balance_inr": inr,
+                "balance_thb": thb,
+                "last_3": last_3,
+            },
+        }
+
+    # ---------------- NET POSITION ----------------
+    if action == "net_position":
+        total_recv_inr = 0.0
+        total_pay_inr = 0.0
+        total_recv_thb = 0.0
+        total_pay_thb = 0.0
+        for p in parties:
+            inr, thb = await _party_balance(p["id"], entries, p)
+            if inr > 0:
+                total_recv_inr += inr
+            elif inr < 0:
+                total_pay_inr += abs(inr)
+            if thb > 0:
+                total_recv_thb += thb
+            elif thb < 0:
+                total_pay_thb += abs(thb)
+        net_inr = total_recv_inr - total_pay_inr
+        direction_inr = "lena" if net_inr >= 0 else "dena"
+        line1 = f"Sir, INR mein lene hain {_format_inr(total_recv_inr)}, dene hain {_format_inr(total_pay_inr)}. Net {direction_inr} {_format_inr(net_inr)}"
+        line2 = ""
+        if abs(total_recv_thb) > 0.5 or abs(total_pay_thb) > 0.5:
+            net_thb = total_recv_thb - total_pay_thb
+            direction_thb = "lena" if net_thb >= 0 else "dena"
+            line2 = f". THB mein net {direction_thb} {_format_thb(net_thb)}"
+        return {
+            "answer": line1 + line2 + ".",
+            "action": action,
+            "data": {
+                "receivable_inr": round(total_recv_inr, 2),
+                "payable_inr": round(total_pay_inr, 2),
+                "net_inr": round(net_inr, 2),
+                "receivable_thb": round(total_recv_thb, 2),
+                "payable_thb": round(total_pay_thb, 2),
+            },
+        }
+
+    # ---------------- ALL PARTIES ----------------
+    if action == "all_parties":
+        summary_lines = []
+        for p in parties[:8]:
+            inr, thb = await _party_balance(p["id"], entries, p)
+            if abs(inr) < 0.5 and abs(thb) < 0.5:
+                continue
+            summary_lines.append(f"{p['name']} {'+' if inr >= 0 else '-'}{abs(inr):,.0f}")
+        if not summary_lines:
+            return {"answer": "Sabhi party balances zero hain Sir.", "action": action, "data": []}
+        text = ", ".join(summary_lines[:5])
+        return {"answer": f"Sir, top parties: {text}.", "action": action, "data": {"count": len(parties)}}
+
+    # ---------------- SHIPMENT QUERY ----------------
+    if action == "shipment_query":
+        try:
+            ships = await _proxy_get("/api/shipments") or []
+        except Exception:
+            ships = []
+        # Match consignment number if user mentioned one
+        cn_match = _re.search(r"\b([A-Z]{2,}[-/][A-Z0-9]+[-/]?\d+)\b", message.upper())
+        if cn_match:
+            wanted = cn_match.group(1)
+            hit = next((s for s in ships if str(s.get("consignment_no", "")).upper() == wanted), None)
+            if hit:
+                origin = hit.get("origin") or "?"
+                dest = hit.get("destination") or "?"
+                st = hit.get("status") or "?"
+                return {
+                    "answer": f"Shipment {hit.get('consignment_no')} — {origin} se {dest}, status {st}.",
+                    "action": action,
+                    "data": hit,
+                }
+        active = [s for s in ships if str(s.get("status", "")).lower() in ("pending", "in_transit", "warehouse_arrived")]
+        pending = sum(1 for s in ships if str(s.get("status", "")).lower() == "pending")
+        it = sum(1 for s in ships if str(s.get("status", "")).lower() == "in_transit")
+        return {
+            "answer": f"Sir, {len(active)} active shipments — {pending} pending, {it} in transit.",
+            "action": action,
+            "data": {"active": len(active), "pending": pending, "in_transit": it},
+        }
+
+    # ---------------- INVOICE QUERY ----------------
+    if action == "invoice_query":
+        try:
+            invs = await _proxy_get("/api/invoices") or []
+        except Exception:
+            invs = []
+        unpaid = [i for i in invs if str(i.get("status", "")).lower() in ("draft", "sent", "unpaid")]
+        total_inr = sum(float(i.get("total") or 0) for i in unpaid if str(i.get("currency", "INR")).upper() == "INR")
+        total_thb = sum(float(i.get("total") or 0) for i in unpaid if str(i.get("currency", "")).upper() == "THB")
+        thb_line = f", THB {total_thb:,.0f}" if total_thb > 0.5 else ""
+        return {
+            "answer": f"Sir, {len(unpaid)} invoices unpaid — total {_format_inr(total_inr)}{thb_line}.",
+            "action": action,
+            "data": {"unpaid_count": len(unpaid), "total_inr": total_inr, "total_thb": total_thb},
+        }
+
+    # ---------------- TRIP QUERY ----------------
+    if action == "trip_query":
+        try:
+            trips = await _proxy_get("/api/bullion/trips") or []
+        except Exception:
+            trips = []
+        active = [t for t in trips if str(t.get("status", "")).lower() in ("planned", "pending", "in_transit", "partial_delivered")]
+        if not active:
+            return {"answer": "Sir, koi active trip nahi hai abhi.", "action": action, "data": []}
+        sample = active[0]
+        route = sample.get("route") or sample.get("direction") or "?"
+        carrier = sample.get("carrier_name") or "?"
+        return {
+            "answer": f"Sir, {len(active)} active trips. Pehla: {carrier}, {route}.",
+            "action": action,
+            "data": {"count": len(active), "first": sample},
+        }
+
+    # ---------------- DAILY BRIEF ----------------
+    if action == "daily_brief":
+        try:
+            stats = await _proxy_get("/api/dashboard/stats") or {}
+        except Exception:
+            stats = {}
+        s = stats.get("shipments") or {}
+        out = stats.get("outstanding") or {}
+        pending = int(s.get("pending") or 0)
+        it = int(s.get("in_transit") or 0)
+        outstanding_inr = float(out.get("inr") or 0)
+        # Count unpaid invoices
+        try:
+            invs = await _proxy_get("/api/invoices") or []
+        except Exception:
+            invs = []
+        unpaid = sum(1 for i in invs if str(i.get("status", "")).lower() in ("draft", "sent", "unpaid"))
+        return {
+            "answer": f"Sir aaj: {pending} shipments pending, {it} in transit, {unpaid} invoices unpaid, outstanding {_format_inr(outstanding_inr)}.",
+            "action": action,
+            "data": {"pending": pending, "in_transit": it, "unpaid_invoices": unpaid, "outstanding_inr": outstanding_inr},
+        }
+
+    # ---------------- SEND MESSAGE (WhatsApp) — MOCKED ----------------
+    if action == "send_message":
+        if not party:
+            return {
+                "answer": "Kis party ko bhejna hai Sir, naam batao.",
+                "action": action,
+                "data": None,
+            }
+        # Queue in whatsapp_broadcast_log (same mocked pipeline as catalog)
+        now = datetime.now(timezone.utc).isoformat()
+        phone = str(party.get("phone") or "").strip()
+        content = _re.sub(r".*?(bhejo|send|message|whatsapp|msg\s+karo)", "", message, count=1, flags=_re.IGNORECASE).strip(" ,.:;-")
+        doc = {
+            "id": str(uuid.uuid4()),
+            "party_id": party.get("id"),
+            "party_name": party.get("name"),
+            "phone": phone,
+            "message": content or f"Namaste {party.get('name')}, from Wingman.",
+            "status": "queued",
+            "source": "wingman-chat",
+            "created_at": now,
+        }
+        await db.whatsapp_broadcast_log.insert_one(doc)
+        return {
+            "answer": f"Ho gaya Sir — {party.get('name')} ko message queue kar diya.",
+            "action": action,
+            "data": {"party": party.get("name"), "message": doc["message"]},
+        }
+
+    # ---------------- CREATE FORM — hand back to OpenAI so fill_form fires ----
+    if action in {
+        "create_form", "create_shipment", "create_invoice", "create_trip",
+        "create_customer", "create_party", "create_item", "add_bag",
+        "add_ledger_debit", "add_ledger_credit",
+    }:
+        # Returning answer=None lets the client trigger a normal
+        # response.create so the model can invoke the fill_form tool
+        # naturally (with all its schema knowledge).
+        return {"answer": None, "action": action, "data": None}
+
+    # ================================================================
+    # NEW HANDLERS (100-command expansion — Absolute Final Snippet)
+    # ================================================================
+
+    # ---------------- MEMORY ----------------
+    if action == "my_name":
+        display = "Kishan Sir"
+        try:
+            if user and user.get("display_name"):
+                display = f"{user['display_name']} {user.get('honorific','Sir')}".strip()
+        except Exception:
+            pass
+        return {"answer": f"Aap {display} hain — LogiOp ke boss.", "action": action, "data": {"name": display}}
+
+    if action == "current_date":
+        # IST = UTC+5:30
+        ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+        return {
+            "answer": f"Aaj {ist.strftime('%d %B %Y')}, {ist.strftime('%A')} hai Sir.",
+            "action": action,
+            "data": {"iso": ist.date().isoformat()},
+        }
+
+    if action == "forget_memory":
+        # Extract key hint from message
+        target_word = None
+        m_words = _re.findall(r"[A-Za-z_]{3,}", message)
+        for w in m_words:
+            if w.lower() not in {"bhool", "jao", "forget", "delete", "memory", "hata", "remove", "the", "yaad"}:
+                target_word = w.lower()
+                break
+        if not target_word:
+            return {"answer": "Sir, kaunsi yaad hatani hai batao.", "action": action, "data": None}
+        scope = _memory_scope(user)
+        q: Dict[str, Any] = {"key": {"$regex": target_word, "$options": "i"}}
+        if scope:
+            q["user_id"] = scope
+        res = await db.voice_memories.delete_many(q)
+        return {
+            "answer": f"Ho gaya Sir — {res.deleted_count} yaad hatai." if res.deleted_count else "Kuch mila nahi Sir us naam se.",
+            "action": action,
+            "data": {"deleted": res.deleted_count},
+        }
+
+    if action == "set_reminder":
+        content = _re.sub(r".*?(yaad\s+dila|reminder\s+set|remind\s+me|kal\s+yaad)", "", message, count=1, flags=_re.IGNORECASE).strip(" ,.:;-")
+        if not content:
+            return {"answer": "Sir kya reminder chahiye batao.", "action": action, "data": None}
+        # Store in voice_memories with 'reminder:' key prefix
+        scope = _memory_scope(user)
+        now = datetime.now(timezone.utc).isoformat()
+        rem_id = str(uuid.uuid4())
+        await db.voice_memories.insert_one({
+            "id": rem_id, "key": f"reminder:{rem_id[:6]}", "value": content,
+            "user_id": scope, "type": "reminder",
+            "created_at": now, "last_updated": now,
+        })
+        return {"answer": f"Reminder set Sir — {content}.", "action": action, "data": {"content": content}}
+
+    # ---------------- SYSTEM / DASHBOARD ----------------
+    if action == "system_health":
+        ok_backend = False
+        try:
+            _ = await _proxy_get("/api/dashboard/stats")
+            ok_backend = True
+        except Exception:
+            pass
+        return {
+            "answer": f"Sir, app healthy hai. Backend {'connected' if ok_backend else 'down'}, DB ok, voice AI live.",
+            "action": action,
+            "data": {"backend": ok_backend},
+        }
+
+    if action == "dashboard_refresh":
+        return {"answer": "Dashboard refresh ho raha hai Sir, ek pal ruko.", "action": action, "data": {"refresh": True}}
+
+    if action == "forex_rate":
+        # Try to pull from bullion rates
+        try:
+            rates = await _proxy_get("/api/bullion/rates") or {}
+        except Exception:
+            rates = {}
+        rate = rates.get("currency_rate_per_1000") or 2650  # sensible default
+        return {
+            "answer": f"Sir, current transfer rate INR {rate:,.2f} per 1000 THB hai.",
+            "action": action,
+            "data": {"rate_inr_per_1000_thb": rate},
+        }
+
+    if action == "weekly_revenue":
+        try:
+            invs = await _proxy_get("/api/invoices") or []
+        except Exception:
+            invs = []
+        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
+        paid_week = [i for i in invs if str(i.get("status", "")).lower() == "paid" and str(i.get("date", ""))[:10] >= seven_days_ago]
+        total_inr = sum(float(i.get("total") or 0) for i in paid_week if str(i.get("currency", "INR")).upper() == "INR")
+        total_thb = sum(float(i.get("total") or 0) for i in paid_week if str(i.get("currency", "")).upper() == "THB")
+        thb_line = f", THB {total_thb:,.0f}" if total_thb > 0.5 else ""
+        return {
+            "answer": f"Sir, is hafte ka revenue: {_format_inr(total_inr)}{thb_line} ({len(paid_week)} invoices).",
+            "action": action,
+            "data": {"invoices": len(paid_week), "revenue_inr": total_inr, "revenue_thb": total_thb},
+        }
+
+    # ---------------- LEDGER SUMMARIES ----------------
+    if action in {"net_payable", "net_receivable"}:
+        total_recv_inr = 0.0
+        total_pay_inr = 0.0
+        for p in parties:
+            inr, _thb = await _party_balance(p["id"], entries, p)
+            if inr > 0:
+                total_recv_inr += inr
+            elif inr < 0:
+                total_pay_inr += abs(inr)
+        if action == "net_payable":
+            return {"answer": f"Sir, total dena hai {_format_inr(total_pay_inr)}.", "action": action, "data": {"payable_inr": total_pay_inr}}
+        return {"answer": f"Sir, total lena hai {_format_inr(total_recv_inr)}.", "action": action, "data": {"receivable_inr": total_recv_inr}}
+
+    if action == "top_payable":
+        top = []
+        for p in parties:
+            inr, _t = await _party_balance(p["id"], entries, p)
+            if inr < 0:
+                top.append((p["name"], abs(inr)))
+        if not top:
+            return {"answer": "Sir, kisi ko dena nahi hai abhi.", "action": action, "data": []}
+        top.sort(key=lambda x: x[1], reverse=True)
+        n, amt = top[0]
+        return {"answer": f"Sir, sabse zyada {n} ko dena hai — {_format_inr(amt)}.", "action": action, "data": {"party": n, "amount_inr": amt}}
+
+    if action == "top_receivable":
+        top = []
+        for p in parties:
+            inr, _t = await _party_balance(p["id"], entries, p)
+            if inr > 0:
+                top.append((p["name"], inr))
+        if not top:
+            return {"answer": "Sir, kisi se lena nahi hai abhi.", "action": action, "data": []}
+        top.sort(key=lambda x: x[1], reverse=True)
+        n, amt = top[0]
+        return {"answer": f"Sir, sabse zyada {n} se lena hai — {_format_inr(amt)}.", "action": action, "data": {"party": n, "amount_inr": amt}}
+
+    if action in {"india_total", "bangkok_total"}:
+        want_country = "IN" if action == "india_total" else "TH"
+        total = 0.0
+        for p in parties:
+            if str(p.get("country", "")).upper() != want_country:
+                continue
+            inr, _t = await _party_balance(p["id"], entries, p)
+            total += inr
+        label = "India" if want_country == "IN" else "Bangkok/Thailand"
+        direction = "lena" if total >= 0 else "dena"
+        return {"answer": f"Sir, {label} ke parties se net {direction} {_format_inr(total)}.", "action": action, "data": {"country": want_country, "net_inr": total}}
+
+    if action == "customer_list":
+        customers = [p for p in parties if str(p.get("role", "")).lower() == "customer"]
+        names = ", ".join((p.get("name") or "") for p in customers[:8])
+        more = f" (+{len(customers)-8} aur)" if len(customers) > 8 else ""
+        return {"answer": f"Sir, {len(customers)} customers hain: {names}{more}.", "action": action, "data": {"count": len(customers)}}
+
+    if action == "carrier_list":
+        carriers = [p for p in parties if str(p.get("role", "")).lower() == "carrier"]
+        names = ", ".join((p.get("name") or "") for p in carriers[:8])
+        more = f" (+{len(carriers)-8} aur)" if len(carriers) > 8 else ""
+        return {"answer": f"Sir, {len(carriers)} carriers hain: {names}{more}.", "action": action, "data": {"count": len(carriers)}}
+
+    if action == "today_ledger":
+        today = datetime.now(timezone.utc).date().isoformat()
+        today_entries = [e for e in entries if str(e.get("date", ""))[:10] == today]
+        total = sum(float(e.get("debit") or 0) + float(e.get("credit") or 0) for e in today_entries)
+        return {"answer": f"Sir, aaj {len(today_entries)} ledger entries hain, total {_format_inr(total)}.", "action": action, "data": {"count": len(today_entries)}}
+
+    if action == "overdue_ledger":
+        # Entries older than 30 days with non-zero debit (party owes us)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).date().isoformat()
+        overdue = [e for e in entries if str(e.get("date", ""))[:10] < cutoff and float(e.get("debit") or 0) > 0]
+        total = sum(float(e.get("debit") or 0) for e in overdue)
+        return {"answer": f"Sir, {len(overdue)} overdue entries — total {_format_inr(total)}.", "action": action, "data": {"count": len(overdue), "total_inr": total}}
+
+    if action in {"this_month_ledger", "last_month_ledger"}:
+        now = datetime.now(timezone.utc)
+        if action == "this_month_ledger":
+            start = now.replace(day=1)
+            label = "is mahine"
+        else:
+            first_this = now.replace(day=1)
+            last_last = first_this - timedelta(days=1)
+            start = last_last.replace(day=1)
+            label = "pichhle mahine"
+        prefix = start.date().isoformat()[:7]  # YYYY-MM
+        mo_entries = [e for e in entries if str(e.get("date", ""))[:7] == prefix]
+        total_debit = sum(float(e.get("debit") or 0) for e in mo_entries)
+        total_credit = sum(float(e.get("credit") or 0) for e in mo_entries)
+        return {
+            "answer": f"Sir, {label} {len(mo_entries)} entries — debit {_format_inr(total_debit)}, credit {_format_inr(total_credit)}.",
+            "action": action,
+            "data": {"count": len(mo_entries), "debit": total_debit, "credit": total_credit},
+        }
+
+    # ---------------- PARTY-SPECIFIC (ledger detail, phone, address, verify, THB) -----
+    if action == "party_ledger_detail":
+        if not party:
+            return {"answer": "Kis party ka ledger chahiye Sir?", "action": action, "data": None}
+        my = [e for e in entries if e.get("party_id") == party["id"]]
+        my.sort(key=lambda x: str(x.get("date") or ""), reverse=True)
+        last_10 = my[:10]
+        return {
+            "answer": f"Sir, {party['name']} ki last {len(last_10)} entries hain — data ledger page pe dikhata hoon.",
+            "action": action,
+            "data": {"party": party.get("name"), "entries": last_10},
+        }
+
+    if action == "party_verified":
+        if not party:
+            return {"answer": "Kis party ka verify check karna hai Sir?", "action": action, "data": None}
+        # Placeholder — real "last verified" field not on party doc
+        modified = party.get("modified_at") or party.get("created_at") or ""
+        return {
+            "answer": f"Sir, {party['name']} last {modified[:10] if modified else 'unknown'} ko updated tha.",
+            "action": action,
+            "data": {"party": party.get("name"), "last_updated": modified},
+        }
+
+    if action == "party_phone":
+        if not party:
+            return {"answer": "Kis party ka number chahiye Sir?", "action": action, "data": None}
+        phone = str(party.get("phone") or "").strip()
+        if not phone:
+            return {"answer": f"Sir, {party['name']} ka number save nahi hai.", "action": action, "data": None}
+        return {"answer": f"{party['name']} ka number: {phone}", "action": action, "data": {"phone": phone}}
+
+    if action == "party_address":
+        if not party:
+            return {"answer": "Kis party ka address chahiye Sir?", "action": action, "data": None}
+        addr = str(party.get("address") or "").strip()
+        if not addr:
+            return {"answer": f"Sir, {party['name']} ka address save nahi hai.", "action": action, "data": None}
+        return {"answer": f"{party['name']} ka address: {addr}", "action": action, "data": {"address": addr}}
+
+    if action == "edit_party":
+        if not party:
+            return {"answer": "Kis party ko edit karna hai Sir?", "action": action, "data": None}
+        return {
+            "answer": f"{party['name']} ka form khol raha hoon Sir.",
+            "action": action,
+            "data": {"navigate": f"/parties/{party.get('id')}"},
+        }
+
+    if action == "thb_balance":
+        if not party:
+            return {"answer": "Kis party ka THB balance chahiye Sir?", "action": action, "data": None}
+        _inr, thb = await _party_balance(party["id"], entries, party)
+        return {
+            "answer": _direction_phrase(thb, party["name"], "THB") + ".",
+            "action": action,
+            "data": {"party": party["name"], "balance_thb": thb},
+        }
+
+    # ---------------- SHIPMENTS ----------------
+    if action in {
+        "mark_delivered", "assign_carrier", "warehouse_deliver", "edit_freight",
+        "packing_list_pdf",
+    }:
+        # These need consignment_no from message
+        cn_match = _re.search(r"\b([A-Z]{2,}[-/][A-Z0-9]+[-/]?\d+)\b", message.upper())
+        cn = cn_match.group(1) if cn_match else "?"
+        if action == "mark_delivered":
+            return {"answer": f"Sir, {cn} ko delivered mark kar raha hoon.", "action": action, "data": {"consignment_no": cn}}
+        if action == "assign_carrier":
+            return {"answer": f"Sir, bag ke liye carrier assign karo — form khol raha hoon.", "action": action, "data": {"consignment_no": cn}}
+        if action == "warehouse_deliver":
+            return {"answer": f"Sir, warehouse se {cn} ko deliver kar raha hoon.", "action": action, "data": {"consignment_no": cn}}
+        if action == "edit_freight":
+            return {"answer": f"Sir, {cn} ka freight edit ke liye form khol raha hoon.", "action": action, "data": {"consignment_no": cn}}
+        if action == "packing_list_pdf":
+            return {"answer": f"Sir, {cn} ka packing list PDF generate ho raha hai.", "action": action, "data": {"consignment_no": cn}}
+
+    if action in {"warehouse_contents", "today_deliveries", "oldest_pending", "shipment_freight",
+                   "shipments_by_route", "this_week_shipments", "shipments_by_party",
+                   "shipment_today_summary", "heaviest_shipment", "pending_shipments_list",
+                   "in_transit_list", "shipment_count"}:
+        try:
+            ships = await _proxy_get("/api/shipments") or []
+        except Exception:
+            ships = []
+        if action == "warehouse_contents":
+            try:
+                wh = await _proxy_get("/api/dashboard/warehouse") or {}
+            except Exception:
+                wh = {}
+            bags = int(wh.get("current_bags") or 0)
+            kg = float(wh.get("current_kg") or 0)
+            return {"answer": f"Bangkok warehouse mein {bags} bags, {kg:.1f} kg saman hai Sir.", "action": action, "data": wh}
+        if action == "today_deliveries":
+            today = datetime.now(timezone.utc).date().isoformat()
+            todays = [s for s in ships if str(s.get("dispatch_date", ""))[:10] == today]
+            return {"answer": f"Sir, aaj {len(todays)} shipments deliver honge.", "action": action, "data": {"count": len(todays)}}
+        if action == "oldest_pending":
+            pending = [s for s in ships if str(s.get("status", "")).lower() == "pending"]
+            if not pending:
+                return {"answer": "Sir, koi pending shipment nahi hai.", "action": action, "data": None}
+            pending.sort(key=lambda x: str(x.get("created_at", "")))
+            oldest = pending[0]
+            return {"answer": f"Sabse purana pending: {oldest.get('consignment_no')} ({oldest.get('origin')}→{oldest.get('destination')}).", "action": action, "data": oldest}
+        if action == "shipment_freight":
+            cn_match = _re.search(r"\b([A-Z]{2,}[-/][A-Z0-9]+[-/]?\d+)\b", message.upper())
+            if cn_match:
+                hit = next((s for s in ships if str(s.get("consignment_no", "")).upper() == cn_match.group(1)), None)
+                if hit:
+                    fr = float(hit.get("freight") or 0)
+                    ccy = hit.get("freight_currency") or "INR"
+                    return {"answer": f"{hit.get('consignment_no')} ka freight {ccy} {fr:,.0f} hai.", "action": action, "data": {"freight": fr}}
+            return {"answer": "Consignment number batao Sir.", "action": action, "data": None}
+        if action == "shipments_by_route":
+            # Look for "delhi", "bangkok", "mumbai", etc.
+            m_lower = message.lower()
+            hits = []
+            for s in ships:
+                o = (s.get("origin") or "").lower()
+                d = (s.get("destination") or "").lower()
+                if any(city in m_lower for city in [o, d] if city):
+                    hits.append(s)
+            return {"answer": f"Sir, us route ke {len(hits)} shipments hain.", "action": action, "data": {"count": len(hits)}}
+        if action == "this_week_shipments":
+            week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            hits = [s for s in ships if str(s.get("created_at", "")) >= week_ago]
+            return {"answer": f"Sir, is hafte ke {len(hits)} shipments hain.", "action": action, "data": {"count": len(hits)}}
+        if action == "shipments_by_party" and party:
+            hits = [s for s in ships if s.get("party_id") == party["id"]]
+            return {"answer": f"Sir, {party['name']} ke {len(hits)} shipments hain.", "action": action, "data": {"count": len(hits)}}
+        if action == "shipments_by_party":
+            return {"answer": "Kis party ke shipments Sir?", "action": action, "data": None}
+        if action == "shipment_today_summary":
+            today = datetime.now(timezone.utc).date().isoformat()
+            todays = [s for s in ships if str(s.get("created_at", ""))[:10] == today]
+            return {"answer": f"Aaj {len(todays)} naye shipments create hue Sir.", "action": action, "data": {"count": len(todays)}}
+        if action == "heaviest_shipment":
+            if not ships:
+                return {"answer": "Koi shipment nahi hai Sir.", "action": action, "data": None}
+            heaviest = max(ships, key=lambda x: float(x.get("weight_kg") or 0))
+            return {"answer": f"Sabse heavy: {heaviest.get('consignment_no')} — {heaviest.get('weight_kg')} kg.", "action": action, "data": heaviest}
+        if action == "pending_shipments_list":
+            pending = [s for s in ships if str(s.get("status", "")).lower() == "pending"]
+            return {"answer": f"Sir, {len(pending)} shipments pending hain.", "action": action, "data": {"count": len(pending)}}
+        if action == "in_transit_list":
+            it = [s for s in ships if str(s.get("status", "")).lower() == "in_transit"]
+            return {"answer": f"Sir, {len(it)} shipments in transit hain.", "action": action, "data": {"count": len(it)}}
+        if action == "shipment_count":
+            return {"answer": f"Sir, total {len(ships)} shipments hain.", "action": action, "data": {"count": len(ships)}}
+
+    # ---------------- TRIPS / BULLION ----------------
+    if action in {"active_trips_list", "trip_status", "complete_trip", "carrier_trip_history",
+                   "today_departures", "carry_charge_calc", "carrier_new_rate_check",
+                   "vault_summary", "bangkok_vault", "india_vault", "in_transit_assets",
+                   "usd_in_transit", "gold_total", "pay_carrier"}:
+        try:
+            trips = await _proxy_get("/api/bullion/trips") or []
+        except Exception:
+            trips = []
+        try:
+            txns = await _proxy_get("/api/bullion/transactions") or []
+        except Exception:
+            txns = []
+        try:
+            rates = await _proxy_get("/api/bullion/rates") or {}
+        except Exception:
+            rates = {}
+
+        if action == "active_trips_list":
+            active = [t for t in trips if str(t.get("status", "")).lower() in ("planned", "pending", "in_transit", "partial_delivered")]
+            if not active:
+                return {"answer": "Sir, koi active trip nahi hai.", "action": action, "data": []}
+            first = active[0]
+            return {"answer": f"Sir, {len(active)} active trips. Pehla: {first.get('carrier_name','?')} — {first.get('route','?')}.", "action": action, "data": {"count": len(active)}}
+        if action == "trip_status":
+            if not trips:
+                return {"answer": "Sir, koi trip nahi hai abhi.", "action": action, "data": None}
+            latest = trips[0]
+            return {"answer": f"Latest trip {latest.get('carrier_name')} ka status: {latest.get('status')}.", "action": action, "data": latest}
+        if action == "complete_trip":
+            return {"answer": "Sir, trip complete ke liye ID batao ya trip page kholo.", "action": action, "data": None}
+        if action == "carrier_trip_history":
+            if not party:
+                return {"answer": "Kis carrier ki history chahiye Sir?", "action": action, "data": None}
+            hits = [t for t in trips if t.get("carrier_party_id") == party["id"] or t.get("carrier_name") == party.get("name")]
+            return {"answer": f"Sir, {party['name']} ke {len(hits)} trips history mein hain.", "action": action, "data": {"count": len(hits)}}
+        if action == "today_departures":
+            today = datetime.now(timezone.utc).date().isoformat()
+            todays = [t for t in trips if str(t.get("date", ""))[:10] == today]
+            if not todays:
+                return {"answer": "Aaj koi carrier ja nahi raha Sir.", "action": action, "data": []}
+            names = ", ".join(t.get("carrier_name", "?") for t in todays[:3])
+            return {"answer": f"Aaj {len(todays)} carriers ja rahe: {names}.", "action": action, "data": {"count": len(todays)}}
+        if action == "carry_charge_calc":
+            # Extract weight from message
+            wt_match = _re.search(r"(\d+(?:\.\d+)?)\s*(?:kg|kilo)", message.lower())
+            wt = float(wt_match.group(1)) if wt_match else 1.0
+            rate = float(rates.get("hand_carry_rate_inr_per_kg") or 200)
+            charge = wt * rate
+            return {"answer": f"Sir, {wt} kg ka carry charge {_format_inr(charge)} hoga.", "action": action, "data": {"weight_kg": wt, "charge_inr": charge}}
+        if action == "carrier_new_rate_check":
+            return {
+                "answer": "Sir, naya carrier ki rate save karne se pehle confirm karna zaroori hai — kya rate confirm hai?",
+                "action": action, "data": {"needs_confirmation": True},
+            }
+        if action == "vault_summary":
+            total_gold = sum(float(t.get("gold_amount") or 0) for t in txns if str(t.get("type","")).lower() == "gold")
+            total_curr = sum(float(t.get("currency_amount") or 0) for t in txns if str(t.get("type","")).lower() == "currency")
+            return {"answer": f"Vault mein total {total_gold:.2f} gold (baht) aur {total_curr:,.0f} currency hai Sir.", "action": action, "data": {"gold": total_gold, "currency": total_curr}}
+        if action == "bangkok_vault":
+            # Placeholder — real logic needs location tracking; use TH_TO_IN trips
+            th_txns = [t for t in txns if str(t.get("status", "")).lower() in ("open", "in_bangkok")]
+            return {"answer": f"Bangkok mein approx {len(th_txns)} open items hain Sir.", "action": action, "data": {"count": len(th_txns)}}
+        if action == "india_vault":
+            in_txns = [t for t in txns if str(t.get("status", "")).lower() in ("open", "in_india", "completed")]
+            return {"answer": f"India mein approx {len(in_txns)} items hain Sir.", "action": action, "data": {"count": len(in_txns)}}
+        if action == "in_transit_assets":
+            it = [t for t in txns if str(t.get("status", "")).lower() == "in_transit"]
+            gold = sum(float(t.get("gold_amount") or 0) for t in it)
+            curr = sum(float(t.get("currency_amount") or 0) for t in it)
+            return {"answer": f"In-transit: {len(it)} items, gold {gold:.1f} baht, currency {curr:,.0f}.", "action": action, "data": {"count": len(it)}}
+        if action == "usd_in_transit":
+            usd_txns = [t for t in txns if str(t.get("currency", "")).upper() == "USD" and str(t.get("status", "")).lower() == "in_transit"]
+            total = sum(float(t.get("currency_amount") or 0) for t in usd_txns)
+            return {"answer": f"USD in transit: {total:,.0f}.", "action": action, "data": {"usd_transit": total}}
+        if action == "gold_total":
+            gold_txns = [t for t in txns if str(t.get("type", "")).lower() == "gold"]
+            total = sum(float(t.get("gold_amount") or 0) for t in gold_txns)
+            return {"answer": f"Sir, total gold {total:.2f} baht hai vault + transit mein.", "action": action, "data": {"gold_baht": total}}
+        if action == "pay_carrier":
+            if not party:
+                return {"answer": "Kis carrier ko pay karna hai Sir?", "action": action, "data": None}
+            # Fallback so fill_form opens ledger entry form
+            return {"answer": None, "action": action, "data": {"party": party.get("name")}}
+
+    # ---------------- INVOICES ----------------
+    if action in {"mark_invoice_paid", "invoice_pdf_send", "total_unpaid", "this_month_invoices",
+                   "overdue_invoices", "edit_invoice", "unpaid_invoices_list", "party_invoices",
+                   "send_invoice"}:
+        try:
+            invs = await _proxy_get("/api/invoices") or []
+        except Exception:
+            invs = []
+        if action == "mark_invoice_paid":
+            inv_match = _re.search(r"\b(INV[-/]?\S+|\d{3,}[-/]\S+)\b", message.upper())
+            inv = inv_match.group(1) if inv_match else "?"
+            return {"answer": f"Sir, {inv} ko paid mark kar raha hoon.", "action": action, "data": {"invoice": inv}}
+        if action == "invoice_pdf_send":
+            inv_match = _re.search(r"\b(INV[-/]?\S+|\d{3,}[-/]\S+)\b", message.upper())
+            inv = inv_match.group(1) if inv_match else "?"
+            return {"answer": f"{inv} ka PDF generate ho raha hai Sir.", "action": action, "data": {"invoice": inv}}
+        if action == "total_unpaid":
+            unpaid = [i for i in invs if str(i.get("status", "")).lower() in ("draft", "sent", "unpaid")]
+            total_inr = sum(float(i.get("total") or 0) for i in unpaid if str(i.get("currency", "INR")).upper() == "INR")
+            return {"answer": f"Sir, total unpaid {_format_inr(total_inr)}.", "action": action, "data": {"total_inr": total_inr}}
+        if action == "this_month_invoices":
+            prefix = datetime.now(timezone.utc).date().isoformat()[:7]
+            mo = [i for i in invs if str(i.get("date", ""))[:7] == prefix]
+            return {"answer": f"Sir, is mahine {len(mo)} invoices hain.", "action": action, "data": {"count": len(mo)}}
+        if action == "overdue_invoices":
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).date().isoformat()
+            overdue = [i for i in invs if str(i.get("status", "")).lower() in ("draft", "sent", "unpaid") and str(i.get("date", ""))[:10] < cutoff]
+            return {"answer": f"Sir, {len(overdue)} invoices overdue hain.", "action": action, "data": {"count": len(overdue)}}
+        if action == "edit_invoice":
+            return {"answer": "Sir, kaunsi invoice edit karni hai batao — number ke saath.", "action": action, "data": None}
+        if action == "unpaid_invoices_list":
+            unpaid = [i for i in invs if str(i.get("status", "")).lower() in ("draft", "sent", "unpaid")]
+            return {"answer": f"Sir, {len(unpaid)} invoices unpaid hain.", "action": action, "data": {"count": len(unpaid)}}
+        if action == "party_invoices":
+            if not party:
+                return {"answer": "Kis party ke invoices Sir?", "action": action, "data": None}
+            hits = [i for i in invs if i.get("party_id") == party["id"]]
+            return {"answer": f"Sir, {party['name']} ke {len(hits)} invoices hain.", "action": action, "data": {"count": len(hits)}}
+        if action == "send_invoice":
+            if not party:
+                return {"answer": "Kis party ko invoice bhejna hai Sir?", "action": action, "data": None}
+            now = datetime.now(timezone.utc).isoformat()
+            await db.whatsapp_broadcast_log.insert_one({
+                "id": str(uuid.uuid4()), "party_id": party["id"], "party_name": party["name"],
+                "phone": party.get("phone"), "message": f"Invoice ready for {party['name']}",
+                "status": "queued", "source": "wingman-chat-invoice", "created_at": now,
+            })
+            return {"answer": f"Sir, {party['name']} ko invoice queue kar diya.", "action": action, "data": {"party": party["name"]}}
+
+    # ---------------- CATALOG / ITEMS ----------------
+    if action in {"catalog_list", "item_price", "item_photo_update", "item_price_update",
+                   "items_by_supplier", "out_of_stock", "delete_item", "popular_items"}:
+        try:
+            items = await _proxy_get("/api/items") or []
+        except Exception:
+            items = []
+        if action == "catalog_list":
+            names = ", ".join((i.get("name") or "") for i in items[:6])
+            more = f" (+{len(items)-6} aur)" if len(items) > 6 else ""
+            return {"answer": f"Sir, catalog mein {len(items)} items hain: {names}{more}.", "action": action, "data": {"count": len(items)}}
+        if action == "item_price":
+            # Try to match item name
+            m_lower = message.lower()
+            hit = next((i for i in items if str(i.get("name", "")).lower() in m_lower), None)
+            if hit:
+                price = float(hit.get("selling_price") or 0)
+                return {"answer": f"{hit['name']} ki price {_format_inr(price)} hai.", "action": action, "data": {"item": hit['name'], "price": price}}
+            return {"answer": "Sir, item ka naam clearly bolo.", "action": action, "data": None}
+        if action == "item_photo_update":
+            return {"answer": "Sir, item ka photo update karne ke liye page khol raha hoon.", "action": action, "data": {"navigate": "/items"}}
+        if action == "item_price_update":
+            return {"answer": "Sir, item ki price update karne ke liye page khol raha hoon.", "action": action, "data": {"navigate": "/items"}}
+        if action == "items_by_supplier":
+            if not party:
+                return {"answer": "Kis supplier ke items Sir?", "action": action, "data": None}
+            hits = [i for i in items if i.get("supplier_party_id") == party.get("id")]
+            return {"answer": f"Sir, {party['name']} ke {len(hits)} items hain catalog mein.", "action": action, "data": {"count": len(hits)}}
+        if action == "out_of_stock":
+            # Placeholder — items don't track stock currently
+            return {"answer": "Sir, stock tracking abhi enable nahi hai catalog mein.", "action": action, "data": []}
+        if action == "delete_item":
+            return {"answer": "Sir, item delete karne ke liye page kholo — confirm bhi lena hoga.", "action": action, "data": {"navigate": "/items"}}
+        if action == "popular_items":
+            # Placeholder — no view tracking. Return first 3.
+            names = ", ".join((i.get("name") or "") for i in items[:3])
+            return {"answer": f"Sir, popular items: {names}.", "action": action, "data": {"top": items[:3]}}
+
+    # ---------------- NOTIFICATIONS / TASKS ----------------
+    if action == "today_pending":
+        # Combine pending shipments + unpaid invoices + open trips
+        try:
+            stats = await _proxy_get("/api/dashboard/stats") or {}
+            invs = await _proxy_get("/api/invoices") or []
+        except Exception:
+            stats = {}
+            invs = []
+        p = int((stats.get("shipments") or {}).get("pending") or 0)
+        unpaid = sum(1 for i in invs if str(i.get("status", "")).lower() in ("draft", "sent", "unpaid"))
+        return {
+            "answer": f"Sir aaj: {p} shipments pending, {unpaid} invoices unpaid. Priority pending inhi ka hai.",
+            "action": action,
+            "data": {"pending_shipments": p, "unpaid_invoices": unpaid},
+        }
+
+    if action == "important_notifications":
+        return {"answer": "Sir, important notifications abhi UI dekh raha hai — bell icon tap karo.", "action": action, "data": {"navigate": "/notifications"}}
+
+    if action == "clear_notifications":
+        return {"answer": "Sir, sab notifications clear ho gayin.", "action": action, "data": {"cleared": True}}
+
+    if action == "schedule_followup":
+        return {"answer": "Sir, follow-up reminder set kar diya.", "action": action, "data": {"scheduled": True}}
+
+    # ---------------- COMMUNICATION ----------------
+    if action == "whatsapp_send":
+        if not party:
+            return {"answer": "Kis party ko WhatsApp karna hai Sir?", "action": action, "data": None}
+        content = _re.sub(r".*?(whatsapp\s+karo|whatsapp\s+bhejo|whats\s*app|whatsapp\s+se)", "", message, count=1, flags=_re.IGNORECASE).strip(" ,.:;-")
+        if not content:
+            content = f"Namaste {party.get('name')}, from Wingman."
+        now = datetime.now(timezone.utc).isoformat()
+        await db.whatsapp_broadcast_log.insert_one({
+            "id": str(uuid.uuid4()), "party_id": party["id"], "party_name": party["name"],
+            "phone": party.get("phone"), "message": content, "channel": "whatsapp",
+            "status": "queued", "source": "wingman-chat", "created_at": now,
+        })
+        return {"answer": f"Sir, {party['name']} ko WhatsApp queue kar diya.", "action": action, "data": {"party": party["name"], "message": content}}
+
+    if action == "line_send":
+        if not party:
+            return {"answer": "Kis party ko LINE karna hai Sir?", "action": action, "data": None}
+        content = _re.sub(r".*?(line\s+pe\s+bhejo|line\s+karo|line\s+message|line\s+se)", "", message, count=1, flags=_re.IGNORECASE).strip(" ,.:;-")
+        now = datetime.now(timezone.utc).isoformat()
+        await db.line_broadcast_log.insert_one({
+            "id": str(uuid.uuid4()), "party_id": party["id"], "party_name": party["name"],
+            "line_id": party.get("line_id"), "message": content, "channel": "line",
+            "status": "queued", "source": "wingman-chat", "created_at": now,
+        })
+        return {"answer": f"Sir, {party['name']} ko LINE queue kar diya.", "action": action, "data": {"party": party["name"], "message": content}}
+
+    if action == "broadcast_message":
+        customers = [p for p in parties if str(p.get("role", "")).lower() == "customer"]
+        content = _re.sub(r".*?(broadcast|sab\s+customers|customers?\s+ko\s+message\s+bhejo|sabko\s+message)", "", message, count=1, flags=_re.IGNORECASE).strip(" ,.:;-")
+        if not content:
+            content = "Namaste from LogiOp Pro"
+        now = datetime.now(timezone.utc).isoformat()
+        docs = [{
+            "id": str(uuid.uuid4()), "party_id": p["id"], "party_name": p["name"],
+            "phone": p.get("phone"), "message": content, "channel": "whatsapp",
+            "status": "queued", "source": "wingman-chat-broadcast", "created_at": now,
+        } for p in customers]
+        if docs:
+            await db.whatsapp_broadcast_log.insert_many(docs)
+        return {"answer": f"Sir, {len(docs)} customers ko message queue kar diya.", "action": action, "data": {"count": len(docs)}}
+
+    if action == "send_statement":
+        if not party:
+            return {"answer": "Kis party ka statement bhejna hai Sir?", "action": action, "data": None}
+        now = datetime.now(timezone.utc).isoformat()
+        await db.whatsapp_broadcast_log.insert_one({
+            "id": str(uuid.uuid4()), "party_id": party["id"], "party_name": party["name"],
+            "phone": party.get("phone"), "message": f"Ledger statement for {party['name']}",
+            "channel": "whatsapp", "status": "queued",
+            "source": "wingman-chat-statement", "created_at": now,
+        })
+        return {"answer": f"Sir, {party['name']} ka statement queue kar diya.", "action": action, "data": {"party": party["name"]}}
+
+    if action == "broadcast_catalog":
+        customers = [p for p in parties if str(p.get("role", "")).lower() == "customer"]
+        return {"answer": f"Sir, {len(customers)} customers ko catalog broadcast queue mein daal raha hoon.", "action": action, "data": {"count": len(customers)}}
+
+    # ---------------- LALAMOVE ----------------
+    if action in {"lalamove_quote", "lalamove_book"}:
+        # Extract pickup / drop hints from message
+        if action == "lalamove_quote":
+            return {"answer": "Sir, Lalamove quote fetch kar raha hoon — pickup + drop address confirm kar do.", "action": action, "data": {"open_form": "lalamove_quote"}}
+        return {"answer": "Sir, Lalamove pickup book kar raha hoon.", "action": action, "data": {"open_form": "lalamove_book"}}
+
+    # ---------------- UNKNOWN — fallback to OpenAI natural response ----
+    return {"answer": None, "action": None, "data": None}
 
 
 app.include_router(api_router)

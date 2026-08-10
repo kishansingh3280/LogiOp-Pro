@@ -75,21 +75,23 @@ export default function InvoicesScreen() {
   return (
     <SafeAreaView edges={["top"]} style={styles.safe}>
       <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Invoices</Text>
-          <Text style={styles.subtitle}>
-            {list.length} of {invoices.data?.length || 0}
-          </Text>
+        <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <View style={{ flexShrink: 1 }}>
+            <Text style={styles.title}>Invoices</Text>
+            <Text style={styles.subtitle}>
+              {list.length} of {invoices.data?.length || 0}
+            </Text>
+          </View>
+          <FYLockedButton
+            style={styles.newBtn}
+            onPress={() => router.push("/invoice/new")}
+            testID="new-invoice-btn"
+            accessibilityLabel="New invoice"
+          >
+            <Ionicons name="add" size={18} color={colors.bg} />
+            <Text style={styles.newBtnText}>New</Text>
+          </FYLockedButton>
         </View>
-        <FYLockedButton
-          style={styles.newBtn}
-          onPress={() => router.push("/invoice/new")}
-          testID="new-invoice-btn"
-          accessibilityLabel="New invoice"
-        >
-          <Ionicons name="add" size={18} color={colors.bg} />
-          <Text style={styles.newBtnText}>New</Text>
-        </FYLockedButton>
       </View>
 
       <View style={styles.searchWrap}>

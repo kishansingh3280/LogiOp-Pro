@@ -34,7 +34,12 @@ const THAI_TINT = "#FFD700";
 // destination / origin strings on shipments and party addresses.
 const DELHI_TOKENS = ["delhi", "new delhi", "ncr", "gurgaon", "gurugram", "noida"];
 const KOLKATA_TOKENS = ["kolkata", "calcutta", "howrah"];
-const BKK_TOKENS = ["bangkok", "bkk", "thailand"];
+const BKK_TOKENS = ["bangkok", "bkk"];
+const PATTAYA_TOKENS = ["pattaya", "chonburi"];
+// Fix 5 — bucket for anything in India that isn't Delhi/Kolkata
+const INDIA_OTHER_HINTS = ["chennai", "mumbai", "bombay", "bengaluru", "bangalore", "hyderabad", "pune", "ahmedabad", "surat", "jaipur", "lucknow", "india"];
+// Fix 5 — bucket for anything in Thailand that isn't Bangkok/Pattaya
+const THAI_OTHER_HINTS = ["chiang mai", "phuket", "krabi", "koh samui", "hua hin", "thailand"];
 
 function matches(text: string | undefined | null, tokens: string[]): boolean {
   if (!text) return false;
@@ -131,19 +136,83 @@ export function VaultSnapshotSection({
       if (!dir.includes("IN_TO_TH") && !dir.includes("IN → TH")) continue;
       const cur = String(a.currency_type || "").toUpperCase();
       const amt = Number(a.currency_amount || 0) || 0;
-      if (cur === "THB") thb += amt;
+      const note = String(a.notes || "").toLowerCase();
+      // Bangkok if destination/notes match Bangkok tokens OR no other city match
+      if (matches(note, BKK_TOKENS) || (!matches(note, PATTAYA_TOKENS) && cur === "THB")) {
+        if (cur === "THB") thb += amt;
+      }
     }
     return { bags, kg, inr: 0, thb };
   }, [warehouseData, activeTrips]);
 
+  // Fix 5 — India OTHER row (Chennai/Mumbai/Bangalore/etc — anything that
+  // isn't Delhi or Kolkata but ships to India)
+  const indiaOther = useMemo<RowStats>(() => {
+    const inCity = liveShipments.filter((s) => {
+      const dest = (s.destination || "").toLowerCase();
+      if (!dest) return false;
+      if (matches(dest, DELHI_TOKENS) || matches(dest, KOLKATA_TOKENS)) return false;
+      // Consider only India-bound shipments (best-effort: not Bangkok/Pattaya destinations)
+      return !matches(dest, BKK_TOKENS) && !matches(dest, PATTAYA_TOKENS);
+    });
+    const bags = inCity.reduce((n, s) => n + (Number(s.bag_count) || 0), 0);
+    const kg = Math.round(inCity.reduce((n, s) => n + (Number(s.weight_kg) || 0), 0));
+    let inr = 0;
+    for (const t of activeTrips) {
+      const a = t as unknown as Record<string, unknown>;
+      const dir = String(a.direction || a.route || "").toUpperCase();
+      if (!dir.includes("TH_TO_IN") && !dir.includes("TH → IN")) continue;
+      const note = String(a.notes || "").toLowerCase();
+      const cur = String(a.currency_type || "").toUpperCase();
+      const amt = Number(a.currency_amount || 0) || 0;
+      if (cur !== "INR") continue;
+      if (matches(note, DELHI_TOKENS) || matches(note, KOLKATA_TOKENS)) continue;
+      inr += amt;
+    }
+    return { bags, kg, inr, thb: 0 };
+  }, [liveShipments, activeTrips]);
+
+  // Fix 5 — Pattaya row
+  const pattaya = useMemo<RowStats>(() => {
+    const inCity = liveShipments.filter((s) => matches(s.destination, PATTAYA_TOKENS));
+    const bags = inCity.reduce((n, s) => n + (Number(s.bag_count) || 0), 0);
+    const kg = Math.round(inCity.reduce((n, s) => n + (Number(s.weight_kg) || 0), 0));
+    let thb = 0;
+    for (const t of activeTrips) {
+      const a = t as unknown as Record<string, unknown>;
+      const dir = String(a.direction || a.route || "").toUpperCase();
+      if (!dir.includes("IN_TO_TH") && !dir.includes("IN → TH")) continue;
+      const note = String(a.notes || "").toLowerCase();
+      const cur = String(a.currency_type || "").toUpperCase();
+      const amt = Number(a.currency_amount || 0) || 0;
+      if (cur === "THB" && matches(note, PATTAYA_TOKENS)) thb += amt;
+    }
+    return { bags, kg, inr: 0, thb };
+  }, [liveShipments, activeTrips]);
+
+  // Fix 5 — Thailand OTHER row
+  const thailandOther = useMemo<RowStats>(() => {
+    const inCity = liveShipments.filter((s) => {
+      const dest = (s.destination || "").toLowerCase();
+      if (!dest) return false;
+      if (matches(dest, BKK_TOKENS) || matches(dest, PATTAYA_TOKENS)) return false;
+      if (matches(dest, DELHI_TOKENS) || matches(dest, KOLKATA_TOKENS)) return false;
+      // Only Thai-bound: any THAI_OTHER hint OR any non-India destination that isn't Bangkok/Pattaya
+      return matches(dest, THAI_OTHER_HINTS);
+    });
+    const bags = inCity.reduce((n, s) => n + (Number(s.bag_count) || 0), 0);
+    const kg = Math.round(inCity.reduce((n, s) => n + (Number(s.weight_kg) || 0), 0));
+    return { bags, kg, inr: 0, thb: 0 };
+  }, [liveShipments]);
+
   const totals = useMemo(
     () => ({
-      bags: delhi.bags + kolkata.bags + bangkok.bags,
-      kg: delhi.kg + kolkata.kg + bangkok.kg,
-      inr: delhi.inr + kolkata.inr,
-      thb: bangkok.thb,
+      bags: delhi.bags + kolkata.bags + indiaOther.bags + bangkok.bags + pattaya.bags + thailandOther.bags,
+      kg: delhi.kg + kolkata.kg + indiaOther.kg + bangkok.kg + pattaya.kg + thailandOther.kg,
+      inr: delhi.inr + kolkata.inr + indiaOther.inr,
+      thb: bangkok.thb + pattaya.thb,
     }),
-    [delhi, kolkata, bangkok],
+    [delhi, kolkata, indiaOther, bangkok, pattaya, thailandOther],
   );
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -161,7 +230,7 @@ export function VaultSnapshotSection({
         <Text style={styles.sectionHint}>Live · tap a row to open warehouse</Text>
       </View>
 
-      {/* India section */}
+      {/* India section — Fix 5: Delhi | Kolkata | Other */}
       <View style={[styles.section, { borderColor: hexA(INDIA_TINT, 0.30) }, breathe as object]}>
         <View style={styles.sectionHead}>
           <Text style={[styles.flag, { textShadowColor: hexA(INDIA_TINT, 0.7) }]}>🇮🇳</Text>
@@ -169,15 +238,18 @@ export function VaultSnapshotSection({
         </View>
         <VaultRow label="Delhi" tint={INDIA_TINT} stats={delhi} onPress={() => openWarehouse("Delhi")} testID="vault-row-delhi" />
         <VaultRow label="Kolkata" tint={INDIA_TINT} stats={kolkata} onPress={() => openWarehouse("Kolkata")} testID="vault-row-kolkata" />
+        <VaultRow label="Other" tint={INDIA_TINT} stats={indiaOther} onPress={() => openWarehouse()} testID="vault-row-india-other" />
       </View>
 
-      {/* Thailand section */}
+      {/* Thailand section — Fix 5: Bangkok | Pattaya | Other */}
       <View style={[styles.section, { borderColor: hexA(THAI_TINT, 0.30) }, breathe as object]}>
         <View style={styles.sectionHead}>
           <Text style={[styles.flag, { textShadowColor: hexA(THAI_TINT, 0.7) }]}>🇹🇭</Text>
           <Text style={[styles.sectionName, { color: THAI_TINT }]}>Thailand</Text>
         </View>
         <VaultRow label="Bangkok" tint={THAI_TINT} stats={bangkok} onPress={() => openWarehouse("Bangkok")} testID="vault-row-bangkok" />
+        <VaultRow label="Pattaya" tint={THAI_TINT} stats={pattaya} onPress={() => openWarehouse("Pattaya")} testID="vault-row-pattaya" />
+        <VaultRow label="Other" tint={THAI_TINT} stats={thailandOther} onPress={() => openWarehouse()} testID="vault-row-thai-other" />
       </View>
 
       {/* Totals */}
