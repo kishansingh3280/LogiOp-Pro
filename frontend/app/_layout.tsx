@@ -7,8 +7,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "@/src/auth/context";
-import { AmbientBackground } from "@/src/components/ambient-background";
-import { BlockerBell } from "@/src/components/blocker-bell";
+import { AmbientBackground } from "@/src/components/ambient-background";import { BlockerBell } from "@/src/components/blocker-bell";
 import { FYBanner } from "@/src/components/fy-banner";
 import { GlassOverlay } from "@/src/components/glass-overlay";
 import { Sidebar } from "@/src/components/sidebar";
@@ -17,6 +16,8 @@ import { CompanyProvider } from "@/src/context/company-context";
 import { FYProvider } from "@/src/context/fy-context";
 import { ScreenContextProvider } from "@/src/context/screen-context";
 import { SidebarProvider } from "@/src/context/sidebar-context";
+import { VoiceOrbProvider } from "@/src/context/voice-orb-context";
+import { VoiceOrb } from "@/src/components/voice-orb";
 import { GhostUserProvider } from "@/src/ghost/ghost-user";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { colors } from "@/src/theme";
@@ -167,21 +168,25 @@ export default function RootLayout() {
               <ScreenContextProvider>
                 <GhostUserProvider>
                   <SidebarProvider>
-                    <StatusBar style="light" />
-                    <AuthGate>
-                      <AuthShell>
-                        <Stack
-                          screenOptions={{
-                            headerShown: false,
-                            // Transparent content lets the AmbientBackground bleed through.
-                            contentStyle: { backgroundColor: "transparent" },
-                            animation: "slide_from_right",
-                          }}
-                        />
-                      </AuthShell>
-                    </AuthGate>
-                    <BlockerBell />
-                    <ToastHost />
+                    <VoiceOrbProvider>
+                      <StatusBar style="light" />
+                      <AuthGate>
+                        <AuthShell>
+                          <Stack
+                            screenOptions={{
+                              headerShown: false,
+                              // Transparent content lets the AmbientBackground bleed through.
+                              contentStyle: { backgroundColor: "transparent" },
+                              animation: "slide_from_right",
+                            }}
+                          />
+                        </AuthShell>
+                      </AuthGate>
+                      <BlockerBell />
+                      <ToastHost />
+                      {/* Floating Wingman voice orb — visible on every screen */}
+                      <VoiceOrb />
+                    </VoiceOrbProvider>
                   </SidebarProvider>
                 </GhostUserProvider>
               </ScreenContextProvider>

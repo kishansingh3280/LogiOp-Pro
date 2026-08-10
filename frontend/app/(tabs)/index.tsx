@@ -20,6 +20,7 @@ import { TripsVaultInfo } from "@/src/components/trips-vault-info";
 import { Card } from "@/src/components/ui";
 import { VaultSnapshotSection } from "@/src/components/vault-snapshot-section";
 import { useFY } from "@/src/context/fy-context";
+import { useVoiceOrb } from "@/src/context/voice-orb-context";
 import { useCardBreathing } from "@/src/hooks/use-card-breathing";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { colors, radii, spacing } from "@/src/theme";
@@ -39,6 +40,24 @@ export default function DashboardScreen() {
   const parties = useApi<Party[]>("/api/parties");
   const trips = useTrips();
   const batches = useTxns();
+
+  // Publish page context to the Voice Orb so Wingman knows what screen +
+  // data the user is looking at. Refreshed whenever the underlying data
+  // changes.
+  const voice = useVoiceOrb();
+  useEffect(() => {
+    const s = stats.data;
+    const w = warehouse.data;
+    const summary = [
+      s ? `pending=${s.pending} in_transit=${s.in_transit} delivered=${s.delivered}` : "",
+      w ? `warehouse=${w.current_bags} bags, ${w.current_kg} kg` : "",
+      trips.data ? `active_trips=${(trips.data || []).length}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    voice.setPageContext("dashboard", summary);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats.data, warehouse.data, trips.data]);
 
   const [pending, setPending] = useState(0);
   useEffect(() => {

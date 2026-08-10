@@ -2353,6 +2353,220 @@ async def wingman_quick_chat(
     return {"response": content, "data_used": data_used[:5]}
 
 
+# ---------------------------------------------------------------------------
+# OpenAI Realtime Voice Assistant — Phase 1
+#
+# We generate an ephemeral session token server-side (so the raw OpenAI key
+# never touches the client bundle) and hand it to the browser, which then
+# uses it to open a WebRTC connection directly to OpenAI's Realtime API.
+#
+# Endpoints:
+#   POST /api/realtime-token   → { ephemeral_key, expires_at, session }
+#   POST /api/voice-command    → executes a parsed intent + returns data
+# ---------------------------------------------------------------------------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+
+# Base system prompt for the Realtime voice assistant.
+def _wingman_realtime_instructions(page: str, page_data_summary: str, user: Any) -> str:
+    """Return a Hinglish system prompt that includes the current screen +
+    a summary of what's on it. Called on every /api/realtime-token request
+    so the model always has fresh context."""
+    def _g(k: str, d: str = ""):
+        if isinstance(user, dict):
+            return user.get(k, d) or d
+        return getattr(user, k, d) or d
+    name = _g("display_name") or _g("username") or "Kishan"
+    honorific = _g("honorific") or "Sir"
+    role = _g("role") or "Admin"
+    salutation = f"{name} {honorific}".strip()
+
+    return f"""You are Wingman — K Singh ka 24/7 AI business partner for LogiOp Pro.
+
+## LANGUAGE
+ALWAYS respond in Hinglish (Hindi in Latin script + English mix). NEVER Devanagari.
+Examples:
+- "Bilkul {salutation}, karta hoon."
+- "Sir, aapka Bangkok shipment ready hai — 12 bags, 45 kilo."
+- "Naya entry add ho gayi — 40 hazaar credit."
+
+## STYLE
+- Address user as "{honorific}" or "{salutation}" — never bare first name.
+- SHORT replies, max 2 sentences unless detail needed.
+- Correct punctuation for natural TTS pauses.
+- Max 1 emoji per reply.
+
+## CURRENT CONTEXT
+- User's role: {role}
+- Currently on screen: {page}
+- On-screen data:
+{page_data_summary or "  (no snapshot available yet)"}
+
+## COMMAND FILTERING (VERY IMPORTANT)
+Do NOT respond to background chatter, filler words, or ambient noise.
+Only act on CLEAR business commands about shipments, ledger, trips, parties,
+or invoices. If unsure, stay silent — do not fill space with acknowledgments.
+
+## ACTION FLOW
+1. Briefly confirm you understood (1-line).
+2. Call the appropriate tool / execute the command.
+3. Narrate the result in Hinglish.
+
+Be fast, calm, confident — like a trusted business partner who never wastes a word.
+""".strip()
+
+
+class RealtimeTokenIn(BaseModel):
+    page: Optional[str] = "dashboard"
+    page_data_summary: Optional[str] = ""
+
+
+@api_router.post("/realtime-token")
+async def realtime_token(
+    req: RealtimeTokenIn,
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+):
+    """Mint an ephemeral OpenAI Realtime client_secret.
+
+    We inject the current-page + page-data-summary + user honorific into the
+    session instructions so the model can respond context-aware without the
+    client having to send that on every voice turn.
+    """
+    if not OPENAI_API_KEY:
+        raise HTTPException(500, "OPENAI_API_KEY not configured")
+
+    instructions = _wingman_realtime_instructions(
+        page=(req.page or "dashboard"),
+        page_data_summary=(req.page_data_summary or ""),
+        user=user,
+    )
+
+    body = {
+        "session": {
+            "type": "realtime",
+            "model": "gpt-realtime",
+            "instructions": instructions,
+            "audio": {
+                "input": {
+                    # Server-side voice-activity detection: model auto-detects
+                    # end-of-speech and triggers a response. `silence_duration_ms`
+                    # ≈ 800 avoids cutting off mid-sentence.
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.55,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 800,
+                        "create_response": True,
+                        "interrupt_response": True,
+                    },
+                    "transcription": {"model": "whisper-1"},
+                },
+                "output": {
+                    # `alloy` / `onyx` / `verse` etc. — onyx is deep + male,
+                    # closest to a natural Indian-English business tone.
+                    "voice": "verse",
+                    "format": {"type": "audio/pcm", "rate": 24000},
+                    "speed": 1.1,
+                },
+            },
+        }
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            "https://api.openai.com/v1/realtime/client_secrets",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=body,
+        )
+        if resp.status_code >= 400:
+            logging.warning(f"[realtime-token] OpenAI {resp.status_code}: {resp.text[:400]}")
+            raise HTTPException(resp.status_code, f"OpenAI realtime error: {resp.text[:400]}")
+        data = resp.json()
+
+    return {
+        "ephemeral_key": data.get("value"),
+        "expires_at": data.get("expires_at"),
+        # Return the session shape so client can log which model/voice is live.
+        "session_id": (data.get("session") or {}).get("id"),
+        "model": (data.get("session") or {}).get("model"),
+    }
+
+
+class VoiceCommandIn(BaseModel):
+    action: str
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+
+@api_router.post("/voice-command")
+async def voice_command(
+    req: VoiceCommandIn,
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+):
+    """Execute a parsed voice intent. Returns { ok, message, data? }.
+
+    The Realtime model calls this endpoint via a function-tool when it needs
+    to act. Phase-1 actions:
+      • get_summary        → dashboard now-brief numbers
+      • get_balance        → party ledger balance by name
+      • get_shipments      → filtered shipment list
+      • create_shipment    → (Phase-2 will build actual create; for now returns preview)
+    """
+    action = (req.action or "").lower()
+    params = req.params or {}
+
+    try:
+        if action == "get_summary":
+            ctx = await assistant_context()
+            ships = ctx.get("shipments") or []
+            trips = ctx.get("carrier_trips") or []
+            counts = {
+                "pending": sum(1 for s in ships if s.get("status") == "pending"),
+                "in_transit": sum(1 for s in ships if s.get("status") in ("in_transit", "warehouse_arrived")),
+                "delivered": sum(1 for s in ships if s.get("status") == "delivered"),
+                "active_trips": len(trips),
+            }
+            return {"ok": True, "message": "Summary fetched", "data": counts}
+
+        if action == "get_balance":
+            name = str(params.get("party") or params.get("name") or "").strip()
+            if not name:
+                return {"ok": False, "message": "Party ka naam batao"}
+            ctx = await assistant_context()
+            parties = ctx.get("parties") or []
+            match = None
+            for p in parties:
+                if name.lower() in (p.get("name") or "").lower():
+                    match = p
+                    break
+            if not match:
+                return {"ok": False, "message": f"'{name}' naam ka koi party nahi mila"}
+            return {
+                "ok": True,
+                "message": f"Party {match.get('name')} ka data mila",
+                "data": {"party_id": match.get("id"), "name": match.get("name"), "role": match.get("role")},
+            }
+
+        if action == "get_shipments":
+            status = str(params.get("status") or "").lower()
+            ctx = await assistant_context()
+            ships = ctx.get("shipments") or []
+            if status:
+                ships = [s for s in ships if (s.get("status") or "").lower() == status]
+            return {
+                "ok": True,
+                "message": f"{len(ships)} shipments mile",
+                "data": [{"id": s.get("id"), "consignment_no": s.get("consignment_no"), "status": s.get("status"), "party_name": s.get("party_name")} for s in ships[:10]],
+            }
+
+        # Unknown action — return a soft failure so the model can explain
+        # rather than error-out the whole voice turn.
+        return {"ok": False, "message": f"Ye action '{action}' abhi supported nahi hai"}
+    except Exception as e:
+        logging.warning(f"[voice-command] {action} failed: {e}")
+        return {"ok": False, "message": f"Command execute nahi ho paya: {e}"}
+
+
 app.include_router(api_router)
 # Lalamove endpoints — mounted under /api/lalamove/*. Registered BEFORE the
 # catch-all proxy so its paths don't get forwarded to the remote backend.
