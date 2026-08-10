@@ -72,16 +72,32 @@ export function buildPackingListHtml({
   const rows: string[] = [];
   let totalBags = 0;
   let totalWeight = 0;
-  for (const g of groups.values()) {
+  const orderedGroups = [...groups.values()];
+  for (const g of orderedGroups) {
+    totalBags += g.nums.length;
+    totalWeight += g.weight;
+  }
+  // Fallback: bag-level weight_kg is 0 for many older shipments where the
+  // total was captured on the shipment itself. Use shipment.weight_kg
+  // when we have exactly one group; split proportionally by bag count
+  // when there are multiple groups.
+  if (totalWeight === 0 && Number(shipment.weight_kg) > 0) {
+    const shipWeight = Number(shipment.weight_kg);
+    totalWeight = shipWeight;
+    if (orderedGroups.length === 1) {
+      orderedGroups[0].weight = shipWeight;
+    } else if (totalBags > 0) {
+      for (const g of orderedGroups) g.weight = (g.nums.length / totalBags) * shipWeight;
+    }
+  }
+  for (const g of orderedGroups) {
     const runs = collapseRuns(g.nums);
     const bagCount = g.nums.length;
-    totalBags += bagCount;
-    totalWeight += g.weight;
     const runStr = runs.length
       ? runs
           .map((r) => (r.count === 1 ? `BAG NO. ${r.start} = 1 BAG` : `BAG NO. ${r.start} TO ${r.end} = ${r.count} BAGS`))
           .join("<br/>")
-      : `= ${bagCount} BAG${bagCount === 1 ? "" : "S"}`;
+      : `BAG NO. — = ${bagCount} BAG${bagCount === 1 ? "" : "S"}`;
     rows.push(`
       <tr>
         <td class="marks">${g.name.toUpperCase()}</td>

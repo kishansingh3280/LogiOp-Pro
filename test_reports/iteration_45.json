@@ -1,0 +1,40 @@
+{
+  "summary": "Retested Packing List PDF weight fallback fix in /app/frontend/src/utils/packing-list-pdf.ts. Logged in as kishan via 'Quick login as Kishan Sir (demo)', navigated to both target shipments, tapped [data-testid=packing-list-btn], intercepted window.open to capture the generated HTML, and asserted the totals + party rows. Both shipments now render the shipment.weight_kg fallback correctly. No new console errors introduced.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "packing-list-pdf.ts fallback logic is clean: only triggers when totalWeight === 0 AND shipment.weight_kg > 0, then either assigns full shipment weight to the single group or splits proportionally by bag count across multi-group. Guards against divide-by-zero via 'totalBags > 0' check. Formatting via fmtWeight(w) keeps 3-decimal invariant. LGTM."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend only)", "frontend": "100%"},
+  "seed_data_creation": "None — used existing seeded shipments AURA-DEL-001 and AURA-DEL-002.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Packing List popup opens in a new window via window.open(''). To capture the HTML without an actual popup, override window.open before clicking [data-testid=packing-list-btn]: `window.open = () => ({ document: { _buffer:'', write(s){this._buffer+=s;}, close(){window.__capturedHtml=this._buffer;} }, focus(){}, print(){} });`. Then read `window.__capturedHtml` after ~2s.",
+  "rca_of_issue": "Original bug: buildPackingListHtml aggregated totalWeight by summing bag.weight_kg across bags in each group. For legacy shipments where the weight was captured only on the shipment (shipment.weight_kg=18) and never per-bag (bag.weight_kg=0), the totals cell fell to fmtWeight(0)=0.000. Fix (lines 84–92 of packing-list-pdf.ts): after aggregation, if totalWeight===0 && Number(shipment.weight_kg) > 0, overwrite totalWeight=shipWeight and either (a) single-group: g.weight = shipWeight, or (b) multi-group with totalBags > 0: proportional split by g.nums.length/totalBags. Verified below.",
+  "verification_evidence": {
+    "AURA-DEL-001 (caadafb6-1807-472a-8bfd-1241ba60cc4f, shipment.weight_kg=18, 1 bag, 1 group Deepak Adavani)": {
+      "party_row": {"marks": "DEEPAK ADAVANI", "desc": "BAG NO. 1 = 1 BAG", "total_kg": "18.000"},
+      "totals_row": {"desc": "TOTAL = 1 BAG", "total_kg": "18.000"},
+      "expected_total": "18.000",
+      "actual_total": "18.000",
+      "pass": true
+    },
+    "AURA-DEL-002 (2c69c463-7a82-4204-a207-4491811901b8, shipment.weight_kg=12, 1 bag, 1 group FINIJ)": {
+      "party_row": {"marks": "FINIJ", "desc": "BAG NO. 1 = 1 BAG", "total_kg": "12.000"},
+      "totals_row": {"desc": "TOTAL = 1 BAG", "total_kg": "12.000"},
+      "expected_total": "12.000",
+      "actual_total": "12.000",
+      "pass": true
+    },
+    "console_errors_new": "None. The 5 errors observed (4× 'Invalid style property of \"background\"' RN-Web warnings + 1× ElevenLabs 401) are pre-existing and unrelated to this fix.",
+    "cosmetic_p2_fallback_string": "Code at line 100 confirms: `BAG NO. — = ${bagCount} BAG${bagCount === 1 ? '' : 'S'}`. Correct. Could not exercise runtime because both test shipments have parseable bag_no ('BAG-1') so the runs branch was taken; the string constant has been code-reviewed and is correct."
+  }
+}
