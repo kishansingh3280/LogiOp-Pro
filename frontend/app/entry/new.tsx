@@ -19,6 +19,7 @@ import { apiPost } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, LedgerEntry, Party } from "@/src/api/types";
 import { toast } from "@/src/components/toast";
+import { useFillForm } from "@/src/hooks/use-fill-form";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
 import { fetchSpot } from "@/src/utils/forex";
@@ -52,6 +53,38 @@ export default function NewLedgerEntry() {
   const [note, setNote] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [savingCurrency, setSavingCurrency] = useState<Currency | null>(null);
+  // Currency the AI wants to save in (INR|THB) — if unset, the operator
+  // still picks by tapping the correct save button.
+  const [aiCurrency, setAiCurrency] = useState<Currency | null>(null);
+
+  // ------- fill_form (Voice Orb) --------------------------------------
+  // Accepts amount / kind (got|gave) / currency / note / date from the
+  // AI. If the AI also provides a currency, we auto-fire the correct
+  // save button after a short delay so the operator sees the ghost-
+  // typed values before submission.
+  useFillForm("ledger_entry_new", (payload) => {
+    const f = payload.fields || {};
+    const s = (k: string): string | null => {
+      const v = f[k];
+      if (v == null || v === "") return null;
+      return String(v);
+    };
+    const amt = s("amount");
+    if (amt) setAmount(amt);
+    const kindRaw = (s("kind") || "").toLowerCase();
+    if (kindRaw === "got" || kindRaw.includes("received") || kindRaw.includes("liya")) {
+      setKind("got");
+    } else if (kindRaw === "gave" || kindRaw.includes("paid") || kindRaw.includes("diya")) {
+      setKind("gave");
+    }
+    const nt = s("note") || s("description") || s("notes");
+    if (nt) setNote(nt);
+    const d = s("date");
+    if (d) setDate(d);
+    const cur = (s("currency") || "").toUpperCase();
+    if (cur === "INR" || cur === "THB") setAiCurrency(cur);
+    if (payload.reason) toast.info(`🎙 ${payload.reason}`);
+  });
 
   // ------ Live FX ---------------------------------------------------------
   // Fetch a spot rate for INR→THB. We invert to also compute THB→INR from

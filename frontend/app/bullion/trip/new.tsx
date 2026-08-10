@@ -23,6 +23,7 @@ import { AirlineBadge } from "@/src/bullion/AirlineBadge";
 import { createTrip, updateTrip, useTrips } from "@/src/bullion/store";
 import type { BullionRoute } from "@/src/bullion/types";
 import { toast } from "@/src/components/toast";
+import { useFillForm } from "@/src/hooks/use-fill-form";
 import { colors, radii, spacing } from "@/src/theme";
 
 const MONTHS_LONG = [
@@ -78,6 +79,58 @@ export default function NewTripScreen() {
   const [shipmentRef, setShipmentRef] = useState<{ id: string; consignment_no: string } | null>(null);
   const [pickShipment, setPickShipment] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+
+  // ------- fill_form (Voice Orb) --------------------------------------
+  // Accepts route (IN_TO_TH | TH_TO_IN), carrier_name (best-effort
+  // match against parties list), currency_type + currency_amount,
+  // gold_baht (in bt), carry_charge_inr, flight_number, notes.
+  useFillForm("trip_new", (payload) => {
+    const f = payload.fields || {};
+    const s = (k: string): string | null => {
+      const v = f[k];
+      if (v == null || v === "") return null;
+      return String(v);
+    };
+    const routeRaw = (s("route") || s("direction") || "").toUpperCase();
+    if (routeRaw.includes("TH_TO_IN") || routeRaw.includes("BKK") || routeRaw.includes("BANGKOK TO")) {
+      setRoute("TH_TO_IN");
+    } else if (routeRaw.includes("IN_TO_TH") || routeRaw.includes("INDIA TO") || routeRaw.includes("DELHI TO")) {
+      setRoute("IN_TO_TH");
+    }
+    const ct = (s("currency_type") || s("currency") || "").toUpperCase();
+    if (["USD", "SGD", "THB", "OTHER"].includes(ct)) {
+      setCurrencyType(ct === "OTHER" ? "other" : (ct as "USD" | "SGD" | "THB"));
+    }
+    const ca = s("currency_amount") || s("amount");
+    if (ca) setCurrencyAmount(ca);
+    const gold = s("gold_baht") || s("gold");
+    if (gold) setGoldBaht(gold);
+    const carry = s("carry_charge_inr") || s("carry_charge");
+    if (carry) setCarryChargeInr(carry);
+    const flight = s("flight_number") || s("flight_no") || s("flight");
+    if (flight) setFlightNumber(flight);
+    const w = s("available_weight") || s("weight");
+    if (w) setAvailableWeight(w);
+    const nt = s("notes") || s("note");
+    if (nt) setNotes(nt);
+    const d = s("date");
+    if (d) setDate(d);
+    // Carrier by name — case-insensitive against parties.
+    const cname = (s("carrier_name") || s("carrier") || "").toLowerCase().trim();
+    if (cname) {
+      const cs = (parties.data || []).filter((p) => p.role === "carrier");
+      const match =
+        cs.find((p) => (p.name || "").toLowerCase() === cname) ||
+        cs.find((p) => (p.name || "").toLowerCase().includes(cname));
+      if (match) {
+        setCarrierId(match.id);
+        setCarrierName(match.name);
+      } else {
+        setCarrierName(cname);
+      }
+    }
+    if (payload.reason) toast.info(`🎙 ${payload.reason}`);
+  });
   const [pickOpen, setPickOpen] = useState(false);
   const [pickAirline, setPickAirline] = useState(false);
   const [busy, setBusy] = useState(false);

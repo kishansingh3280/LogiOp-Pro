@@ -20,6 +20,7 @@ import { VoiceOrbProvider } from "@/src/context/voice-orb-context";
 import { VoiceOrb } from "@/src/components/voice-orb";
 import { RealtimeStatusBar } from "@/src/components/realtime-status-bar";
 import { FillFormBridge } from "@/src/components/fill-form-bridge";
+import { WingmanFillOverlay } from "@/src/components/wingman-fill-overlay";
 import { GhostUserProvider } from "@/src/ghost/ghost-user";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { colors } from "@/src/theme";
@@ -199,6 +200,10 @@ export default function RootLayout() {
                           Orb's fill_form tool calls and navigates the
                           user to the target form. Renders nothing. */}
                       <FillFormBridge />
+                      {/* Ghost-typing overlay — animated banner shown
+                          on top of the current screen while Wingman is
+                          filling the form. */}
+                      <WingmanFillOverlay />
                     </VoiceOrbProvider>
                   </SidebarProvider>
                 </GhostUserProvider>

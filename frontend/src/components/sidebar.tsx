@@ -241,6 +241,24 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
           {showLabels ? (
             <View style={{ marginTop: 10, gap: 8, alignItems: "flex-start" }}>
               <CompanySwitcher />
+              {/* Role-locked brand label — CompanySwitcher only renders
+                  for Admins, so Papa / Staff / Carrier need a static
+                  read-only badge that shows which brand their account
+                  is pinned to. Uses the same visual language as the
+                  Admin switcher pill so the sidebar looks consistent. */}
+              {user && user.role !== "Admin" ? (
+                <View style={styles.papaBrandBadge} testID="sidebar-brand-locked">
+                  <Ionicons name="business-outline" size={12} color={colors.warn} />
+                  <Text style={styles.papaBrandText} numberOfLines={1}>
+                    {((user as unknown as { company?: string }).company || "")
+                      .replace(/^co_/, "")
+                      .split("_")
+                      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                      .join(" ") || "My Company"}
+                  </Text>
+                  <Ionicons name="lock-closed" size={10} color={colors.textDim} />
+                </View>
+              ) : null}
               <FYPicker compact earliest="2024-04-01" />
             </View>
           ) : null}
@@ -701,6 +719,29 @@ const styles = StyleSheet.create({
   avatarText: { color: "#00FF88", fontWeight: "900", fontSize: 13 },
   userName: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
   userRole: { color: "rgba(255,255,255,0.45)", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 1 },
+
+  // Papa / Staff / Carrier brand badge — read-only counterpart of the
+  // Admin CompanySwitcher pill. Uses warm-gold styling so it visually
+  // signals "locked to this brand" without looking like a button.
+  papaBrandBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,176,32,0.10)",
+    borderColor: "rgba(255,176,32,0.4)",
+    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: 220,
+  },
+  papaBrandText: {
+    color: "#FFB020",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+    flexShrink: 1,
+  },
 
   // -- Mobile-only --
   hamburger: {

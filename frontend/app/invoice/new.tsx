@@ -21,6 +21,7 @@ import { useApi } from "@/src/api/hooks";
 import type { Currency, Invoice, Item, Party, Shipment, ShipmentBag } from "@/src/api/types";
 import { toast } from "@/src/components/toast";
 import { useGhostFill } from "@/src/ghost/use-ghost-fill";
+import { useFillForm } from "@/src/hooks/use-fill-form";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency } from "@/src/utils/format";
 
@@ -80,6 +81,54 @@ export default function NewInvoiceScreen() {
       });
     },
     notes: (v) => setNotes(String(v ?? "")),
+  });
+
+  // ------- fill_form (Voice Orb) --------------------------------------
+  // Accepts a Voice-Orb fill_form dispatch for the invoice_new form.
+  // Applies party (by name), currency, invoice #, tax %, notes, and
+  // pushes description + amount into the first line. Later lines are
+  // preserved to avoid clobbering manual edits.
+  useFillForm("invoice_new", (payload) => {
+    const f = payload.fields || {};
+    const s = (k: string): string | null => {
+      const v = f[k];
+      if (v == null || v === "") return null;
+      return String(v);
+    };
+    const inv = s("invoice_no") || s("number") || s("invoice_number");
+    if (inv) setNumber(inv);
+    const cur = (s("currency") || "").toUpperCase();
+    if (cur === "INR" || cur === "THB") setCurrency(cur);
+    const tax = s("tax_pct") || s("tax");
+    if (tax) setTaxPct(tax);
+    const desc = s("description") || s("item") || s("line_1");
+    const amt = s("amount") || s("total") || s("rate");
+    if (desc || amt) {
+      setLines((prev) => {
+        const next = [...prev];
+        const first = next[0] || { description: "", quantity: "1", rate: "0" };
+        next[0] = {
+          ...first,
+          description: desc || first.description,
+          rate: amt || first.rate,
+          quantity: first.quantity || "1",
+        };
+        return next;
+      });
+    }
+    const nt = s("notes") || s("note");
+    if (nt) setNotes(nt);
+    // Party by name — best-effort case-insensitive match.
+    const pname = (s("party_name") || s("party") || "").toLowerCase().trim();
+    if (pname) {
+      const p = (parties.data || []).find(
+        (x) => (x.name || "").toLowerCase() === pname,
+      ) || (parties.data || []).find(
+        (x) => (x.name || "").toLowerCase().includes(pname),
+      );
+      if (p) setPartyId(p.id);
+    }
+    if (payload.reason) toast.info(`🎙 ${payload.reason}`);
   });
 
   // Prefill from shipment. Fetches the shipment + its bags and materializes:

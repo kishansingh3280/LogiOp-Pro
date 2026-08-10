@@ -18,6 +18,8 @@ import { apiPost, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Party, PartyRole } from "@/src/api/types";
 import { useGhostFill } from "@/src/ghost/use-ghost-fill";
+import { useFillForm } from "@/src/hooks/use-fill-form";
+import { toast } from "@/src/components/toast";
 import { colors, radii, spacing } from "@/src/theme";
 
 const ROLES: PartyRole[] = ["customer", "end_customer", "supplier", "carrier", "vendor", "other"];
@@ -86,6 +88,46 @@ export default function NewPartyScreen() {
       notesBufRef.current = String(v ?? "");
       setAddress(composeAddress());
     },
+  });
+
+  // ------- fill_form (Voice Orb) ---------------------------------------
+  // Accepts a fill_form dispatch for the party_new form. Applies name /
+  // role / country / currency / phone / email / gstin / address /
+  // default_rate to local state so the operator sees ghost-typed data
+  // and can review before saving.
+  useFillForm("party_new", (payload) => {
+    const f = payload.fields || {};
+    const s = (k: string): string | null => {
+      const v = f[k];
+      if (v == null || v === "") return null;
+      return String(v);
+    };
+    const nm = s("name") || s("party_name");
+    if (nm) setName(nm);
+    const rRaw = (s("role") || "").toLowerCase();
+    if (ROLES.includes(rRaw as PartyRole)) setRole(rRaw as PartyRole);
+    else if (rRaw.includes("customer")) setRole("customer");
+    else if (rRaw.includes("supplier") || rRaw.includes("vendor")) setRole("supplier");
+    else if (rRaw.includes("carrier")) setRole("carrier");
+    // Country IN | TH — accept several friendly spellings.
+    const c = (s("country") || "").toLowerCase();
+    if (c === "in" || c.includes("india")) setCountry("IN");
+    else if (c === "th" || c.includes("thai") || c.includes("bangkok")) setCountry("TH");
+    // Currency
+    const cur = (s("currency") || s("default_currency") || "").toUpperCase();
+    if (cur === "INR" || cur === "THB") setCurrency(cur);
+    // Contact fields
+    const ph = s("phone") || s("mobile") || s("contact");
+    if (ph) setPhone(ph);
+    const em = s("email");
+    if (em) setEmail(em);
+    const gs = s("gstin") || s("gst");
+    if (gs) setGstin(gs);
+    const addr = s("address") || s("city") || s("location");
+    if (addr) setAddress(addr);
+    const rate = s("default_rate") || s("rate");
+    if (rate) setDefaultRate(rate);
+    if (payload.reason) toast.info(`🎙 ${payload.reason}`);
   });
 
   // Role-driven copy: carriers charge YOU a carrying rate, everyone else

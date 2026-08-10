@@ -21,7 +21,7 @@ import { useRates as useBullionRates } from "@/src/bullion/rates";
 import { ItemPicker } from "@/src/components/item-picker";
 import { toast } from "@/src/components/toast";
 import { useGhostFill } from "@/src/ghost/use-ghost-fill";
-import { consumePendingFillForm, subscribeFillForm, type FillFormPayload } from "@/src/api/fill-form-bus";
+import { useFillForm } from "@/src/hooks/use-fill-form";
 import { colors, radii, spacing } from "@/src/theme";
 import { syncShipmentLedger } from "@/src/utils/shipment-ledger-sync";
 import {
@@ -434,91 +434,79 @@ export default function NewShipmentScreen() {
   // this form's state so the operator sees the AI's suggestions
   // ghost-typed in. The user can still edit anything before saving.
   const pendingCarrierNameRef = useRef<string | null>(null);
-  useEffect(() => {
-    const applyFill = (payload: FillFormPayload) => {
-      if (payload.form !== "shipment_new") return;
-      const f = payload.fields || {};
-      const s = (k: string): string | null => {
-        const v = f[k];
-        if (v == null || v === "") return null;
-        return String(v);
-      };
-      // Direction — accepts common English/Hinglish variants.
-      const dirRaw = (s("direction") || "").toLowerCase();
-      if (dirRaw.includes("th_to_in") || dirRaw.includes("bkk") || dirRaw.includes("bangkok to")) {
-        setDirection("TH_TO_IN");
-      } else if (dirRaw.includes("in_to_th") || dirRaw.includes("india to") || dirRaw.includes("delhi to")) {
-        setDirection("IN_TO_TH");
-      }
-      // Mode
-      const modeRaw = (s("mode") || "").toLowerCase();
-      if (["air", "sea", "land", "hand_carry"].includes(modeRaw)) {
-        setMode(modeRaw as ShipmentMode);
-      } else if (modeRaw.includes("hand")) {
-        setMode("hand_carry");
-      }
-      // Source / destination — the AI usually says "Delhi", "Bangkok" etc.
-      const source = s("source") || s("origin") || s("from");
-      const dest = s("destination") || s("to");
-      if (source) setOrigin(source);
-      if (dest) setDestination(dest);
-      // Freight
-      const freightVal = s("freight") || s("amount");
-      if (freightVal) {
-        setFreight(freightVal);
-        setFreightManuallyEdited(true);
-      }
-      const ccy = (s("currency") || "").toUpperCase();
-      if (ccy === "INR" || ccy === "THB") setFreightCcy(ccy);
-      // Consignment / notes
-      const cnum = s("consignment_no") || s("cn") || s("cn_number");
-      if (cnum) setConsignmentNo(cnum);
-      const desc = s("description") || s("notes") || s("note");
-      if (desc) setNotes(desc);
-      // Carrier — resolve by name against the loaded parties list. If
-      // the parties list hasn't loaded yet, retry on the next data
-      // change via a separate effect below.
-      const carrierName = s("carrier_name") || s("carrier");
-      if (carrierName) {
-        pendingCarrierNameRef.current = carrierName;
-      }
-      // Single-bag defaults for weight_kg / bag_count so the AI can
-      // dictate the basics without opening the bag editor. Multi-bag
-      // splits still require manual bag entry.
-      const weight = s("weight_kg") || s("weight");
-      const bagCount = s("bag_count") || s("bags");
-      if (weight) {
-        setBags((prev) => prev.map((b, i) => (i === 0 ? { ...b, weight_kg: weight } : b)));
-      }
-      if (bagCount) {
-        const n = Math.min(50, Math.max(1, parseInt(bagCount, 10) || 1));
-        setBags((prev) => {
-          const first = prev[0];
-          const next: BagRow[] = [];
-          for (let i = 0; i < n; i++) {
-            next.push({
-              bag_no: `BAG-${String(i + 1).padStart(3, "0")}`,
-              weight_kg: i === 0 ? first?.weight_kg || "" : "",
-              end_customer_id: null,
-              bill_to_party_id: null,
-              items: [],
-            });
-          }
-          return next;
-        });
-      }
-      if (payload.reason) toast.info(`🎙 ${payload.reason}`);
+  useFillForm("shipment_new", (payload) => {
+    const f = payload.fields || {};
+    const s = (k: string): string | null => {
+      const v = f[k];
+      if (v == null || v === "") return null;
+      return String(v);
     };
-    // Consume any pending payload emitted BEFORE this screen mounted.
-    const pending = consumePendingFillForm("shipment_new");
-    if (pending) applyFill(pending);
-    // Also subscribe to any subsequent payloads while we're on-screen.
-    const unsub = subscribeFillForm((p) => {
-      if (p.form === "shipment_new") applyFill(p);
-    });
-    return unsub;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // Direction — accepts common English/Hinglish variants.
+    const dirRaw = (s("direction") || "").toLowerCase();
+    if (dirRaw.includes("th_to_in") || dirRaw.includes("bkk") || dirRaw.includes("bangkok to")) {
+      setDirection("TH_TO_IN");
+    } else if (dirRaw.includes("in_to_th") || dirRaw.includes("india to") || dirRaw.includes("delhi to")) {
+      setDirection("IN_TO_TH");
+    }
+    // Mode
+    const modeRaw = (s("mode") || "").toLowerCase();
+    if (["air", "sea", "land", "hand_carry"].includes(modeRaw)) {
+      setMode(modeRaw as ShipmentMode);
+    } else if (modeRaw.includes("hand")) {
+      setMode("hand_carry");
+    }
+    // Source / destination — the AI usually says "Delhi", "Bangkok" etc.
+    const source = s("source") || s("origin") || s("from");
+    const dest = s("destination") || s("to");
+    if (source) setOrigin(source);
+    if (dest) setDestination(dest);
+    // Freight
+    const freightVal = s("freight") || s("amount");
+    if (freightVal) {
+      setFreight(freightVal);
+      setFreightManuallyEdited(true);
+    }
+    const ccy = (s("currency") || "").toUpperCase();
+    if (ccy === "INR" || ccy === "THB") setFreightCcy(ccy);
+    // Consignment / notes
+    const cnum = s("consignment_no") || s("cn") || s("cn_number");
+    if (cnum) setConsignmentNo(cnum);
+    const desc = s("description") || s("notes") || s("note");
+    if (desc) setNotes(desc);
+    // Carrier — resolve by name against the loaded parties list. If
+    // the parties list hasn't loaded yet, retry on the next data
+    // change via a separate effect below.
+    const carrierName = s("carrier_name") || s("carrier");
+    if (carrierName) {
+      pendingCarrierNameRef.current = carrierName;
+    }
+    // Single-bag defaults for weight_kg / bag_count so the AI can
+    // dictate the basics without opening the bag editor. Multi-bag
+    // splits still require manual bag entry.
+    const weight = s("weight_kg") || s("weight");
+    const bagCount = s("bag_count") || s("bags");
+    if (weight) {
+      setBags((prev) => prev.map((b, i) => (i === 0 ? { ...b, weight_kg: weight } : b)));
+    }
+    if (bagCount) {
+      const n = Math.min(50, Math.max(1, parseInt(bagCount, 10) || 1));
+      setBags((prev) => {
+        const first = prev[0];
+        const next: BagRow[] = [];
+        for (let i = 0; i < n; i++) {
+          next.push({
+            bag_no: `BAG-${String(i + 1).padStart(3, "0")}`,
+            weight_kg: i === 0 ? first?.weight_kg || "" : "",
+            end_customer_id: null,
+            bill_to_party_id: null,
+            items: [],
+          });
+        }
+        return next;
+      });
+    }
+    if (payload.reason) toast.info(`🎙 ${payload.reason}`);
+  });
 
   // Deferred carrier resolution — once parties finish loading, if the
   // AI asked for a specific carrier name we do a case-insensitive

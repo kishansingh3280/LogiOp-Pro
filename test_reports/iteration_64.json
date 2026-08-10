@@ -1,0 +1,64 @@
+{
+  "summary": "Phase 4 verification: fill_form dispatcher wired to all 5 forms, ghost-typing overlay, Multi-Company Phase 1 and regression items. All 5 forms (shipment_new, invoice_new, party_new, ledger_entry_new, trip_new) correctly consume window.__testDispatchFill payloads, navigate to the right route, and apply fields. WingmanFillOverlay is mounted in _layout.tsx, shows AI purple->green->cyan gradient (0.55 opacity) pinned at top with paddingTop=insets.top, cycles field ticker every ~800 ms, auto-dismisses ~3.5 s, and dismisses immediately on tap. Backend multi-company endpoints (GET /api/companies, GET /api/companies/co_singh_exports/summary, POST /api/auth/login for bsingh) return correct payloads. Admin (kishan) sidebar shows company-switcher toggling Awadh <-> Singh Exports and API calls carry ?company=<id>. Regression: notification bell hidden on all 5 form routes, hamburger works, VaultSnapshot testIDs vault-india + vault-bangkok present, voice-orb long-press panel opens with 4 controls (mic, mute, close, send + input). One bug: Papa (bsingh) sidebar does NOT show a Singh Exports brand indicator; the CompanySwitcher renders null for non-Admin and no fallback header is rendered.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Sidebar / CompanySwitcher",
+        "issue": "Papa (bsingh) sidebar is missing the 'Singh Exports' brand indicator. CompanySwitcher (src/components/company-switcher.tsx:26) returns null when user.role !== 'Admin'. Sidebar has no fallback static company header for Papa/Staff/Carrier, so the top of Papa's sidebar has no company text at all (only 'LogiOp Pro' logo + FYPicker). Reference: src/components/sidebar.tsx:242-246 & src/components/company-switcher.tsx:26.",
+        "testID": "company-switcher / sidebar-body",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_64.json"
+  ],
+  "action_items": [
+    "In src/components/sidebar.tsx (around line 242-246, inside the header block), render a static role-locked company label for non-Admin users. Something like: {user?.role !== 'Admin' && <View><Text>{BRAND_LABELS[activeCompany]?.label ?? 'Singh Exports'}</Text></View>} so Papa's sidebar shows 'Singh Exports' (and Staff sees their brand). Keep CompanySwitcher visible for Admin only, per current design."
+  ],
+  "critical_code_review_comments": [
+    "fill-form-bus.ts exposes window.__testDispatchFill unconditionally on web (line 80-83). Fine for dev/preview but should be gated behind __DEV__ / NODE_ENV !== 'production' before shipping to a real production build.",
+    "WingmanFillOverlay auto-dismiss timer is restarted on every dispatch (good) but there's no cleanup on unmount for dismissTimerRef (line 108-109). Add clearTimeout on unmount to avoid setState-after-unmount warnings during navigation.",
+    "CompanyProvider.setActiveCompany short-circuits when c === activeCompany (line 85). Persistence of the initial hydrated value therefore never fires, but that's OK because AsyncStorage was already read. Non-blocking."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "95%"
+  },
+  "seed_data_creation": "None. Used existing seeded users (kishan, bsingh) and seeded companies co_awadh_enterprise / co_singh_exports.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All 5 fill_form flows now work via window.__testDispatchFill and the WingmanFillOverlay animates correctly with the AI gradient. The single outstanding issue is that Papa's sidebar has no static company header. After the main agent adds a role-locked brand label, verify by logging in as bsingh, opening the hamburger, and confirming 'Singh Exports' text appears near the top of the sidebar (above the nav items).",
+  "rca_of_issue": "Papa sidebar missing brand indicator: The Sidebar header (src/components/sidebar.tsx:241-246) unconditionally renders <CompanySwitcher /> when showLabels is true. CompanySwitcher (src/components/company-switcher.tsx:26) returns null unless user.role === 'Admin'. There is no alternative branch that renders a static Text label for Papa/Staff/Carrier, so the sidebar has no visible company context for those roles. Fix: conditionally render either the switcher (Admin) or a plain <Text> pill with BRAND_LABELS[activeCompany].label (non-Admin). Reproduction: log in as bsingh / Papa@2026 -> tap hamburger -> observe the top of the sidebar has 'LogiOp Pro' and FY picker but no 'Singh Exports' text.",
+  "test_matrix": {
+    "fill_form_shipment_new": "PASS - navigates to /shipment/new, direction IN->TH pill active, Mode Air active, Origin=Delhi, Destination=Bangkok, BAG-001 weight=25, 2 bags rendered, carrier toast shown",
+    "fill_form_invoice_new": "PASS - navigates to /invoice/new, number=INV-999, THB currency active, first line description=Freight rate=5000",
+    "fill_form_party_new": "PASS - navigates to /party/new, name=Test Party AI, role Main Party (customer) active, country IN active, currency INR active, phone and address populated",
+    "fill_form_ledger_entry_new": "PASS - navigates to /entry/new, amount=1500, note=Test AI ledger, kind='You gave' active, date=today (2026-08-10)",
+    "fill_form_trip_new": "PASS - navigates to /bullion/trip/new, Route 'India -> BKK' active, USD currency active, amount=10000, gold=5, carry_charge=500, flight=AI-851, carrier=abhishek",
+    "overlay_mounted_root_layout": "PASS - WingmanFillOverlay imported and rendered in app/_layout.tsx:23 & 206",
+    "overlay_ai_gradient_bg": "PASS - computed backgroundImage = linear-gradient(90deg, rgba(155,77,255,0.55) 0%, rgba(0,255,136,0.55) 50%, rgba(0,245,255,0.55) 100%), position=fixed on web",
+    "overlay_ticker_cycle": "PASS - lines cycle every 800 ms (verified via multiple screenshots showing different '-> Field: Value' captions)",
+    "overlay_auto_dismiss_3_5s": "PASS - opacity=1 at t=0.5s, opacity=0 at t=4s",
+    "overlay_tap_dismiss": "PASS - tapping overlay drops opacity to 0 immediately",
+    "backend_companies_list": "PASS - /api/companies returns co_awadh_enterprise + co_singh_exports (and one leftover TEST_ record) with name, owner_name, owner_nickname, address",
+    "backend_company_summary": "PASS - /api/companies/co_singh_exports/summary returns {shipments:0, parties:0, ledger_entries:0, bullion_trips:0}",
+    "backend_papa_login": "PASS - POST /api/auth/login {bsingh, Papa@2026} -> 200 with role=Papa, company=co_singh_exports",
+    "papa_sidebar_singh_exports_indicator": "FAIL - no 'Singh Exports' text anywhere in the sidebar for bsingh",
+    "admin_company_switcher_visible": "PASS - testID=company-switcher visible in kishan sidebar",
+    "admin_company_switcher_toggles": "PASS - taps toggle Awadh Enterprise <-> Singh Exports",
+    "api_carries_company_param": "PASS - after switch, 9/12 API calls carry ?company=singh_exports; the 3 without are non-company endpoints (/api/todo/blockers)",
+    "regression_bell_hidden_forms": "PASS - blocker-bell absent on /entry/new, /invoice/new, /party/new, /shipment/new, /bullion/trip/new",
+    "regression_voice_orb_long_press": "PASS - long-press opens voice-orb-panel with voice-orb-panel-mic, voice-orb-panel-mute, voice-orb-panel-close, voice-orb-panel-send controls plus input",
+    "regression_hamburger_toggle": "PASS - sidebar-hamburger opens sidebar-mobile-drawer, sidebar-scrim dismisses it",
+    "regression_vault_snapshot_two_columns": "PASS - vault-india and vault-bangkok testIDs both present on dashboard"
+  }
+}
