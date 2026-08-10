@@ -1,0 +1,39 @@
+{
+  "summary": "Verified ElevenLabs API key update. The new key (sk_3dade0db...) is VALID and authenticates successfully — no more 400 invalid_api_key errors. However, the configured voice ID `ibbx9zDYGvLgtYzRbqqG` is a LIBRARY (community) voice and returns HTTP 402 payment_required on this free-tier account. Even 'Rachel' (21m00Tcm4TlvDq8ikWAM) — which we tested per the review request — is also treated as a library voice and 402s. The key DOES work for ElevenLabs' 23 PREMADE voices (verified: 'Roger' CwhRBWXzGAHq8TQ4Fs17 returned 34,735-byte audio/mpeg with valid ID3 header). Backend is currently falling back to OpenAI onyx on every request because of the library-voice restriction.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/assistant/tts/stream",
+        "issue": "Every call falls back to OpenAI because default voice ID `ibbx9zDYGvLgtYzRbqqG` is a library voice that free-tier ElevenLabs accounts cannot use via API. Server log verbatim: `[TTS] ElevenLabs failed (ElevenLabs 402: {\"detail\":{\"type\":\"payment_required\",\"code\":\"paid_plan_required\",\"message\":\"Free users cannot use library voices via the API. Please upgrade your subscription to use this voice.\"}}) — falling back to OpenAI`. Fix: switch default voice to a premade voice ID (e.g., George `JBFqnCBsd6RMkjVDRZzb`, Adam `pNInz6obpgDQGcFmaJgB`, Roger `CwhRBWXzGAHq8TQ4Fs17`, Brian `nPczCjzI2devNBz1zQrb`).",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "TELL USER (VERBATIM): The new key `sk_3dade0db...` is VALID and authenticates. Subscription confirmed as tier=free (3420/10000 chars used). BUT the voice ID `ibbx9zDYGvLgtYzRbqqG` is a library/community voice — ElevenLabs does NOT permit free-tier accounts to synthesize library voices via API (402 paid_plan_required). Even Rachel `21m00Tcm4TlvDq8ikWAM` returned the same 402 — it is also classified as library on this account.",
+    "TWO possible resolutions: (a) UPGRADE to any paid ElevenLabs plan (Starter $5/mo unlocks library voices via API); OR (b) STAY on free tier and switch to one of the 23 built-in PREMADE voices (verified working). Suggested premade voice IDs: George=`JBFqnCBsd6RMkjVDRZzb`, Adam=`pNInz6obpgDQGcFmaJgB`, Brian=`nPczCjzI2devNBz1zQrb`, Roger=`CwhRBWXzGAHq8TQ4Fs17`, Daniel=`onwK4e9ZLuTAKqWW03F9`, Eric=`cjVigY5qzO86Huf0OWal`. Alternatively user can CLONE the desired voice into their own account — but instant voice cloning is disabled on free tier (requires Starter+).",
+    "Update `/app/backend/server.py` TTS handler to default to a premade voice ID (e.g., George `JBFqnCBsd6RMkjVDRZzb`) so ElevenLabs is actually used instead of silently falling back to OpenAI on every request.",
+    "Optionally add a startup validation: on backend boot, hit `/v1/voices` and log a WARNING if the configured default voice is not in the allowed list — surfaces this issue immediately instead of at first user request."
+  ],
+  "critical_code_review_comments": [
+    "TTS fallback is silent from the client's perspective — the endpoint returns 200 with valid MP3 regardless of whether it came from ElevenLabs or OpenAI. Consider adding a response header like `X-TTS-Provider: elevenlabs|openai` so callers/tests can distinguish."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "50% (endpoint returns 200 audio but not from configured provider)",
+    "frontend": "N/A (backend-only review)"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Verified evidence: (1) `grep ELEVENLABS_API_KEY /app/backend/.env` -> `sk_3dade0db6a7a1772908945131ce4dc5a473014cae7c8a2aa`. (2) Direct call to ElevenLabs with voice `ibbx9zDYGvLgtYzRbqqG` -> HTTP 402 paid_plan_required 'Free users cannot use library voices via the API'. (3) Direct call with Rachel voice `21m00Tcm4TlvDq8ikWAM` -> SAME 402. (4) Direct call with premade Roger voice `CwhRBWXzGAHq8TQ4Fs17` -> HTTP 200, 34,735 bytes, valid MP3 (ID3 header 'Lavf60.16.1'). (5) `/v1/user/subscription` -> tier=free, character_count=3420/10000. Available premade voices (23 total): Roger, Sarah, Laura, Charlie, George, Callum, River, Harry, Liam, Alice, Matilda, Will, Jessica, Eric, Bella, Chris, Brian, Daniel, Lily, Adam, plus 3 more. Conclusion: key is 100% valid; only the voice choice is broken.",
+  "rca_of_issue": "ROOT CAUSE: ElevenLabs policy — free-tier accounts cannot invoke ANY library (community-shared) voice via the API, only the ~23 premade voices baked into the platform. The voice ID `ibbx9zDYGvLgtYzRbqqG` was added to this account from the shared voice library, making it a 'library voice' and therefore 402-gated. The Rachel voice (`21m00Tcm4TlvDq8ikWAM`) is now also categorized as library on this account. REPRODUCTION: `curl -H 'xi-api-key: sk_3dade0db...' -X POST https://api.elevenlabs.io/v1/text-to-speech/ibbx9zDYGvLgtYzRbqqG/stream -d '{\"text\":\"hi\"}'` -> 402. MITIGATION: Either (a) upgrade plan, or (b) use a premade voice ID from `/v1/voices` where category=='premade'."
+}
