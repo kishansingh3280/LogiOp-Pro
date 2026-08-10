@@ -243,6 +243,119 @@ function useBreathe(active: boolean) {
 }
 
 // ---------------------------------------------------------------------------
+// MicButtonWeb — dedicated web-only implementation. React Native's
+// Pressable delegates to synthetic press handlers that can drop the "up"
+// event on scroll, parent re-renders, or when the pointer leaves the
+// button before release. Web needs raw pointer events to sustain the
+// hold reliably across mouse, touch, and pen inputs.
+// ---------------------------------------------------------------------------
+function MicButtonWeb(props: {
+  onDown: () => void;
+  onUp: () => void;
+  disabled: boolean;
+  listening: boolean;
+  processing: boolean;
+  micLevel: number;
+}) {
+  const { onDown, onUp, disabled, listening, processing, micLevel } = props;
+  const pressedRef = useRef<boolean>(false);
+
+  const handleDown = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (e: any) => {
+      if (disabled) return;
+      // Prevent default so the browser doesn't start a text selection
+      // or a drag on the button while we hold it down.
+      if (e && typeof e.preventDefault === "function") e.preventDefault();
+      // Capture the pointer so we still receive the up event even if
+      // the finger slides slightly off the button while recording.
+      try {
+        if (e && e.currentTarget && typeof e.currentTarget.setPointerCapture === "function" && e.pointerId != null) {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }
+      } catch {
+        /* older browsers without pointer capture — safe to ignore */
+      }
+      pressedRef.current = true;
+      onDown();
+    },
+    [disabled, onDown],
+  );
+
+  const handleUp = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (e: any) => {
+      if (!pressedRef.current) return;
+      pressedRef.current = false;
+      if (e && typeof e.preventDefault === "function") e.preventDefault();
+      onUp();
+    },
+    [onUp],
+  );
+
+  // Consume drag / context-menu events so the browser doesn't get in
+  // the way of the hold gesture.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const preventDefault = useCallback((e: any) => {
+    if (e && typeof e.preventDefault === "function") e.preventDefault();
+  }, []);
+
+  // React-native-web forwards these DOM-level props straight through to
+  // the underlying <div>, so we can wire raw pointer events here.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const webProps: any = {
+    onPointerDown: handleDown,
+    onPointerUp: handleUp,
+    onPointerCancel: handleUp,
+    onPointerLeave: handleUp,
+    onDragStart: preventDefault,
+    onContextMenu: preventDefault,
+  };
+
+  return (
+    <View
+      {...webProps}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      style={[
+        styles.micBtn,
+        listening ? styles.micBtnListening : null,
+        disabled ? { opacity: 0.7 } : null,
+        // Disable text selection + tap highlight while holding.
+        {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ...({
+            userSelect: "none",
+            WebkitUserSelect: "none",
+            MozUserSelect: "none",
+            msUserSelect: "none",
+            WebkitTouchCallout: "none",
+            WebkitTapHighlightColor: "transparent",
+            touchAction: "none",
+            cursor: disabled ? "not-allowed" : "pointer",
+          } as any),
+        },
+      ]}
+      testID="now-brief-mic"
+    >
+      {listening ? (
+        <Waveform level={micLevel} active />
+      ) : (
+        <>
+          <Ionicons
+            name="mic"
+            size={18}
+            color={processing ? colors.textMuted : "#0A0A14"}
+          />
+          <Text style={styles.micBtnText}>
+            {processing ? "Processing…" : "Hold to Speak"}
+          </Text>
+        </>
+      )}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main card
 // ---------------------------------------------------------------------------
 export function NowBriefCard(props: Props) {
@@ -259,6 +372,15 @@ export function NowBriefCard(props: Props) {
   const [showText, setShowText] = useState<boolean>(false);
   const [textInput, setTextInput] = useState<string>("");
   const [history, setHistory] = useState<WingmanTurn[]>([]);
+  // Ephemeral toast used to nudge the operator when they release the mic
+  // too fast ("Thoda der hold karein 🎤"). Shown for 1.6s.
+  const [toast, setToast] = useState<string>("");
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((msg: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(msg);
+    toastTimerRef.current = setTimeout(() => setToast(""), 1600);
+  }, []);
 
   const lastBriefAt = useRef<number>(0);
   const ttsHandleRef = useRef<StreamingTtsHandle | null>(null);
@@ -440,17 +562,18 @@ export function NowBriefCard(props: Props) {
   }, [mic, stopTts]);
 
   const onMicPressOut = useCallback(async () => {
-    // Guard against ultra-short taps (< 250ms) where the recorder never
-    // actually captured audio — skip STT entirely and drop back to idle
-    // so the user doesn't see a false "processing" flash.
+    // Guard against short holds (< 500ms) where the recorder likely never
+    // captured meaningful audio — nudge the user to hold longer via toast,
+    // skip STT, and drop back to idle.
     const heldMs = Date.now() - recordingStartedAtRef.current;
-    if (heldMs < 250) {
+    if (heldMs < 500) {
       try {
         await mic.stop();
       } catch {
         /* ignore */
       }
       setUiState((s) => (s === "listening" ? "idle" : s));
+      showToast("Thoda der hold karein 🎤");
       return;
     }
 
@@ -484,7 +607,7 @@ export function NowBriefCard(props: Props) {
           : raw,
       );
     }
-  }, [mic, sendMessage]);
+  }, [mic, sendMessage, showToast]);
 
   // -------------------------------------------------------------------
   // Text input handlers.
@@ -581,6 +704,13 @@ export function NowBriefCard(props: Props) {
       ]}
       testID="now-brief-card"
     >
+      {/* ---------------- Toast (short-hold nudge, etc.) ---------------- */}
+      {toast ? (
+        <View style={styles.toast} pointerEvents="none" testID="now-brief-toast">
+          <Text style={styles.toastText}>{toast}</Text>
+        </View>
+      ) : null}
+
       {/* ---------------- Header ---------------- */}
       <View style={styles.header}>
         <View style={styles.badge}>
@@ -745,33 +875,52 @@ export function NowBriefCard(props: Props) {
         </KeyboardAvoidingView>
       ) : (
         <View style={styles.inputRow}>
-          {/* Hold-to-speak main button */}
+          {/* Hold-to-speak main button — platform-specific gesture wiring.
+              Web: raw pointer events (onPointerDown / onPointerUp /
+              onPointerLeave / onPointerCancel) sustain the hold reliably
+              across mouse + touch + pen inputs. RN's Pressable can drop
+              press-out on scroll or when a parent view repaints.
+              Native: standard Pressable onPressIn / onPressOut. */}
           <View style={styles.micWrap}>
             <MicPulseRing active={uiState === "listening"} />
-            <Pressable
-              onPressIn={onMicPressIn}
-              onPressOut={onMicPressOut}
-              disabled={uiState === "processing"}
-              style={({ pressed }) => [
-                styles.micBtn,
-                uiState === "listening" ? styles.micBtnListening : null,
-                pressed ? { opacity: 0.85 } : null,
-              ]}
-              testID="now-brief-mic"
-            >
-              {uiState === "listening" ? (
-                <Waveform level={mic.level} active />
-              ) : (
-                <>
-                  <Ionicons
-                    name="mic"
-                    size={18}
-                    color={uiState === "processing" ? colors.textMuted : "#0A0A14"}
-                  />
-                  <Text style={styles.micBtnText}>Hold to Speak</Text>
-                </>
-              )}
-            </Pressable>
+            {Platform.OS === "web" ? (
+              <MicButtonWeb
+                onDown={onMicPressIn}
+                onUp={onMicPressOut}
+                disabled={uiState === "processing"}
+                listening={uiState === "listening"}
+                processing={uiState === "processing"}
+                micLevel={mic.level}
+              />
+            ) : (
+              <Pressable
+                onPressIn={onMicPressIn}
+                onPressOut={onMicPressOut}
+                disabled={uiState === "processing"}
+                delayLongPress={99999}
+                style={({ pressed }) => [
+                  styles.micBtn,
+                  uiState === "listening" ? styles.micBtnListening : null,
+                  pressed ? { opacity: 0.85 } : null,
+                ]}
+                testID="now-brief-mic"
+              >
+                {uiState === "listening" ? (
+                  <Waveform level={mic.level} active />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="mic"
+                      size={18}
+                      color={uiState === "processing" ? colors.textMuted : "#0A0A14"}
+                    />
+                    <Text style={styles.micBtnText}>
+                      {uiState === "processing" ? "Processing…" : "Hold to Speak"}
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            )}
           </View>
 
           <TouchableOpacity
@@ -1080,6 +1229,42 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textMuted,
     letterSpacing: 0.4,
+    textAlign: "center",
+  },
+
+  toast: {
+    position: "absolute",
+    top: -14,
+    alignSelf: "center",
+    left: 20,
+    right: 20,
+    zIndex: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(24, 12, 44, 0.95)",
+    borderColor: "rgba(0, 255, 136, 0.55)",
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    ...Platform.select({
+      web: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ boxShadow: "0 6px 24px rgba(0,0,0,0.55)" } as any),
+      },
+      default: {
+        shadowColor: "#000",
+        shadowOpacity: 0.55,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 6 },
+        elevation: 8,
+      },
+    }),
+  },
+  toastText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.3,
     textAlign: "center",
   },
 });
