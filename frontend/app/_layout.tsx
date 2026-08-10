@@ -50,6 +50,45 @@ if (Platform.OS === "web" && typeof document !== "undefined") {
       animation: cardBreathe 4s ease-in-out infinite;
       will-change: box-shadow;
     }
+
+    /* JARVIS Aura v3 — ✨ AI-card styling. Slow morphing gradient behind
+       the card + a breathing multi-color halo below it. Every card with
+       an ✨ AI badge should carry the .jarvis-ai-card class. */
+    @keyframes aiCardGradient {
+      0%   { background: linear-gradient(135deg,
+              rgba(155,77,255,0.20) 0%,
+              rgba(0,255,136,0.12) 40%,
+              rgba(0,245,255,0.15) 80%,
+              rgba(155,77,255,0.18) 100%); }
+      33%  { background: linear-gradient(135deg,
+              rgba(0,245,255,0.20) 0%,
+              rgba(155,77,255,0.15) 40%,
+              rgba(0,255,136,0.18) 80%,
+              rgba(0,245,255,0.18) 100%); }
+      66%  { background: linear-gradient(135deg,
+              rgba(0,255,136,0.18) 0%,
+              rgba(0,245,255,0.20) 40%,
+              rgba(155,77,255,0.12) 80%,
+              rgba(0,255,136,0.18) 100%); }
+      100% { background: linear-gradient(135deg,
+              rgba(155,77,255,0.20) 0%,
+              rgba(0,255,136,0.12) 40%,
+              rgba(0,245,255,0.15) 80%,
+              rgba(155,77,255,0.18) 100%); }
+    }
+    @keyframes aiBreathe {
+      0%   { box-shadow: 0 0 15px rgba(155,77,255,0.25), 0 0 30px rgba(0,255,136,0.10), inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(255,255,255,0.05); }
+      33%  { box-shadow: 0 0 20px rgba(0,245,255,0.30), 0 0 40px rgba(155,77,255,0.15), inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(255,255,255,0.05); }
+      66%  { box-shadow: 0 0 18px rgba(0,255,136,0.28), 0 0 35px rgba(0,245,255,0.12), inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(255,255,255,0.05); }
+      100% { box-shadow: 0 0 15px rgba(155,77,255,0.25), 0 0 30px rgba(0,255,136,0.10), inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(255,255,255,0.05); }
+    }
+    .jarvis-ai-card {
+      animation: aiCardGradient 8s ease-in-out infinite, aiBreathe 4s ease-in-out infinite;
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 1px solid rgba(255,255,255,0.12) !important;
+      will-change: background, box-shadow;
+    }
   `;
   const style = document.createElement("style");
   style.setAttribute("data-app-theme", "siri");

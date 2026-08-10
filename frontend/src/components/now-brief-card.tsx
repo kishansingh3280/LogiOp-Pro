@@ -11,10 +11,23 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 import { apiPost } from "@/src/api/client";
-import { useCardBreathing } from "@/src/hooks/use-card-breathing";
 import { colors, radii, spacing } from "@/src/theme";
 
 const CACHE_MS = 5 * 60 * 1000;
+
+// Web-only inline style that applies the JARVIS Aura v3 ✨ AI-card
+// animations (defined as @keyframes in app/_layout.tsx). React Native
+// Web forwards the raw `style` object to the div's style attribute, so
+// setting `animation` / `backdropFilter` / `boxShadow` here works even
+// though these keys are not part of the RN style contract.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const webAiCardAnim: any = {
+  animation:
+    "aiCardGradient 8s ease-in-out infinite, aiBreathe 4s ease-in-out infinite",
+  backdropFilter: "blur(24px) saturate(180%)",
+  WebkitBackdropFilter: "blur(24px) saturate(180%)",
+  willChange: "background, box-shadow",
+};
 
 export function NowBriefCard({
   pending,
@@ -35,7 +48,6 @@ export function NowBriefCard({
 }) {
   const [brief, setBrief] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
-  const breathe = useCardBreathing({ blur: false });
   const lastAtRef = useRef<number>(0);
 
   const generate = useCallback(async () => {
@@ -74,7 +86,10 @@ export function NowBriefCard({
   };
 
   return (
-    <View style={[styles.card, breathe]} testID="now-brief-card">
+    <View
+      style={[styles.card, Platform.OS === "web" ? webAiCardAnim : null]}
+      testID="now-brief-card"
+    >
       <View style={styles.header}>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>✨</Text>
@@ -108,16 +123,20 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     padding: spacing.lg,
     borderRadius: radii.lg,
-    backgroundColor: "rgba(24, 12, 44, 0.70)", // deep violet glass
+    // Static base for both native + web. On web the `.jarvis-ai-card`
+    // CSS class overrides this with the animated 3-stop gradient +
+    // breathing halo; on native we keep the static purple-violet glass.
+    backgroundColor: "rgba(24, 12, 44, 0.55)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(185, 139, 255, 0.35)",
+    borderColor: "rgba(255,255,255,0.12)",
     ...Platform.select({
       web: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...({
-          backdropFilter: "blur(20px) saturate(160%)",
-          WebkitBackdropFilter: "blur(20px) saturate(160%)",
-          boxShadow: "0 0 26px rgba(155,77,255,0.24), 0 4px 24px rgba(0,0,0,0.4)",
+          // Background gradient is set by the `.jarvis-ai-card` class; we
+          // still declare a fallback in case CSS keyframes fail to load.
+          background:
+            "linear-gradient(135deg, rgba(155,77,255,0.20) 0%, rgba(0,255,136,0.12) 40%, rgba(0,245,255,0.15) 80%, rgba(155,77,255,0.18) 100%)",
         } as any),
       },
       default: {
