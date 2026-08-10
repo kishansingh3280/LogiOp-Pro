@@ -41,6 +41,27 @@ export function RealtimeStatusBar() {
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const anim = useRef(new Animated.Value(0)).current;
 
+  // Phase C: "Sun raha hoon" nudge — show exactly ONCE per session so
+  // it doesn't repeatedly flash on every VAD silence. Reset when the
+  // orb disconnects (session ends) so the next session can show it
+  // again.
+  const listenNudgeShownRef = useRef(false);
+  const [showListenNudge, setShowListenNudge] = useState(false);
+  useEffect(() => {
+    if (!orb.isConnected) {
+      listenNudgeShownRef.current = false;
+      setShowListenNudge(false);
+    }
+  }, [orb.isConnected]);
+  useEffect(() => {
+    if (orb.state === "listening" && !listenNudgeShownRef.current) {
+      listenNudgeShownRef.current = true;
+      setShowListenNudge(true);
+      const t = setTimeout(() => setShowListenNudge(false), 2200);
+      return () => clearTimeout(t);
+    }
+  }, [orb.state]);
+
   const latestAssistant = useMemo(() => {
     for (let i = orb.transcript.length - 1; i >= 0; i--) {
       if (orb.transcript[i].role === "assistant") return orb.transcript[i];
@@ -55,24 +76,32 @@ export function RealtimeStatusBar() {
       setVisible(false);
       return;
     }
-    const active =
-      status === "listening" ||
+    // Phase C behaviour:
+    //   • listening     → show once (nudge), then hide
+    //   • processing    → always show while thinking
+    //   • speaking      → show transcript
+    //   • connecting/error → show
+    //   • idle          → hide
+    const shouldShow =
       status === "processing" ||
       status === "speaking" ||
       status === "connecting" ||
-      status === "error";
-    if (active) {
+      status === "error" ||
+      (status === "listening" && showListenNudge);
+    if (shouldShow) {
       setDismissed(false);
       setVisible(true);
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
       return;
     }
-    if (latestAssistant && !dismissed) {
+    if (latestAssistant && !dismissed && status !== "listening") {
       setVisible(true);
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
       dismissTimerRef.current = setTimeout(() => setVisible(false), AUTO_DISMISS_MS);
+      return;
     }
-  }, [status, latestAssistant, dismissed, onDashboard, onSignIn]);
+    setVisible(false);
+  }, [status, showListenNudge, latestAssistant, dismissed, onDashboard, onSignIn]);
 
   useEffect(() => {
     Animated.timing(anim, {

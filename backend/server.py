@@ -822,7 +822,59 @@ async def wingman_catalog_item(payload: CatalogPatch, request: Request):
     body = {"unit": payload.unit or "pcs", **patch, "name": payload.name}
     result = await _remote_json("POST", "items", body)
     await _log_wingman("catalog-create", payload.dict(), {"item_id": result.get("id")})
+    # Phase C — Fix 9: auto-broadcast to customer parties when a new
+    # item lands in the catalog with a photo. The actual WhatsApp send
+    # is MOCKED (logged to `whatsapp_broadcast_log` collection) because
+    # we don't have a WhatsApp Business API key wired yet. The queue
+    # entry survives so a background worker can flush later.
+    try:
+        photo = patch.get("photo_url") or patch.get("photo") or ""
+        if photo:
+            await _queue_catalog_broadcast(result, photo)
+    except Exception as e:  # noqa: BLE001
+        logging.warning(f"[catalog-broadcast] queue failed: {e}")
     return {"ok": True, "item": result, "created": True}
+
+
+# --- Catalog → WhatsApp customer broadcast (MOCKED) -----------------------
+async def _queue_catalog_broadcast(item: Dict[str, Any], photo_url: str) -> None:
+    """Enqueue a broadcast to every party with role=customer.
+
+    The `whatsapp_broadcast_log` collection stores one row PER recipient
+    with `status="queued"`. A real WhatsApp Business worker (not yet
+    wired) would pick these up and set status="sent"/"failed". For now
+    the app can surface the log to the admin so they see the AI acted.
+    """
+    parties = await _proxy_get("/api/parties") or []
+    customers = [p for p in parties if str(p.get("role", "")).lower() == "customer"]
+    now = datetime.now(timezone.utc).isoformat()
+    docs = []
+    for p in customers:
+        phone = str(p.get("phone") or "").strip()
+        if not phone:
+            continue
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "item_id": item.get("id"),
+            "item_name": item.get("name"),
+            "photo_url": photo_url,
+            "party_id": p.get("id"),
+            "party_name": p.get("name"),
+            "phone": phone,
+            "message": f"Naya maal available hai! {item.get('name')}",
+            "status": "queued",
+            "created_at": now,
+        })
+    if docs:
+        await db.whatsapp_broadcast_log.insert_many(docs)
+    await _log_wingman("catalog-broadcast", {"item_id": item.get("id"), "recipients": len(docs)}, {"count": len(docs)})
+
+
+@api_router.get("/catalog/broadcast/log")
+async def catalog_broadcast_log(limit: int = 50):
+    """Admin-facing view of queued catalog broadcasts."""
+    docs = await db.whatsapp_broadcast_log.find().sort("created_at", -1).to_list(min(limit, 500))
+    return [_clean_mongo_id(d) for d in docs]
 
 
 @api_router.get("/wingman/activity")

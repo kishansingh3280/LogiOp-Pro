@@ -58,42 +58,76 @@ const NAV_ITEMS: NavItem[] = [
     label: "Overview",
     icon: "grid-outline",
     route: "/(tabs)",
-    match: (p) => p === "/" || p === "/(tabs)" || p === "/index",
+    // Exact-match root only — the tabs group root path is "/" when
+    // usePathname() is evaluated. Never highlights on any other route.
+    match: (p) => p === "/" || p === "/(tabs)" || p === "/index" || p === "/(tabs)/index",
     glow: "#00F5FF",
   },
   {
     label: "Shipments",
     icon: "cube-outline",
     route: "/(tabs)/shipments",
-    match: (p) => p.startsWith("/shipments") || p.startsWith("/shipment"),
+    // Includes shipment detail + edit + new-shipment sub-routes.
+    match: (p) =>
+      p === "/shipments" ||
+      p === "/(tabs)/shipments" ||
+      p.startsWith("/shipments/") ||
+      p.startsWith("/shipment/"),
     glow: "#9B4DFF",
   },
   {
     label: "Invoices",
     icon: "document-text-outline",
     route: "/(tabs)/invoices",
-    match: (p) => p.startsWith("/invoices") || p.startsWith("/invoice"),
+    match: (p) =>
+      p === "/invoices" ||
+      p === "/(tabs)/invoices" ||
+      p.startsWith("/invoices/") ||
+      p.startsWith("/invoice/"),
     glow: "#00FF88",
   },
   {
     label: "Ledger",
     icon: "book-outline",
     route: "/ledger",
-    match: (p) => p.startsWith("/ledger") || p.startsWith("/party") || p.startsWith("/parties"),
+    // Ledger includes its party detail + new-entry sub-routes.
+    match: (p) =>
+      p === "/ledger" ||
+      p.startsWith("/ledger/") ||
+      p.startsWith("/party/") ||
+      p === "/parties" ||
+      p.startsWith("/parties/") ||
+      p.startsWith("/entry/"),
     glow: "#FFD700",
   },
   {
     label: "Trips",
     icon: "airplane-outline",
     route: "/(tabs)/bullion",
-    match: (p) => p.startsWith("/bullion") || p.startsWith("/trips"),
+    match: (p) =>
+      p === "/bullion" ||
+      p === "/(tabs)/bullion" ||
+      p.startsWith("/bullion/") ||
+      p.startsWith("/trips"),
     glow: "#FF5EC4",
   },
   {
     label: "More",
     icon: "ellipsis-horizontal",
     route: "/(tabs)/more",
-    match: (p) => p.startsWith("/more"),
+    // More is the umbrella tab for admin / warehouses / reports /
+    // wingman / notifications — routes that don't have their own nav
+    // entry. Highlighting More on these keeps orientation consistent.
+    match: (p) =>
+      p === "/more" ||
+      p === "/(tabs)/more" ||
+      p.startsWith("/more/") ||
+      p.startsWith("/admin") ||
+      p.startsWith("/warehouses") ||
+      p.startsWith("/reports") ||
+      p.startsWith("/wingman") ||
+      p.startsWith("/notifications") ||
+      p.startsWith("/item"),
     glow: "#FFFFFF",
   },
 ];
@@ -429,9 +463,36 @@ function TabletSidebar() {
 function MobileSidebar() {
   const s = useSidebar();
   const insets = useSafeAreaInsets();
+  const pathname = usePathname() || "";
+  const router = useRouter();
   const drawerWidth = 260;
   const anim = useRef(new Animated.Value(-drawerWidth)).current;
   const scrim = useRef(new Animated.Value(0)).current;
+
+  // Phase C: smart back button — on ROOT tabs show ☰, on nested/detail
+  // screens show ← that pops the stack. Root paths are the tabs group.
+  const isRootRoute = useMemo(() => {
+    if (!pathname || pathname === "/" || pathname === "/index") return true;
+    const roots = [
+      "/(tabs)",
+      "/(tabs)/index",
+      "/(tabs)/shipments",
+      "/(tabs)/invoices",
+      "/(tabs)/bullion",
+      "/(tabs)/more",
+      "/ledger",
+      "/parties",
+      "/warehouses",
+      "/reports",
+      "/notifications",
+      "/admin",
+      "/shipments",
+      "/invoices",
+      "/bullion",
+      "/more",
+    ];
+    return roots.includes(pathname);
+  }, [pathname]);
 
   useEffect(() => {
     Animated.timing(anim, {
@@ -450,24 +511,42 @@ function MobileSidebar() {
 
   return (
     <>
-      {/* Hamburger button — always visible top-left */}
+      {/* Smart hamburger / back — root routes get ☰, nested routes
+          get ← which pops navigation. Never overlaps titles because
+          list/detail screens now reserve `paddingLeft: 56` in their
+          header row (see Fix 3 in the layout patch). */}
       <TouchableOpacity
-        onPress={s.openMobileDrawer}
+        onPress={() => {
+          if (isRootRoute) s.openMobileDrawer();
+          else {
+            // Guard against pop from initial screen (no history).
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if ((router as any).canGoBack?.()) router.back();
+            else s.openMobileDrawer();
+          }
+        }}
         style={[styles.hamburger, { top: insets.top + 8 }]}
-        accessibilityLabel="Open menu"
-        testID="sidebar-hamburger"
+        accessibilityLabel={isRootRoute ? "Open menu" : "Go back"}
+        testID={isRootRoute ? "sidebar-hamburger" : "sidebar-back-btn"}
         hitSlop={12}
       >
-        <Ionicons name="menu" size={22} color="rgba(255,255,255,0.9)" />
+        <Ionicons
+          name={isRootRoute ? "menu" : "chevron-back"}
+          size={22}
+          color="rgba(255,255,255,0.9)"
+        />
       </TouchableOpacity>
 
-      {/* Scrim */}
+      {/* Scrim — Phase C: darker (0.6) so sidebar clearly dominates
+          the screen. Full-screen absoluteFill catches all outside taps
+          which close the drawer; when closed, pointerEvents=none so
+          the page below stays interactive. */}
       <Animated.View
         pointerEvents={s.openMobile ? "auto" : "none"}
         style={[
           StyleSheet.absoluteFill,
           {
-            backgroundColor: "rgba(0,0,0,0.5)",
+            backgroundColor: "rgba(0,0,0,0.6)",
             opacity: scrim,
             zIndex: 80,
             elevation: 18,
@@ -522,10 +601,13 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  // Frosted glass background
+  // Frosted glass background — Phase C: bumped opacity to 0.97 so the
+  // sidebar becomes near-opaque and no dashboard content bleeds through
+  // when open on mobile. Combined with the full-screen scrim below,
+  // this eliminates all "content visible under sidebar" bugs.
   glass: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(5, 3, 15, 0.75)",
+    backgroundColor: "rgba(5, 3, 15, 0.97)",
     ...Platform.select({
       web: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

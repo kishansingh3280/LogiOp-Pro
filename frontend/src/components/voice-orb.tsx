@@ -656,19 +656,33 @@ const styles = StyleSheet.create({
   orb: {
     width: SIZE,
     height: SIZE,
+    // Phase C: frost-glass AI aura — perfect circle with an AI gradient
+    // fill, translucent border, and layered glow. Native falls back to
+    // shadow* while web gets true backdrop-filter blur + saturate.
     borderRadius: SIZE / 2,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 2,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+    backgroundColor: "rgba(24,12,44,0.55)", // fallback tint under gradient
     ...Platform.select({
       web: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ...({ boxShadow: "0 0 24px rgba(155,77,255,0.55)", cursor: "pointer" } as any),
+        ...({
+          backgroundImage:
+            "linear-gradient(135deg, rgba(155,77,255,0.35) 0%, rgba(0,255,136,0.25) 55%, rgba(0,245,255,0.30) 100%)",
+          backdropFilter: "blur(20px) saturate(180%)",
+          WebkitBackdropFilter: "blur(20px) saturate(180%)",
+          boxShadow:
+            "0 0 20px rgba(155,77,255,0.4), 0 0 40px rgba(0,255,136,0.2)",
+          cursor: "pointer",
+        } as any),
       },
       default: {
         shadowColor: "#9B4DFF",
         shadowOpacity: 0.55,
-        shadowRadius: 16,
+        shadowRadius: 20,
         shadowOffset: { width: 0, height: 4 },
       },
     }),

@@ -4,6 +4,8 @@ import React, { useMemo } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { generateInvoicePdf } from "@/src/utils/invoice-pdf";
+
 import { useApi } from "@/src/api/hooks";
 import type { Invoice, Party, Shipment, ShipmentBag } from "@/src/api/types";
 import { Card, KV, StatusPill } from "@/src/components/ui";
@@ -121,7 +123,21 @@ export default function InvoiceDetail({
             <Ionicons name="chevron-back" size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.headTitle}>{i.number}</Text>
-          <View style={styles.iconBtn} />
+          <TouchableOpacity
+            onPress={async () => {
+              try {
+                await generateInvoicePdf({ invoice: i, party });
+              } catch (e) {
+                // eslint-disable-next-line no-console
+                console.warn("[invoice-pdf] failed:", e);
+              }
+            }}
+            style={styles.iconBtn}
+            testID="invoice-pdf-btn"
+            accessibilityLabel="Generate invoice PDF"
+          >
+            <Ionicons name="document-attach-outline" size={22} color={colors.lime} />
+          </TouchableOpacity>
         </View>
       )}
 

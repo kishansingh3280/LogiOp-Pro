@@ -1,0 +1,50 @@
+{
+  "summary": "Phase C final pre-publish verification. 8/9 fixes ✅, Fix 8 (Papa company scope) ⚠️ PARTIAL (client-side only; server-side migration still pending on remote host). 200-row stress test 200/200 POST success (parties, shipments, invoices, ledger). Mobile screenshot audit clean — dark base, no hamburger/title overlap, sidebar opaque with no bleed, single-item active highlight. Voice orb, PDF button, smart back-button, catalog broadcast (MOCKED) all verified. Two spec drifts noted: (a) company param sends short form 'singh_exports' not 'co_singh_exports'; (b) catalog endpoint is /wingman/catalog-item not /wingman/catalog-upsert.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/shipments?company=<id>", "issue": "Server currently accepts the param (200 OK) but does NOT filter rows server-side — Papa row-level scoping relies on the client sending the param; legacy remote rows have no 'company' column."},
+      {"endpoint": "/api/wingman/catalog-upsert", "issue": "Endpoint referenced in spec does not exist. Actual endpoint is /api/wingman/catalog-item. Confirm canonical name."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Papa company scoping", "issue": "company-context.tsx strips 'co_' prefix and sends '?company=singh_exports', not '?company=co_singh_exports' as spec text states.", "affected_testIDs": []}
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* / textShadow* style props", "issue": "RN Web deprecation warnings at runtime (not from these fixes but noted). Migrate to boxShadow / textShadow. Reference: multiple files including sidebar.tsx and voice-orb.tsx (native shadowColor/shadowOpacity fallbacks)."},
+      {"component": "pointerEvents prop", "issue": "Deprecation warning — use style.pointerEvents instead. Reference: voice-orb.tsx top-level Animated.View."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/phaseC_final.md",
+    "/app/backend/tests/test_phaseC_final.py",
+    "/app/test_reports/pytest/phaseC_final.xml",
+    "/app/test_reports/tmp/phaseC/"
+  ],
+  "action_items": [
+    "Coordinate remote-host migration to add 'company' column on shipments/invoices/ledger for real Papa server-side row-level scoping (Fix 8).",
+    "Reconcile spec: company param wire format — currently 'singh_exports' short form; spec expects 'co_singh_exports'. Either update spec or restore prefix in company-context.tsx.",
+    "Reconcile spec: rename Wingman endpoint to /catalog-upsert OR update Phase C spec to /catalog-item.",
+    "Wire real WhatsApp Business API credentials (WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID) so the currently MOCKED broadcast queue actually delivers.",
+    "Track RN Web shadow*/textShadow*/pointerEvents deprecation warnings for a future style-props migration."
+  ],
+  "critical_code_review_comments": [
+    "Server-side company filter is a client-side concern only — a savvy user could remove the query param and see all rows. Once schema migration lands, server MUST enforce the filter from the JWT.",
+    "MongoDB ObjectId handled correctly via _clean_mongo_id() in server.py — no bleed.",
+    "pytest-xdist splits tests across workers so module-scoped CREATED dict can lose data. Follow-up manual sweep confirmed cleanup complete but the built-in cleanup path is fragile — consider per-test class fixture with autouse teardown."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phaseC_final.py (new)",
+    "/app/test_reports/phaseC_final.md (new)",
+    "/app/test_reports/iteration_72.json (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% verified runtime navigation + 12 screenshots"},
+  "seed_data_creation": "Seeded 50 parties + 50 shipments + 50 invoices + 50 ledger entries prefixed 'TEST_' via public API as kishan. All 200 rows deleted after verification; baseline counts restored (shipments=5, invoices=2, parties=17).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_phaseC_final.py is reusable — asserts login, wingman health, catalog broadcast log endpoint, papa scope, FY filter, and 200-row stress with cleanup. Fixture 'CREATED' is module-scoped so must run in one session (single -k selector or full file). If shipments/invoices cleanup shows incomplete, run the manual sweep in /app/test_reports/phaseC_final.md 'Cleanup' section. Note that when running with pytest-xdist (default), all tests currently run on worker gw0 due to LoadScopeScheduling — so cleanup works as long as CREATED persists.",
+  "rca_of_issue": "Fix 8 (Papa server-side scope) is intentionally PARTIAL per Phase C spec — server accepts the ?company= param but does not filter rows because legacy rows on the REMOTE_BACKEND_URL host lack the 'company' column. Full fix requires a schema migration on the remote host. Client-side scoping is in place via company-context.tsx forcing user.company for non-Admins."
+}

@@ -935,6 +935,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "flex-end",
     marginBottom: spacing.md,
+    paddingLeft: 56, // reserve space for the top-left hamburger / back button
   },
   eyebrow: { color: colors.textDim, fontSize: 12, textTransform: "uppercase", letterSpacing: 1 },
   title: { color: colors.text, fontSize: 30, fontWeight: "800", marginTop: 2 },

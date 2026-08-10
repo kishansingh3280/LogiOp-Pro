@@ -361,6 +361,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
     gap: spacing.sm,
+    paddingLeft: 56, // reserve space for the top-left hamburger / back button
   },
   iconBtn: { padding: 6 },
   title: { color: colors.text, fontSize: 20, fontWeight: "800" },
