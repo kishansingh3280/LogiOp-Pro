@@ -1,0 +1,33 @@
+{
+  "summary": "Now Brief card 6-part improvements verified end-to-end on the Expo web preview (390x844). All primary specs pass: (1) single greeting bubble on mount for kishan (Admin) and bsingh (Papa) with correct role-aware text; (2) neon-green karaoke word highlight (rgb(0,255,136)) + faded future-word color (rgba(255,255,255,0.5)) + blinking caret 'MODULE' all visible mid-narration inside chat-bubble-assistant during TTS; (3) keyboard toggle replaces mic row with now-brief-text-input inline, text send produces user + assistant bubble pair; (4) MiniWaveBars renders exactly 4 divs with width:3px and green bg (rgb(0,255,136)) inside the mini-wave row while uiState==='listening'; (5) mic goes red + 'Listening...' label appears on tap. Auto-scroll pinning during narration works. Jump-to-bottom pill was NOT reproducible via page.mouse.wheel in Playwright (react-native-web ScrollView doesn't respond to synthetic wheel events reliably) — the code path is correct but couldn't be exercised in headless test; needs manual scroll to fully confirm.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Jump-to-bottom pill on manual scroll-up",
+        "issue": "Could not trigger autoScrollRef=false via page.mouse.wheel on the ScrollView in headless Playwright (react-native-web onScroll not firing for synthetic wheel). Code inspection confirms the onScroll handler flips autoScrollRef and setShowJumpToBottom(true) is called when history grows while autoScrollRef.current is false. Recommend manual verification: scroll chat body up with touch/finger + trigger a new assistant reply.",
+        "affected_testIDs": ["now-brief-jump-to-bottom"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Manually verify the 'New message' jump-to-bottom pill (now-brief-jump-to-bottom) by scrolling the chat body upward on a real touch device or with a proper drag gesture, then triggering a new assistant reply — the automated wheel-scroll path is unreliable on react-native-web ScrollView.",
+    "(Optional) Backend still falls back to OpenAI onyx (ElevenLabs 402 paid_plan_required for library voice ibbx9zDYGvLgtYzRbqqG). This is documented as expected in the iteration spec, no action needed unless user wants a premade ElevenLabs voice."
+  ],
+  "critical_code_review_comments": [
+    "now-brief-card.tsx is now 1828 lines — approaching the 700-line advisory limit. Consider extracting subcomponents (Waveform, MiniWaveBars, MicButtonWeb, ChatBubble, useTypewriter, useBreathe) into separate files under src/components/now-brief/ to improve maintainability.",
+    "Two testIDs collide with 'now-brief-mic': one on the legacy MicButtonWeb (still rendered when showText? — actually only MicButtonWeb ISN'T rendered in the current tree, only the small tapMic; verified via DOM). No functional impact but worth removing the dead MicButtonWeb block if it's no longer wired up.",
+    "Caret uses '\u2588' followed by a space in JSX but rendered as '▌' — verified visible in DOM. OK."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only iteration)", "frontend": "95% (7/8 specs auto-verified, pill needs manual scroll test)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Verified evidence (kishan/Kishan@Boss2026): (a) On mount: exactly 1 chat-bubble-assistant with 'Namaste Kishan! 🙏 Main sun raha hoon, batao kya karna hai?'. (b) After unmute + refresh, DOM colors inside the assistant bubble contain 'rgb(0, 255, 136)' (karaoke current word), 'rgba(255, 255, 255, 0.5)' (future words), 'rgb(255, 255, 255)' (past words), and the caret ▌ character. Screenshot shows the word 'karna' painted neon green with a green caret after it. (c) Keyboard toggle → now-brief-text-input replaces mic row; sent 'Aaj kitne shipments pending hain?' → user bubble + assistant bubble (5-line Hinglish reply about AURA-PEN-001 pending). (d) Tap mic → mic turns red, 'Listening…' label appears, MiniWaveBars container contains exactly 4 divs, each width:3px, bg rgb(0,255,136). (e) Papa role (bsingh/Papa@2026): greeting reads 'Namaste Papa ji! 🙏 Main Wingman hoon, aapka AI saathi. Batao aaj kya karna hai?'. Role hint 'Papa Mode · Simple Hindi · Singh Exports only' visible. Only untested: jump-to-bottom pill — page.mouse.wheel didn't trigger onScroll on the ScrollView in Playwright.",
+  "rca_of_issue": "N/A — no bug to RCA."
+}

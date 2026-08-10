@@ -373,22 +373,28 @@ function MicButtonWeb(props: {
 // Renders user turns as right-aligned cyan bubbles and assistant turns as
 // left-aligned dark-glass bubbles. When `speakingWordIdx >= 0` the assistant
 // bubble's text is broken into words and each word is coloured based on its
-// position vs the current speaking index:
-//   • Already spoken → white
-//   • Currently spoken → neon green + text-shadow glow
-//   • Not yet spoken → muted white 50%
+// position vs the current speaking index. When `revealChars >= 0`, only the
+// first N characters of the content are rendered — this creates the
+// live-typewriter effect that stays in lockstep with TTS narration.
 // ---------------------------------------------------------------------------
 function ChatBubble({
   role,
   content,
   speakingWordIdx,
+  revealChars = -1,
 }: {
   role: "user" | "assistant";
   content: string;
   speakingWordIdx: number;
+  revealChars?: number;
 }) {
   const isUser = role === "user";
-  const words = useMemo(() => content.split(/(\s+)/), [content]); // keep spaces
+  // If revealChars >= 0 slice the visible text; otherwise show everything.
+  const visible = useMemo(
+    () => (revealChars >= 0 ? content.slice(0, revealChars) : content),
+    [content, revealChars],
+  );
+  const words = useMemo(() => visible.split(/(\s+)/), [visible]);
   const showKaraoke = !isUser && speakingWordIdx >= 0;
   let wordCounter = -1;
 
@@ -401,7 +407,6 @@ function ChatBubble({
         {showKaraoke ? (
           <Text style={styles.bubbleText}>
             {words.map((w, i) => {
-              // Preserve whitespace as-is.
               if (/^\s+$/.test(w)) return <Text key={i}>{w}</Text>;
               wordCounter += 1;
               const idx = wordCounter;
@@ -427,11 +432,71 @@ function ChatBubble({
                 </Text>
               );
             })}
+            {/* Blinking caret while the typewriter is mid-reveal */}
+            {revealChars >= 0 && revealChars < content.length ? (
+              <Text style={{ color: colors.accent, fontWeight: "900" }}>▌</Text>
+            ) : null}
           </Text>
         ) : (
-          <Text style={styles.bubbleText}>{content}</Text>
+          <Text style={styles.bubbleText}>
+            {visible}
+            {revealChars >= 0 && revealChars < content.length ? (
+              <Text style={{ color: colors.accent, fontWeight: "900" }}>▌</Text>
+            ) : null}
+          </Text>
         )}
       </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MiniWaveBars — compact 4-bar waveform placed next to the mic button.
+// Greener when listening, redder when processing. Bars react to `level`.
+// ---------------------------------------------------------------------------
+function MiniWaveBars({ level, active, color }: { level: number; active: boolean; color: string }) {
+  const bars = 4;
+  const anims = useRef(
+    Array.from({ length: bars }, () => new Animated.Value(0.25)),
+  ).current;
+  useEffect(() => {
+    if (!active) {
+      // Processing: gentle pulsing so the bars still look "alive".
+      anims.forEach((a, i) => {
+        Animated.timing(a, {
+          toValue: 0.35 + (i % 2) * 0.2,
+          duration: 320,
+          useNativeDriver: false,
+        }).start();
+      });
+      return;
+    }
+    anims.forEach((a, i) => {
+      const jitter = 0.6 + Math.random() * 0.6;
+      const target = Math.max(0.2, Math.min(1, level * jitter + (i % 2) * 0.08));
+      Animated.timing(a, {
+        toValue: target,
+        duration: 130,
+        useNativeDriver: false,
+      }).start();
+    });
+  }, [level, active, anims]);
+
+  return (
+    <View style={styles.miniWaveRow}>
+      {anims.map((a, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            styles.miniWaveBar,
+            {
+              height: a.interpolate({ inputRange: [0, 1], outputRange: [4, 22] }),
+              backgroundColor: color,
+              opacity: active ? 1 : 0.7,
+            },
+          ]}
+        />
+      ))}
     </View>
   );
 }
@@ -456,11 +521,37 @@ export function NowBriefCard(props: Props) {
   // Karaoke sync — index of the word currently being spoken by TTS in the
   // most-recent assistant turn. -1 when nothing is being spoken.
   const [speakingWordIdx, setSpeakingWordIdx] = useState<number>(-1);
+  // Progressive character reveal for the CURRENT speaking assistant bubble.
+  // -1 means "reveal everything" (used for non-narrated turns / history).
+  const [revealChars, setRevealChars] = useState<number>(-1);
   const karaokeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const typewriterTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Scroll tracking: keep the conversation pinned to the bottom, but pause
+  // auto-scroll if the user manually scrolls up to re-read history. Show a
+  // "↓ New message" pill until they jump back.
+  const scrollRef = useRef<ScrollView | null>(null);
+  const autoScrollRef = useRef<boolean>(true);
+  const [showJumpToBottom, setShowJumpToBottom] = useState<boolean>(false);
+
+  const scrollToBottom = useCallback((animated = true) => {
+    if (!scrollRef.current) return;
+    try {
+      scrollRef.current.scrollToEnd({ animated });
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const stopKaraoke = useCallback(() => {
     if (karaokeTimerRef.current) clearInterval(karaokeTimerRef.current);
     karaokeTimerRef.current = null;
     setSpeakingWordIdx(-1);
+  }, []);
+  const stopTypewriter = useCallback(() => {
+    if (typewriterTimerRef.current) clearInterval(typewriterTimerRef.current);
+    typewriterTimerRef.current = null;
+    setRevealChars(-1);
   }, []);
   const startKaraoke = useCallback((text: string, estMs: number) => {
     if (karaokeTimerRef.current) clearInterval(karaokeTimerRef.current);
@@ -474,13 +565,33 @@ export function NowBriefCard(props: Props) {
     karaokeTimerRef.current = setInterval(() => {
       i += 1;
       if (i >= words.length) {
-        setSpeakingWordIdx(words.length); // "all spoken"
+        setSpeakingWordIdx(words.length);
         if (karaokeTimerRef.current) clearInterval(karaokeTimerRef.current);
         karaokeTimerRef.current = null;
         return;
       }
       setSpeakingWordIdx(i);
     }, perWord);
+  }, []);
+  // Progressive character typewriter — timed so full-reveal aligns with the
+  // estimated TTS narration duration.
+  const startTypewriter = useCallback((text: string, estMs: number) => {
+    if (typewriterTimerRef.current) clearInterval(typewriterTimerRef.current);
+    if (!text) return;
+    const chars = text.length;
+    const perChar = Math.max(12, Math.floor(estMs / chars));
+    let i = 0;
+    setRevealChars(0);
+    typewriterTimerRef.current = setInterval(() => {
+      i += 1;
+      if (i >= chars) {
+        setRevealChars(chars);
+        if (typewriterTimerRef.current) clearInterval(typewriterTimerRef.current);
+        typewriterTimerRef.current = null;
+        return;
+      }
+      setRevealChars(i);
+    }, perChar);
   }, []);
   // Ephemeral toast (short-hold nudge / permission errors)
   const [toast, setToast] = useState<string>("");
@@ -530,6 +641,7 @@ export function NowBriefCard(props: Props) {
       if (!clean) return;
       stopTts();
       stopKaraoke();
+      stopTypewriter();
       // Show the full text INSTANTLY (no typewriter — the karaoke highlight
       // is what conveys "AI is speaking now").
       setAiText(clean);
@@ -539,10 +651,11 @@ export function NowBriefCard(props: Props) {
 
       if (autoNarrate) {
         setUiState("speaking");
-        // Karaoke word timing — approx 260ms per word until TTS reports
-        // a true duration (we don't currently thread that back).
+        // Karaoke + typewriter share the same estimated TTS duration so
+        // characters appear at the exact pace they're being spoken.
         const words = clean.split(/\s+/).filter(Boolean).length;
         const estMs = Math.max(1200, words * 260);
+        startTypewriter(clean, estMs);
         startKaraoke(clean, estMs);
         const handle = speakStreaming({
           text: clean,
@@ -565,6 +678,7 @@ export function NowBriefCard(props: Props) {
           .finally(() => {
             ttsHandleRef.current = null;
             stopKaraoke();
+            stopTypewriter();
             setUiState((s) => (s === "speaking" ? "responding" : s));
             setTimeout(() => {
               setUiState((s) => (s === "responding" ? "idle" : s));
@@ -587,7 +701,7 @@ export function NowBriefCard(props: Props) {
         }, 400);
       }
     },
-    [stopTts, stopKaraoke, startKaraoke, muted],
+    [stopTts, stopKaraoke, startKaraoke, stopTypewriter, startTypewriter, muted],
   );
 
   // Late-bound reference so playResponse can invoke toggleListening without
@@ -631,13 +745,53 @@ export function NowBriefCard(props: Props) {
     ],
   );
 
-  // Auto-brief on mount + every 30 min if the counters are known.
+  // Auto-brief on mount — Wingman greets the user immediately with a
+  // warm Hinglish salutation. The old daily-brief counters remain
+  // accessible via the ↺ refresh chip.
   useEffect(() => {
-    if (Date.now() - lastBriefAt.current > CACHE_MS) {
-      generateDailyBrief(!muted);
-    }
+    const name = auth.user?.display_name || "Kishan Sir";
+    const honorific = auth.user?.honorific || "Sir";
+    const isPapa = (auth.user?.role || "").toLowerCase() === "papa";
+    const greeting = isPapa
+      ? `Namaste Papa ji! 🙏 Main Wingman hoon, aapka AI saathi. Batao aaj kya karna hai?`
+      : `Namaste ${name}! 🙏 Main sun raha hoon, batao kya karna hai?`;
+    // Seed the conversation history with an assistant greeting bubble.
+    const greetingTurn: WingmanTurn = {
+      role: "assistant",
+      content: greeting,
+      at: Date.now(),
+    };
+    setHistory([greetingTurn]);
+    // If unmuted, also narrate the greeting via TTS (karaoke + typewriter).
+    if (!muted) playResponse(greeting, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // -------------------------------------------------------------------
+  // Auto-scroll to bottom whenever the conversation grows / a new turn
+  // arrives. If the user has manually scrolled up (autoScrollRef=false)
+  // we skip and show the "↓ New message" pill instead.
+  // -------------------------------------------------------------------
+  useEffect(() => {
+    if (!autoScrollRef.current) {
+      // Only show pill if there's actually a new message to jump to.
+      if (history.length > 0) setShowJumpToBottom(true);
+      return;
+    }
+    // Small delay to let ScrollView measure the new content before we jump.
+    const t = setTimeout(() => scrollToBottom(true), 60);
+    return () => clearTimeout(t);
+  }, [history, scrollToBottom]);
+
+  // While the assistant is speaking/typewriting we keep pinning to bottom
+  // so new characters stay visible.
+  useEffect(() => {
+    if (autoScrollRef.current && (uiState === "speaking" || uiState === "responding")) {
+      const t = setInterval(() => scrollToBottom(false), 250);
+      return () => clearInterval(t);
+    }
+    return undefined;
+  }, [uiState, scrollToBottom]);
 
   // -------------------------------------------------------------------
   // Send a chat message (voice or text).
@@ -911,10 +1065,22 @@ export function NowBriefCard(props: Props) {
 
       {/* ---------------- Response body — CHAT BUBBLES ---------------- */}
       <ScrollView
+        ref={scrollRef}
         style={styles.body}
         contentContainerStyle={styles.bodyContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        // Track user-initiated scroll so we can pause auto-scroll when
+        // they read history, and show the "↓ New message" pill instead.
+        onScroll={(e) => {
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          const distanceFromBottom =
+            contentSize.height - (contentOffset.y + layoutMeasurement.height);
+          const atBottom = distanceFromBottom < 40;
+          autoScrollRef.current = atBottom;
+          if (atBottom && showJumpToBottom) setShowJumpToBottom(false);
+        }}
+        scrollEventThrottle={64}
       >
         {history.length === 0 && !aiText && uiState !== "processing" && uiState !== "error" ? (
           <Text style={styles.bodyText}>
@@ -922,22 +1088,23 @@ export function NowBriefCard(props: Props) {
           </Text>
         ) : null}
 
-        {history.map((turn, i) => (
-          <ChatBubble
-            key={`${turn.at}-${i}`}
-            role={turn.role}
-            content={turn.content}
-            // Karaoke: only the MOST RECENT assistant turn gets word
-            // highlighting while TTS is playing.
-            speakingWordIdx={
-              turn.role === "assistant" &&
-              i === history.length - 1 &&
-              (uiState === "speaking" || uiState === "responding")
-                ? speakingWordIdx
-                : -1
-            }
-          />
-        ))}
+        {history.map((turn, i) => {
+          const isLatestAssistant =
+            turn.role === "assistant" && i === history.length - 1;
+          const midNarration =
+            uiState === "speaking" || uiState === "responding";
+          return (
+            <ChatBubble
+              key={`${turn.at}-${i}`}
+              role={turn.role}
+              content={turn.content}
+              // Karaoke + typewriter reveal only on the latest assistant
+              // turn while narration is active.
+              speakingWordIdx={isLatestAssistant && midNarration ? speakingWordIdx : -1}
+              revealChars={isLatestAssistant && midNarration ? revealChars : -1}
+            />
+          );
+        })}
 
         {/* Show the "in-flight" assistant text (from daily-brief which
             doesn't hit the history array). */}
@@ -946,6 +1113,7 @@ export function NowBriefCard(props: Props) {
             role="assistant"
             content={aiText}
             speakingWordIdx={uiState === "speaking" ? speakingWordIdx : -1}
+            revealChars={uiState === "speaking" ? revealChars : -1}
           />
         ) : null}
 
@@ -972,6 +1140,23 @@ export function NowBriefCard(props: Props) {
           </View>
         ) : null}
       </ScrollView>
+
+      {/* "↓ New message" pill — appears when the user has scrolled up
+          away from the tail and a new turn has landed. Tap to jump back. */}
+      {showJumpToBottom ? (
+        <TouchableOpacity
+          onPress={() => {
+            autoScrollRef.current = true;
+            setShowJumpToBottom(false);
+            scrollToBottom(true);
+          }}
+          style={styles.jumpToBottomPill}
+          testID="now-brief-jump-to-bottom"
+        >
+          <Ionicons name="arrow-down" size={11} color="#0A0A14" />
+          <Text style={styles.jumpToBottomText}>New message</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {/* ---------------- Stop-speaking button (mid-narration) ---------------- */}
       {uiState === "speaking" ? (
@@ -1078,7 +1263,18 @@ export function NowBriefCard(props: Props) {
                     : "Tap to speak"}
             </Text>
           </View>
-          {/* Keyboard toggle (kept, minimal) */}
+          {/* 4-bar mini waveform — reacts to mic amplitude while listening,
+              paints red during processing, hidden otherwise. */}
+          {(listening || uiState === "processing") ? (
+            <View style={styles.miniWaveWrap} pointerEvents="none">
+              <MiniWaveBars
+                level={mic.level}
+                active={listening}
+                color={uiState === "processing" ? "#FF6B8A" : colors.accent}
+              />
+            </View>
+          ) : null}
+          {/* Keyboard toggle (opens slide-up text input) */}
           <TouchableOpacity
             onPress={() => setShowText(true)}
             style={styles.iconBtn}
@@ -1287,6 +1483,54 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 0.3,
+  },
+  miniWaveWrap: {
+    height: 24,
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  miniWaveRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  miniWaveBar: {
+    width: 3,
+    borderRadius: 2,
+  },
+
+  // ---- Jump-to-bottom "New message" pill ------------------------------
+  jumpToBottomPill: {
+    position: "absolute",
+    alignSelf: "center",
+    bottom: 96,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.accent,
+    zIndex: 30,
+    ...Platform.select({
+      web: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ boxShadow: "0 6px 20px rgba(0,255,136,0.55)" } as any),
+      },
+      default: {
+        shadowColor: colors.accent,
+        shadowOpacity: 0.55,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 8,
+      },
+    }),
+  },
+  jumpToBottomText: {
+    color: "#0A0A14",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.4,
   },
   tapMicWrap: {
     width: 48,
