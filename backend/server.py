@@ -2011,9 +2011,14 @@ async def assistant_tts_stream_get(
 
 
 @api_router.post("/assistant/stt")
+@api_router.post("/transcribe")
 async def assistant_stt(request: Request):
     """Whisper-1 STT via the Emergent proxy. Accepts multipart/form-data
-    with an `audio` field, returns { text: ... } for Hindi transcriptions."""
+    with an `audio` field (accepted formats: mp3, mp4, mpeg, mpga, m4a, wav,
+    webm), returns { text: ... } for Hinglish transcriptions.
+
+    Aliased as `/api/transcribe` for the Voice AI Wingman flow.
+    """
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
     form = await request.form()
@@ -2022,32 +2027,65 @@ async def assistant_stt(request: Request):
         raise HTTPException(400, "Missing `audio` file")
     from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
     stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
+
+    # Persist upload to a temp file so we can hand a real file HANDLE to
+    # litellm's transcription (it wants an open binary file object).
+    import tempfile
+    filename = upload.filename or "voice.m4a"
+    # Normalise extension — Whisper only supports a fixed set. Browsers
+    # sometimes send `audio/webm;codecs=opus` which passes through as .webm;
+    # RN's expo-audio emits .m4a. Anything unknown → force .wav.
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "webm"
+    if ext not in ("mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"):
+        ext = "webm"
+    tmp_path = None
     try:
-        # Persist upload to a temp file — Whisper takes a file path.
-        import tempfile
-        suffix = "." + (upload.filename or "voice.m4a").rsplit(".", 1)[-1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tf:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tf:
             tf.write(await upload.read())
             tmp_path = tf.name
-        result = await stt.transcribe_audio(
-            audio_file_path=tmp_path,
-            model="whisper-1",
-            language="hi",
-            # Prompt biasing — nudge Whisper toward Hinglish + our domain
-            # vocabulary so proper nouns / logistics terms transcribe
-            # cleanly (e.g. "Lalit", "consignment", "hand carry",
-            # "IN_TO_TH").
-            prompt=(
-                "Hinglish conversation. Terms may include: Kishan Sir, "
-                "Lalit, party, shipment, invoice, bag, weight, freight, "
-                "hand carry, IN_TO_TH, Chennai, Bangkok, Mumbai, Delhi, "
-                "Bhopal, THB, INR, kg, gram, silver, gold, bullion, "
-                "Rani Chain, Wingman, assistant."
-            ),
-        )
+
+        # OpenAISpeechToText.transcribe wants a file OBJECT, not a path.
+        # Open in binary mode; litellm reads it and streams to Whisper.
+        with open(tmp_path, "rb") as fh:
+            result = await stt.transcribe(
+                file=fh,
+                model="whisper-1",
+                language="hi",
+                # Prompt biasing — nudge Whisper toward Hinglish + our
+                # domain vocabulary so proper nouns / logistics terms
+                # transcribe cleanly (e.g. "Lalit", "consignment", "hand
+                # carry", "IN_TO_TH").
+                prompt=(
+                    "Hinglish conversation. Terms may include: Kishan Sir, "
+                    "Lalit, party, shipment, invoice, bag, weight, freight, "
+                    "hand carry, IN_TO_TH, Chennai, Bangkok, Mumbai, Delhi, "
+                    "Bhopal, THB, INR, kg, gram, silver, gold, bullion, "
+                    "Rani Chain, Wingman, assistant."
+                ),
+            )
     except Exception as e:
-        raise HTTPException(502, f"STT upstream error: {e}")
-    return {"text": result.get("text") if isinstance(result, dict) else str(result)}
+        logging.warning(f"[STT] transcription failed: {e}")
+        # Use 400 instead of 502 so the K8s ingress passes our JSON body
+        # through instead of substituting its own HTML 502 error page.
+        raise HTTPException(400, f"STT upstream error: {e}")
+    finally:
+        # Clean up temp file — Whisper doesn't need it after the call.
+        try:
+            if tmp_path:
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+    # litellm's transcription response is typically a dict-like object with
+    # a `text` attribute/key. Handle both shapes defensively.
+    text = ""
+    if hasattr(result, "text"):
+        text = getattr(result, "text") or ""
+    elif isinstance(result, dict):
+        text = result.get("text") or ""
+    else:
+        text = str(result or "")
+    return {"text": (text or "").strip()}
 
 
 # --------------------------------------------------------------------------

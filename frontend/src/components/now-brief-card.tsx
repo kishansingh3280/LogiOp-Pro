@@ -415,30 +415,74 @@ export function NowBriefCard(props: Props) {
   // -------------------------------------------------------------------
   // Hold-to-speak handlers.
   // -------------------------------------------------------------------
+  const recordingStartedAtRef = useRef<number>(0);
   const onMicPressIn = useCallback(async () => {
+    // Instant visual feedback — flip to listening state BEFORE we await
+    // anything. If permissions are still pending or the audio-context
+    // takes a beat, the pulse ring + waveform frame is already on-screen
+    // so the operator gets confirmation that we heard the tap.
     stopTts();
-    setUiState("listening");
     setErrorMsg("");
-    await mic.start();
+    setUiState("listening");
+    recordingStartedAtRef.current = Date.now();
+    try {
+      await mic.start();
+    } catch (e) {
+      // Permission denied / hardware unavailable → surface a clear msg
+      // and drop back to idle. The user can tap the keyboard toggle to
+      // type instead.
+      setUiState("error");
+      setErrorMsg(
+        (e as Error).message ||
+          "Microphone access nahi mila. Settings me permission dein, ya keypad se type karein.",
+      );
+    }
   }, [mic, stopTts]);
 
   const onMicPressOut = useCallback(async () => {
+    // Guard against ultra-short taps (< 250ms) where the recorder never
+    // actually captured audio — skip STT entirely and drop back to idle
+    // so the user doesn't see a false "processing" flash.
+    const heldMs = Date.now() - recordingStartedAtRef.current;
+    if (heldMs < 250) {
+      try {
+        await mic.stop();
+      } catch {
+        /* ignore */
+      }
+      setUiState((s) => (s === "listening" ? "idle" : s));
+      return;
+    }
+
     setUiState("processing");
     try {
       const result = await mic.stop();
-      if (!result) {
+      if (!result || (!result.uri && !result.blob)) {
+        // No audio captured — silently drop back to idle.
         setUiState("idle");
         return;
       }
       const text = await transcribeAudio(result);
       if (!text) {
+        // Whisper returned empty — likely silence. Nudge the user.
         setUiState("idle");
+        setAiText("Kuch sunayi nahi diya, Sir. Dobara try karein? 🎤");
+        setTypeTarget("Kuch sunayi nahi diya, Sir. Dobara try karein? 🎤");
+        setTyping(false);
         return;
       }
       await sendMessage(text);
     } catch (e) {
       setUiState("error");
-      setErrorMsg((e as Error).message || "Voice ko samajh nahi paya");
+      // Sanitize any raw HTML that might have leaked through ingress
+      // error pages before showing it in the response area.
+      const raw = (e as Error).message || "Voice ko samajh nahi paya";
+      const looksLikeHtml = /<!doctype|<html|<body|<style/i.test(raw);
+      setErrorMsg(
+        looksLikeHtml
+          ? "Voice server abhi respond nahi kar raha. Dobara try karein? 🎤"
+          : raw,
+      );
     }
   }, [mic, sendMessage]);
 

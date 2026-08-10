@@ -73,7 +73,7 @@ export async function transcribeAudio(
     throw new Error("No audio input provided");
   }
 
-  const res = await fetch(`${API_BASE}/api/assistant/stt`, {
+  const res = await fetch(`${API_BASE}/api/transcribe`, {
     method: "POST",
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -84,7 +84,14 @@ export async function transcribeAudio(
   });
   if (!res.ok) {
     const t = await res.text().catch(() => "");
-    throw new Error(`STT ${res.status}: ${t.slice(0, 120)}`);
+    // If the ingress ever substitutes an HTML 502/504 error page, strip
+    // the HTML so the operator sees a clean Hinglish message instead of
+    // "<!DOCTYPE html>..." in the error card.
+    const looksLikeHtml = /<!doctype|<html|<body/i.test(t);
+    const clean = looksLikeHtml
+      ? "Voice server abhi respond nahi kar raha. Dobara try karein."
+      : t.slice(0, 120);
+    throw new Error(`STT ${res.status}: ${clean}`);
   }
   const data = (await res.json()) as { text?: string };
   return (data.text || "").trim();

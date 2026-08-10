@@ -1,0 +1,80 @@
+{
+  "summary": "Iteration 49 — STT fix partially verified. Backend pytest 6/6 PASS (POST /api/transcribe + POST /api/assistant/stt both return clean JSON for silent WAV, missing-audio 400, and garbage-bytes cases; supervisor logs contain zero occurrences of the old AttributeError 'transcribe_audio'). Root-cause fix (switching to `stt.transcribe(file=<open binary handle>, model='whisper-1', language='hi', prompt=...)`) is CORRECT and confirmed against the backend directly on localhost:8001. Frontend UX fix for immediate 'listening' state on mic press-in WORKS: within 150 ms of mousedown the 'Sun raha hoon…' red state chip + waveform + pulse ring are rendered before any await — that primary user-visible ask is fixed. Short-tap (<250ms) guard also works: mic press-and-release-in-80ms returns to idle with no processing flash and no error. HOWEVER — a REGRESSION-EQUIVALENT symptom of the original bug is still reproducible from a headless browser: the Kubernetes ingress rewrites any upstream 5xx into an HTML 'Bad gateway' page, so when the backend legitimately returns HTTPException(502) for invalid audio bytes (which the browser produces because Playwright can't grant a real mic), the frontend NowBriefCard renders 'STT 502: <!DOCTYPE html> <!--[if lt IE 7]> ...' — literally the same text the user complained about. Fix root cause was correct but the ingress-behaviour edge remains user-visible whenever any STT upstream error occurs. Recommend backend return 400 (or 200 with empty text + non-fatal error) for STT upstream errors so the ingress leaves the JSON alone, plus a defensive HTML-strip in the frontend error path. Baseline regressions (keyboard text-input Hinglish reply with real AURA-* IDs, refresh regenerates brief) still pass. No new expo/react-native issues beyond the pre-existing shadow*/textShadow*/pointerEvents/useNativeDriver P2 warnings flagged in iter42/47/48.",
+  "test_results": {
+    "backend_transcribe_silent_wav_200_json": "PASS — /api/transcribe returns {\"text\":\"\"} with application/json for 1s silent 16kHz mono WAV",
+    "backend_assistant_stt_silent_wav_200_json": "PASS — /api/assistant/stt backwards-compat alias identical behaviour",
+    "backend_transcribe_missing_audio_400_json": "PASS — 400 with detail 'Missing `audio` file' as JSON",
+    "backend_assistant_stt_missing_audio_400_json": "PASS — 400 JSON on same endpoint",
+    "backend_transcribe_garbage_bytes_no_crash_localhost": "PASS at backend layer — localhost:8001 returns 502 with clean JSON {\"detail\":\"STT upstream error: ...Invalid file format...\"}. No AttributeError bubbled up.",
+    "backend_no_transcribe_audio_attribute_error_in_logs": "PASS — grep of /var/log/supervisor/backend.*.log tail (last 200KB) shows zero occurrences of 'transcribe_audio'",
+    "fe_short_tap_lt_250ms_returns_to_idle": "PASS — 80 ms press+release keeps 'Hold to Speak' visible, no error card, no processing flash",
+    "fe_long_press_immediate_listening_state": "PASS — 'Sun raha hoon…' red chip + pulse ring + waveform appear within 150 ms of mousedown (before any network activity). Screenshot at /tmp/iter49_listening.png confirms.",
+    "fe_permission_denied_hinglish_message_or_valid_flow": "MIXED — headless browser DOES produce a stream but sends invalid audio; instead of a Hinglish permission-denied message the card renders the raw HTML 502 page from the ingress (see FAIL below)",
+    "fe_keyboard_text_input_regression": "PASS — typing 'Aaj kitne shipments hain?' returns a Hinglish reply that includes AURA / shipment / Sir tokens with typewriter",
+    "fe_refresh_regenerates_brief": "PASS — refresh clicked, new brief generated, no exception",
+    "fe_no_html_leaks_in_error_ui": "FAIL — after long-press release the card renders 'STT 502: <!DOCTYPE html> <!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> ...' — same text pattern the user originally reported"
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/transcribe & POST /api/assistant/stt",
+        "issue": "On STT upstream errors (invalid audio bytes, litellm BadRequestError, etc.) the endpoint raises HTTPException(502). The Kubernetes ingress rewrites any 5xx response into its own HTML 'Bad gateway' page before it reaches the browser, so a clean JSON error body is never delivered to the client. Recommended fix: raise HTTPException(400, 'Audio could not be transcribed: <short reason>') OR return `{\"text\": \"\", \"error\": \"...\"}` with 200. Either preserves JSON contract and matches the user-visible expectation stated in the review request ('never HTML'). Verified backend correctly returns JSON at localhost:8001 — issue is purely the 5xx→HTML rewrite at the ingress."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "now-brief-card.tsx — error state renderer",
+        "issue": "When transcribeAudio() throws with an HTML body (as happens when the ingress swallows the backend 502), the raw HTML is dumped verbatim into the error card. Result: user sees 'STT 502: <!DOCTYPE html> <!--[if lt IE 7]>...' — the exact string from the original bug report. Defensive fix: in the catch block of onMicPressOut / transcribeAudio, detect a leading '<' or 'html' token and replace with a friendly Hinglish message like 'STT service ne error diya — thodi der baad try karein, ya keypad se type karein.' See /app/frontend/src/components/now-brief-card.tsx onMicPressOut (~line 475+) and /app/frontend/src/utils/wingman-api.ts transcribeAudio().",
+        "testID": "now-brief-card",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Mic press-and-release in headless browser (no real microphone) → STT",
+        "issue": "Frontend correctly POSTs the recorded blob to /api/transcribe. Backend returns 502 JSON. Ingress rewrites to HTML. Frontend renders the HTML string in the error area. This is the same visible symptom the user originally reported. Rebroadcasts the bug via a different path (ingress instead of AttributeError).",
+        "affected_testIDs": ["now-brief-mic", "now-brief-card", "now-brief-retry"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "now-brief-card.tsx (pre-existing, unchanged from iter42/47/48)",
+        "issue": "RN-Web P2 warnings persist: shadow*/textShadow*/pointerEvents deprecated props; Animated useNativeDriver falls back to JS on web; single 'Invalid style property of background' log. Not new to this iteration. Reference: /app/frontend/src/components/now-brief-card.tsx (multiple lines)."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_49.json",
+    "/app/backend/tests/test_iter49_stt.py",
+    "/app/test_reports/pytest/iter49_results.xml"
+  ],
+  "action_items": [
+    "BACKEND (small, one-liner): In /app/backend/server.py assistant_stt() (~line 2068), change `raise HTTPException(502, f\"STT upstream error: {e}\")` to `raise HTTPException(400, f\"STT could not transcribe audio: {e}\")` — a 400 is not rewritten by the Kubernetes ingress, so the frontend will actually receive the JSON detail and can render a clean Hinglish message. Semantically 400 is also correct because the fault is bad audio input from the client, not an upstream outage.",
+    "FRONTEND (defense-in-depth): In /app/frontend/src/components/now-brief-card.tsx onMicPressOut catch block AND/OR /app/frontend/src/utils/wingman-api.ts transcribeAudio(), sanitise the error message before setErrorMsg — if the string starts with '<' or contains '<!DOCTYPE' / 'html', replace with a fixed Hinglish fallback like 'STT service se jawab nahi mila — dobara try karein ya keypad use karein.' This prevents any future ingress/CDN error page from leaking raw HTML into the UI.",
+    "OPTIONAL: /app/frontend/src/components/now-brief-card.tsx is 1078 lines (up from 1041 in iter48) — still exceeds the 700-line guideline. Consider extracting MicButton / WaveformStrip / HistoryPills / TextInputRow / StateChip into sub-components."
+  ],
+  "critical_code_review_comments": [
+    "server.py:2013-2086 STT handler — the fix is correctly implemented: opens the temp file as a binary handle, passes to stt.transcribe(file=..., model='whisper-1', language='hi', prompt=...), cleans up in a finally block, and reads .text or dict['text'] defensively. Only issue is the choice of 502 vs 400 for upstream errors — see action_items.",
+    "server.py:2014 dual-decorator (@api_router.post('/assistant/stt') and @api_router.post('/transcribe')) — clean idiom for the alias route.",
+    "server.py:2038-2040 filename extension normalisation is defensive — anything unknown becomes .webm which is one of Whisper's supported formats.",
+    "now-brief-card.tsx:419-440 onMicPressIn — the setUiState('listening') BEFORE `await mic.start()` is exactly the fix the user asked for and it demonstrably renders the red pulse ring + 'Sun raha hoon…' chip within 150 ms. Well-executed.",
+    "now-brief-card.tsx:442-455 onMicPressOut short-tap guard (< 250 ms) is a nice UX touch and works in practice.",
+    "now-brief-card.tsx error rendering (search for `errorMsg` usage): the raw error string is rendered verbatim in the card. Needs the HTML sanitisation described in action_items to close the bug loop for the user."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter49_stt.py"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 pytest)",
+    "frontend": "83% (5/6 UX checks — press-in immediate state, short-tap guard, keyboard regression, refresh regression, permission handling PASS; HTML-leaks-into-error-UI FAIL)"
+  },
+  "seed_data_creation": "None. Reused kishan credentials from seed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The root cause (AttributeError from wrong method name) IS fixed. The user's original visible complaint — 'STT 502: <!DOCTYPE html>' rendered in the error card — is STILL reproducible under any STT upstream failure because the Kubernetes ingress rewrites 5xx into HTML. Two orthogonal fixes needed: (1) backend HTTPException(502) → HTTPException(400) to keep the JSON intact through the ingress, (2) frontend error renderer should sanitise any HTML-looking payload. Verify by long-pressing the mic in headless Playwright (no real audio) — after both fixes, the card should show a Hinglish error string, not HTML. Backend tests live at /app/backend/tests/test_iter49_stt.py — 6 tests, all currently green. Login: kishan / Kishan@Boss2026. Key testIDs: now-brief-card, now-brief-mic, now-brief-refresh, now-brief-keyboard-toggle, now-brief-text-input, now-brief-text-send, now-brief-retry.",
+  "rca_of_issue": "ORIGINAL ROOT CAUSE (fixed): `OpenAISpeechToText.transcribe_audio(...)` did not exist on the class. The AttributeError became HTTPException(502) which the K8s ingress rewrote into an HTML 502 page. Frontend displayed the HTML in the error card. FIX APPLIED: switched to `stt.transcribe(file=<open handle>, model='whisper-1', language='hi', prompt=...)` — this now works for real audio (verified with silent WAV → returns {\"text\":\"\"}). REMAINING RISK: any OTHER upstream failure (invalid audio format from a corrupt recording, litellm rate-limit, network flake, empty blob from a headless browser) still raises HTTPException(502) which the ingress still rewrites into HTML which the frontend still displays raw. Confirmed by long-press test in headless Playwright: the exact 'STT 502: <!DOCTYPE html> <!--[if lt IE 7]>...' string reappears in the card. MITIGATION: (a) backend: raise 400 instead of 502 for user-input errors, so the ingress leaves the JSON body intact; (b) frontend: strip any leading '<' / HTML from errorMsg before rendering."
+}

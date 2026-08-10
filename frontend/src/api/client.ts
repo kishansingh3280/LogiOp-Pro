@@ -46,6 +46,7 @@ const COMPANY_SKIP_PREFIXES = [
   "/api/assistant/tts",
   "/api/assistant/stt",
   "/api/assistant/chat",
+  "/api/transcribe",
   "/api/wingman/",
   "/api/dashboard/now-brief",
 ];
