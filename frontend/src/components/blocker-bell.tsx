@@ -133,9 +133,18 @@ export function useBlockers(): { data: BlockerSet | null; refresh: () => Promise
 // button (Save / Modify / etc). Prefix-matched so both `/bullion/trip/new`
 // and `/bullion/trip/<id>` are covered. Add new form routes here whenever
 // a screen packs its own top-right action.
+// Hide the bell on any screen that packs its own top-right action so
+// the bell can't overlap the Save/Modify/Close controls. Prefix-matched.
 const HIDE_ON_PREFIXES = [
   "/sign-in",
   "/bullion/trip",
+  "/bullion/txn",
+  "/entry",
+  "/invoice",
+  "/party",
+  "/shipment",
+  "/item",
+  "/admin",
 ];
 
 function shouldHideBellFor(pathname: string): boolean {

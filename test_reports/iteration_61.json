@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 61 — Frontend-only UI/UX verification of the 5 scoped tasks. Authenticated as admin (kishan via 'Quick login as Kishan Sir'). All 5 tasks PASS. (1) Blocker bell is correctly hidden on /entry/new, /invoice/new, /invoice/[id], /party/new, /shipment/new, /bullion/trip/new, /bullion/txn/new, and remains visible on dashboard, /ledger, /invoices (list), and /bullion. (2) /entry/new compact form works: fx-chip visible with live INR↔THB rate ('1 INR = 0.347 THB · 1 THB = ₹2.88 · 2026-06-07'), kind toggles present, entering 100 shows the As INR / As THB preview strip with cross-currency, both save buttons present and functional — save-inr-btn POST returned 200 (verified in network log). (3) Invoices split-panel works: All/Draft/Sent/Paid/Cancelled chips, search, New button, and phone-flow navigates to /invoice/[id]; tablet viewport (1200x900) keeps list on the left (~380px) and swaps embedded detail on the right with active-row lime highlight (screenshot captured). (4) Trips screen is denser: title font measured at 15px height (well under target ≤20px), all three segmented tabs (Trips/Vault/Trades) switch without crash. (5) Vault Snapshot on dashboard shows two columns with testIDs vault-india (cyan) and vault-bangkok (gold); tapping vault-india navigated to /warehouses. No regressions observed. One minor observation on entry/new save: when the form is opened via a direct URL (no navigation history) router.back() emits a dev-only warning 'GO_BACK not handled'. In the normal FAB → picker → new flow the stack exists, so this is not a regression from this PR but worth a follow-up (consider router.replace('/ledger') as a fallback).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_61.json"],
+  "action_items": [
+    "OPTIONAL (out of scope for this PR): In /app/frontend/app/entry/new.tsx after a successful save, use router.canGoBack() ? router.back() : router.replace('/ledger') so deep-linking to /entry/new?party_id=... still leaves the form after save. Currently a dev-only 'GO_BACK' warning fires when history is empty and the form stays open with the same amount pre-filled."
+  ],
+  "critical_code_review_comments": [
+    "blocker-bell.tsx HIDE_ON_PREFIXES is prefix-matched and correctly covers /entry, /invoice, /party, /shipment, /bullion/trip, /bullion/txn. Tabs paths like /(tabs)/invoices still show the bell — verified live.",
+    "invoices.tsx correctly uses useIsTablet (TABLET_WIDTH=900) to switch to split-panel; active row uses styles.rowCardActive with lime border/shadow — verified visually."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not requested)", "frontend": "100% (all 5 tasks pass; 1 unrelated dev-only warning noted)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auth via 'Quick login as Kishan Sir' button works. Party IDs can be fetched from /api/parties using the auth_token stored in localStorage. Bullion route responds slowly on 'networkidle' due to MarketTicker polling — use wait_until='domcontentloaded' with a manual wait. Deep-linking /entry/new?party_id=... works but router.back() has no history in that flow.",
+  "rca_of_issue": "N/A — no regressions."
+}

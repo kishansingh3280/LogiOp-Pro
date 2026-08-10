@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo } from "react";
+import React, { useMemo } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -10,8 +10,15 @@ import { Card, KV, StatusPill } from "@/src/components/ui";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
 
-export default function InvoiceDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+export default function InvoiceDetail({
+  idOverride,
+  embedded,
+}: {
+  idOverride?: string;
+  embedded?: boolean;
+} = {}) {
+  const params = useLocalSearchParams<{ id: string }>();
+  const id = idOverride || params.id;
   const router = useRouter();
   const inv = useApi<Invoice>(id ? `/api/invoices/${id}` : null);
   const parties = useApi<Party[]>("/api/parties");
@@ -29,18 +36,28 @@ export default function InvoiceDetail() {
     inv.data?.shipment_id ? `/api/shipments/${inv.data.shipment_id}/bags` : null,
   );
 
+  const Wrapper: React.ComponentType<{ children: React.ReactNode }> = embedded
+    ? ({ children }) => <View style={{ flex: 1 }}>{children}</View>
+    : ({ children }) => (
+        <SafeAreaView edges={["top"]} style={styles.safe}>
+          {children}
+        </SafeAreaView>
+      );
+
   if (inv.loading && !inv.data) {
     return (
-      <SafeAreaView edges={["top"]} style={styles.safe}>
-        <View style={styles.headBar}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-            <Ionicons name="chevron-back" size={22} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={styles.headTitle}>Invoice</Text>
-          <View style={{ width: 32 }} />
-        </View>
+      <Wrapper>
+        {!embedded && (
+          <View style={styles.headBar}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+              <Ionicons name="chevron-back" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.headTitle}>Invoice</Text>
+            <View style={{ width: 32 }} />
+          </View>
+        )}
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.lime} />
-      </SafeAreaView>
+      </Wrapper>
     );
   }
   if (!inv.data) {
@@ -48,14 +65,16 @@ export default function InvoiceDetail() {
     // network error so the operator knows whether to retry or move on.
     const is404 = inv.status === 404;
     return (
-      <SafeAreaView edges={["top"]} style={styles.safe}>
-        <View style={styles.headBar}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-            <Ionicons name="chevron-back" size={22} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={styles.headTitle}>Invoice</Text>
-          <View style={{ width: 32 }} />
-        </View>
+      <Wrapper>
+        {!embedded && (
+          <View style={styles.headBar}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+              <Ionicons name="chevron-back" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.headTitle}>Invoice</Text>
+            <View style={{ width: 32 }} />
+          </View>
+        )}
         <View style={styles.errorBox}>
           <Ionicons
             name={is404 ? "alert-circle-outline" : "cloud-offline-outline"}
@@ -88,23 +107,25 @@ export default function InvoiceDetail() {
             </TouchableOpacity>
           </View>
         </View>
-      </SafeAreaView>
+      </Wrapper>
     );
   }
 
   const i = inv.data;
 
   return (
-    <SafeAreaView edges={["top"]} style={styles.safe}>
-      <View style={styles.headBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-          <Ionicons name="chevron-back" size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.headTitle}>{i.number}</Text>
-        <View style={styles.iconBtn} />
-      </View>
+    <Wrapper>
+      {!embedded && (
+        <View style={styles.headBar}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+            <Ionicons name="chevron-back" size={22} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.headTitle}>{i.number}</Text>
+          <View style={styles.iconBtn} />
+        </View>
+      )}
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Card>
           <View style={styles.topRow}>
             <View style={{ flex: 1 }}>
@@ -193,7 +214,7 @@ export default function InvoiceDetail() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
-    </SafeAreaView>
+    </Wrapper>
   );
 }
 

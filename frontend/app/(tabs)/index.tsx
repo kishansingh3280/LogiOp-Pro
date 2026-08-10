@@ -283,10 +283,14 @@ export default function DashboardScreen() {
           onOpen={() => router.push("/shipments")}
         />
 
-        {/* JARVIS Aura v3 — Vault snapshot: warehouse-wise bags / currency /
-            gold breakdown. Bangkok is live, Delhi is a coming-soon
-            placeholder. Selector switches between them. */}
-        <VaultSnapshotSection warehouseData={warehouse.data} trips={trips.data} />
+        {/* JARVIS Aura v3 — Vault snapshot: 2-column India vs Bangkok
+            with bags, weight, INR/THB value and linked parties. */}
+        <VaultSnapshotSection
+          warehouseData={warehouse.data}
+          trips={trips.data}
+          shipments={shipments.data || []}
+          parties={parties.data || []}
+        />
 
         {/* ---------------- Row 2b (HORIZONTAL CAROUSEL — 3 widgets) ----------------
             Delivered / In Transit / Pending. Each tile shows the last 4
