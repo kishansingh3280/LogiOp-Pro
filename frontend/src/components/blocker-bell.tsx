@@ -441,7 +441,10 @@ function hexAlpha(color: string, alpha: number): string {
 const styles = StyleSheet.create({
   bellWrap: {
     position: "absolute",
-    zIndex: 800,
+    // Phase B: lowered from 800 → 40 so interactive top-right header
+    // buttons (New / Save / Modify) never sit *under* the bell. List
+    // screens now also add paddingRight so the bell has clear space.
+    zIndex: 40,
   },
   bellBtn: {
     width: 38,

@@ -214,6 +214,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
+    paddingRight: 56, // reserve space for the floating notification bell
   },
   title: { color: colors.text, fontSize: 22, fontWeight: "800" },
   subtitle: { color: colors.textDim, fontSize: 12, marginTop: 2 },

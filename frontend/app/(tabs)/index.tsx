@@ -205,31 +205,14 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* JARVIS Aura v3 — AI Now Brief card sits at the very top so it's
-            the first thing the user sees. Auto-fetches once on mount from
-            /api/dashboard/now-brief (Claude Haiku 4.5); refresh button
-            regenerates on demand. */}
-        <NowBriefCard
-          pending={s.pending}
-          inTransit={s.in_transit + s.warehouse_arrived}
-          delivered={s.delivered}
-          warehouseBags={warehouse.data?.current_bags ?? 0}
-          warehouseKg={warehouse.data?.current_kg ?? 0}
-          activeTrips={(trips.data || []).filter((t) => ["pending","in_transit","partial_delivered"].includes((t.status || "").toLowerCase())).length}
-          overdueLedger={0}
-        />
+        {/* Phase B — Dashboard widget order (top → bottom):
+            Row 1: Customer will pay + You pay carrier (side by side, fixed)
+            Row 2: Now Brief (compact)
+            Row 3: USD→INR + INR→THB forex
+            Row 4: Bangkok Warehouse (full width)
+            Row 5+: Vault Snapshot + Delivered/In-Transit/Pending carousel */}
 
-        {/* Dashboard Phase 2 — Live Forex Rates (USD→INR + INR→THB).
-            Data fetched client-side from frankfurter.app (ECB-backed, no
-            auth) and cached in-memory for 15 min. Sparkline is a 30-day
-            trailing series. */}
-        <ForexWidget />
-
-        {/* ---------------- Row 1 (FIXED — no horizontal scroll) ----------------
-            Ledger snapshot: 2 widgets side by side. Pinned near the top so
-            the operator sees the money position immediately. `flexDirection`
-            is forced to "row" (overrides the mobile default of column) so
-            the two cards always share the width, on every screen size. */}
+        {/* ---------------- Row 1 — Ledger snapshot (Customer + Carrier) --------- */}
         <View style={[styles.row, styles.rowTablet]}>
           <View style={[styles.col, styles.colTablet]}>
             <TouchableOpacity
@@ -275,15 +258,27 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* ---------------- Row 2a (FIXED — Bangkok Warehouse on its own full-width row) ----------------
-            Warehouse widget is always visible; not part of the carousel. */}
+        {/* ---------------- Row 2 — Now Brief (compact) ---------------- */}
+        <NowBriefCard
+          pending={s.pending}
+          inTransit={s.in_transit + s.warehouse_arrived}
+          delivered={s.delivered}
+          warehouseBags={warehouse.data?.current_bags ?? 0}
+          warehouseKg={warehouse.data?.current_kg ?? 0}
+          activeTrips={(trips.data || []).filter((t) => ["pending","in_transit","partial_delivered"].includes((t.status || "").toLowerCase())).length}
+          overdueLedger={0}
+        />
+
+        {/* ---------------- Row 3 — USD→INR + INR→THB forex ---------------- */}
+        <ForexWidget />
+
+        {/* ---------------- Row 4 — Bangkok Warehouse (full width) ---------------- */}
         <WarehouseHero
           warehouseData={warehouse.data}
           onOpen={() => router.push("/shipments")}
         />
 
-        {/* JARVIS Aura v3 — Vault snapshot: 2-column India vs Bangkok
-            with bags, weight, INR/THB value and linked parties. */}
+        {/* ---------------- Row 5+ — Vault Snapshot + carousel ---------------- */}
         <VaultSnapshotSection
           warehouseData={warehouse.data}
           trips={trips.data}

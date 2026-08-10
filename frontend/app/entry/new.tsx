@@ -151,7 +151,7 @@ export default function NewLedgerEntry() {
     <SafeAreaView edges={["top"]} style={styles.safe}>
       <View style={styles.headBar}>
         <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn} testID="close-entry-btn">
-          <Ionicons name="close" size={22} color={colors.text} />
+          <Ionicons name="chevron-back" size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.headTitle}>New entry</Text>
         <View style={{ width: 34 }} />

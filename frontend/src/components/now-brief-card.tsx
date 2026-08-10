@@ -1332,11 +1332,9 @@ const styles = StyleSheet.create({
   },
 
   body: {
-    // Larger chat area — Task 3: chat bubbles use the entire card
-    // area. Grow up to ~480px on tall screens; on short devices the
-    // ScrollView still scrolls beyond this.
-    minHeight: 260,
-    maxHeight: 480,
+    // Phase B: compact — half the previous height (was 260-480).
+    minHeight: 130,
+    maxHeight: 240,
     marginBottom: 8,
   },
   bodyContent: {
@@ -1394,21 +1392,28 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
   },
   bubble: {
-    maxWidth: "85%",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: "95%",
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    borderRadius: 0,
+    borderWidth: 0,
   },
   bubbleUser: {
-    backgroundColor: "rgba(0, 245, 255, 0.14)",
-    borderColor: "rgba(0, 245, 255, 0.55)",
+    // User side keeps a subtle cyan pill so it's visually distinct.
+    backgroundColor: "rgba(0, 245, 255, 0.10)",
+    borderColor: "rgba(0, 245, 255, 0.40)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderTopRightRadius: 4,
   },
   bubbleAi: {
-    backgroundColor: "rgba(0, 0, 0, 0.35)",
-    borderColor: "rgba(155, 77, 255, 0.35)",
-    borderTopLeftRadius: 4,
+    // Phase B fix: no dark bubble box around AI text — plain text
+    // directly on the card so the AI feels lightweight & unobtrusive.
+    backgroundColor: "transparent",
+    borderColor: "transparent",
+    borderWidth: 0,
   },
   bubbleText: {
     color: colors.text,

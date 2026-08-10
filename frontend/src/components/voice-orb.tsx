@@ -16,13 +16,59 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { usePathname } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
-import { Animated, Easing, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Dimensions, Easing, Keyboard, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 import { useAuth } from "@/src/auth/context";
 import { useVoiceOrb } from "@/src/context/voice-orb-context";
 
 const SIZE = 60;
+
+// ---------------------------------------------------------------------------
+// Draggable orb — persisted corner + geometry helpers.
+// ---------------------------------------------------------------------------
+
+type OrbCorner = "tl" | "tr" | "bl" | "br";
+
+// In-memory ref that survives cross-screen navigation. We deliberately
+// avoid AsyncStorage here so orb position doesn't flicker on cold start
+// while the storage read is in-flight; default corner is bottom-right.
+let PERSISTED_CORNER: OrbCorner = "br";
+
+function loadCorner(): OrbCorner {
+  return PERSISTED_CORNER;
+}
+
+function saveCorner(c: OrbCorner): void {
+  PERSISTED_CORNER = c;
+}
+
+/**
+ * Convert a corner symbol into approximate absolute window coordinates
+ * of the orb's centre. Used to figure out which corner is nearest
+ * after a drag release.
+ */
+function anchorFor(
+  c: OrbCorner,
+  w: number,
+  h: number,
+  size: number,
+  insets: { top: number; bottom: number },
+): { x: number; y: number } {
+  const off = 16 + size / 2;
+  const bottomBase = Math.max(24, insets.bottom + 16) + size / 2;
+  switch (c) {
+    case "tl":
+      return { x: off, y: insets.top + off };
+    case "tr":
+      return { x: w - off, y: insets.top + off };
+    case "bl":
+      return { x: off, y: h - bottomBase };
+    case "br":
+    default:
+      return { x: w - off, y: h - bottomBase };
+  }
+}
 
 export function VoiceOrb() {
   const orb = useVoiceOrb();
@@ -57,6 +103,86 @@ export function VoiceOrb() {
       sub2.remove();
     };
   }, []);
+
+  // ------- Draggable + snap-to-corner ---------------------------------
+  // Phase B: the orb can be dragged anywhere on the screen and snaps
+  // to the nearest corner on release. Default = bottom-right. Position
+  // is remembered across screens via `React.useRef` in the parent
+  // module (persists for the lifetime of the app process).
+  type Corner = OrbCorner;
+  const [corner, setCorner] = useState<Corner>(loadCorner());
+  const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const dragging = useRef(false);
+  const win = Dimensions.get("window");
+  const ORB_SIZE = 88; // approx wrapper size incl. label
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: (_e, g) => Math.abs(g.dx) + Math.abs(g.dy) > 0,
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) + Math.abs(g.dy) > 4,
+      onPanResponderGrant: () => {
+        dragging.current = true;
+        pan.setOffset({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          x: (pan.x as any)._value || 0,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          y: (pan.y as any)._value || 0,
+        });
+        pan.setValue({ x: 0, y: 0 });
+      },
+      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], {
+        useNativeDriver: false,
+      }),
+      onPanResponderRelease: (_e, g) => {
+        pan.flattenOffset();
+        // Determine the absolute release point in window coordinates.
+        // We approximate by adding cumulative delta to the CURRENT
+        // corner anchor.
+        const anchor = anchorFor(corner, win.width, win.height, ORB_SIZE, insets);
+        const finalX = anchor.x + g.dx;
+        const finalY = anchor.y + g.dy;
+        const midX = win.width / 2;
+        const midY = win.height / 2;
+        const nextCorner: Corner =
+          finalX < midX
+            ? finalY < midY ? "tl" : "bl"
+            : finalY < midY ? "tr" : "br";
+        setCorner(nextCorner);
+        saveCorner(nextCorner);
+        Animated.spring(pan, {
+          toValue: { x: 0, y: 0 },
+          useNativeDriver: false,
+          friction: 6,
+          tension: 60,
+        }).start(() => {
+          dragging.current = false;
+        });
+      },
+      onPanResponderTerminate: () => {
+        pan.flattenOffset();
+        Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
+        dragging.current = false;
+      },
+    }),
+  ).current;
+
+  // Corner anchor helper — converts corner symbol into absolute
+  // positioning style values.
+  const anchorStyle = useMemo(() => {
+    const off = 16;
+    const bottomBase = Math.max(24, insets.bottom + 16) + kbHeight;
+    switch (corner) {
+      case "tl":
+        return { top: insets.top + off, left: off };
+      case "tr":
+        return { top: insets.top + off, right: off };
+      case "bl":
+        return { bottom: bottomBase, left: off };
+      case "br":
+      default:
+        return { bottom: bottomBase, right: off };
+    }
+  }, [corner, insets.top, insets.bottom, kbHeight]);
 
   // Radiating cyan rings — 2-ring outward loop while listening.
   const ring1 = useRef(new Animated.Value(0)).current;
@@ -194,13 +320,14 @@ export function VoiceOrb() {
               : "";
 
   return (
-    <View
+    <Animated.View
+      {...panResponder.panHandlers}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       style={[
         styles.wrapper,
+        anchorStyle,
         {
-          bottom: Math.max(24, insets.bottom + 16) + kbHeight,
-          right: 16,
+          transform: [{ translateX: pan.x }, { translateY: pan.y }],
           // pointer-events routed through style on web to silence RNW's
           // deprecation warning about the top-level prop.
           ...(Platform.OS === "web" ? ({ pointerEvents: "box-none" } as any) : {}),
@@ -383,7 +510,7 @@ export function VoiceOrb() {
           />
         </Pressable>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 

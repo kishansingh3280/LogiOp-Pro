@@ -1,24 +1,21 @@
 /**
- * VaultSnapshotSection — JARVIS Aura v4: 2-column split showing India
- * vs Bangkok at a glance. Each column displays:
- *   • Bags in play
- *   • Total weight (kg)
- *   • INR / THB value at that location
- *   • Party count linked to that location
+ * VaultSnapshotSection — Phase B redesign.
  *
- * Data sources (all live, no mocks):
- *   • Bangkok column: `/api/dashboard/warehouse` (current bags + kg),
- *     active carrier trips carrying INR/THB into BKK (IN → TH) plus
- *     any live gold-baht carried.
- *   • India column: derived from active carrier trips heading India-
- *     bound (TH → IN in-transit / pending) that represent currency +
- *     gold currently being brought into India, plus shipments in status
- *     `pending` / `in_transit` (bags + weight of goods currently
- *     moving into India).
- *   • Party counts: derived from the full party list, bucketed by the
- *     `country` field into IN/India vs TH/Thailand.
+ * Two-section rollup:
+ *   🇮🇳 India (cyan)     — Delhi row + Kolkata row
+ *   🇹🇭 Thailand (gold)  — Bangkok row
+ * Each row: bags · weight · currency value.
+ * Total row at the bottom sums INR + THB across both sections.
+ * Rows are tappable — tap opens `/warehouses` with a `?loc=<city>` param
+ * so the warehouse screen can jump to the right city.
  *
- * Tapping either column navigates to `/warehouses` for detail drill-down.
+ * Data (all live, no mocks):
+ *   • Bangkok:  `/api/dashboard/warehouse` → current_bags + current_kg
+ *               + THB portion carried in active TH_TO_IN trips
+ *   • Delhi:    live shipments delivered/in-transit to Delhi / North IN
+ *   • Kolkata:  shipments delivered/in-transit to Kolkata / East IN
+ *   • INR value at each Indian city = INR portion of trips destined
+ *     there (approximation — best-effort)
  */
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -30,19 +27,27 @@ import type { CarrierTrip } from "@/src/bullion/types";
 import { useCardBreathing } from "@/src/hooks/use-card-breathing";
 import { colors, radii, spacing } from "@/src/theme";
 
-const INDIA_COUNTRY_TOKENS = ["in", "india", "ind"];
-const BKK_COUNTRY_TOKENS = ["th", "thailand", "bangkok", "bkk"];
+const INDIA_TINT = "#00F5FF";
+const THAI_TINT = "#FFD700";
 
-const INDIA_TINT = "#00F5FF"; // cyan
-const BKK_TINT = "#FFD700";   // gold
+// City tokens — case-insensitive substring match against
+// destination / origin strings on shipments and party addresses.
+const DELHI_TOKENS = ["delhi", "new delhi", "ncr", "gurgaon", "gurugram", "noida"];
+const KOLKATA_TOKENS = ["kolkata", "calcutta", "howrah"];
+const BKK_TOKENS = ["bangkok", "bkk", "thailand"];
 
-function normCountry(c?: string | null): "IN" | "TH" | null {
-  const s = (c || "").trim().toLowerCase();
-  if (!s) return null;
-  if (INDIA_COUNTRY_TOKENS.includes(s)) return "IN";
-  if (BKK_COUNTRY_TOKENS.includes(s)) return "TH";
-  return null;
+function matches(text: string | undefined | null, tokens: string[]): boolean {
+  if (!text) return false;
+  const s = text.toLowerCase();
+  return tokens.some((t) => s.includes(t));
 }
+
+type RowStats = {
+  bags: number;
+  kg: number;
+  inr: number;
+  thb: number;
+};
 
 export function VaultSnapshotSection({
   warehouseData,
@@ -58,252 +63,187 @@ export function VaultSnapshotSection({
   const router = useRouter();
   const breathe = useCardBreathing({ blur: false });
 
-  // ------- Bangkok column ----------------------------------------------
-  const bangkok = useMemo(() => {
-    // Warehouse-resident bags/weight
+  // Filter to live shipments (not delivered, not cancelled) so bag/weight
+  // counts represent inventory currently on hand, not historical.
+  const liveShipments = useMemo(
+    () =>
+      (shipments || []).filter((s) => {
+        const st = (s.status || "").toLowerCase();
+        return ["pending", "in_transit", "warehouse_arrived"].includes(st);
+      }),
+    [shipments],
+  );
+
+  const activeTrips = useMemo(
+    () =>
+      (trips || []).filter((t) => {
+        const st = (t.status || "").toLowerCase();
+        return ["pending", "in_transit", "partial_delivered"].includes(st);
+      }),
+    [trips],
+  );
+
+  const delhi = useMemo<RowStats>(() => {
+    const inCity = liveShipments.filter((s) => matches(s.destination, DELHI_TOKENS));
+    const bags = inCity.reduce((n, s) => n + (Number(s.bag_count) || 0), 0);
+    const kg = Math.round(inCity.reduce((n, s) => n + (Number(s.weight_kg) || 0), 0));
+    // INR portion of active TH→IN trips that go to Delhi (best effort:
+    // uses notes/destination if present, else divides evenly with Kol).
+    let inr = 0;
+    for (const t of activeTrips) {
+      const a = t as unknown as Record<string, unknown>;
+      const dir = String(a.direction || a.route || "").toUpperCase();
+      if (!dir.includes("TH_TO_IN") && !dir.includes("TH → IN")) continue;
+      const note = String(a.notes || "").toLowerCase();
+      const cur = String(a.currency_type || "").toUpperCase();
+      const amt = Number(a.currency_amount || 0) || 0;
+      if (cur !== "INR") continue;
+      if (matches(note, DELHI_TOKENS)) inr += amt;
+    }
+    return { bags, kg, inr, thb: 0 };
+  }, [liveShipments, activeTrips]);
+
+  const kolkata = useMemo<RowStats>(() => {
+    const inCity = liveShipments.filter((s) => matches(s.destination, KOLKATA_TOKENS));
+    const bags = inCity.reduce((n, s) => n + (Number(s.bag_count) || 0), 0);
+    const kg = Math.round(inCity.reduce((n, s) => n + (Number(s.weight_kg) || 0), 0));
+    let inr = 0;
+    for (const t of activeTrips) {
+      const a = t as unknown as Record<string, unknown>;
+      const dir = String(a.direction || a.route || "").toUpperCase();
+      if (!dir.includes("TH_TO_IN") && !dir.includes("TH → IN")) continue;
+      const note = String(a.notes || "").toLowerCase();
+      const cur = String(a.currency_type || "").toUpperCase();
+      const amt = Number(a.currency_amount || 0) || 0;
+      if (cur !== "INR") continue;
+      if (matches(note, KOLKATA_TOKENS)) inr += amt;
+    }
+    return { bags, kg, inr, thb: 0 };
+  }, [liveShipments, activeTrips]);
+
+  const bangkok = useMemo<RowStats>(() => {
     const bags = warehouseData?.current_bags ?? 0;
     const kg = Math.round(warehouseData?.current_kg || 0);
-
-    // Active trips carrying material into / stationed at Bangkok.
-    // Convention: IN_TO_TH = leaving India, arriving BKK; the currency /
-    // gold on that trip is treated as "at BKK" once the trip is active.
-    const active = (trips || []).filter((t) => {
-      const st = (t.status || "").toLowerCase();
-      return ["pending", "in_transit", "partial_delivered"].includes(st);
-    });
-    let inr = 0, thb = 0, gold = 0;
-    for (const t of active) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const a = t as any;
+    let thb = 0;
+    for (const t of activeTrips) {
+      const a = t as unknown as Record<string, unknown>;
       const dir = String(a.direction || a.route || "").toUpperCase();
-      // Trip is "at Bangkok" when heading IN → TH (payload arrives BKK)
-      // or when it's a TH-side leg (BKK → IN not yet dispatched from BKK).
-      const isBkk = dir.includes("IN_TO_TH") || dir.includes("IN → TH");
-      if (!isBkk) continue;
+      if (!dir.includes("IN_TO_TH") && !dir.includes("IN → TH")) continue;
       const cur = String(a.currency_type || "").toUpperCase();
       const amt = Number(a.currency_amount || 0) || 0;
-      if (cur === "INR") inr += amt;
       if (cur === "THB") thb += amt;
-      gold += Number(a.gold_baht || a.gold_bt || 0) || 0;
     }
-    return { bags, kg, inr, thb, gold, activeTrips: active.length };
-  }, [warehouseData, trips]);
+    return { bags, kg, inr: 0, thb };
+  }, [warehouseData, activeTrips]);
 
-  // ------- India column ------------------------------------------------
-  const india = useMemo(() => {
-    // Bags/weight = shipments currently in India (delivered, warehouse
-    // pending, or arriving IN via TH → IN in_transit).
-    const activeShipments = (shipments || []).filter((s) => {
-      const st = (s.status || "").toLowerCase();
-      // A shipment counts as "in India" if it's warehouse_arrived within
-      // India OR delivered; and dispatch_direction/destination is India.
-      // Fall back to any non-BKK destination shipment that's live.
-      const dest = (s.destination || "").toLowerCase();
-      const isIndiaBound = dest.includes("india") || dest.includes("delhi") || dest.includes("mumbai") || dest.includes("bombay");
-      return ["pending", "in_transit", "warehouse_arrived"].includes(st) && !isIndiaBound === false
-        ? true
-        : ["warehouse_arrived", "in_transit"].includes(st) && isIndiaBound;
-    });
-    // Simplification — sum bags/weight of any live shipment whose
-    // destination looks like an Indian city (or unknown). Anything
-    // clearly Bangkok-bound stays in the BKK column via the trip data.
-    const indiaLive = (shipments || []).filter((s) => {
-      const st = (s.status || "").toLowerCase();
-      const dest = (s.destination || "").toLowerCase();
-      const isBkk = dest.includes("bangkok") || dest.includes("bkk") || dest.includes("thailand");
-      return !isBkk && ["pending", "in_transit", "warehouse_arrived", "delivered"].includes(st);
-    });
-    // Only count non-delivered as "in-play" bags; delivered shipments'
-    // bags no longer sit in a warehouse.
-    const inPlay = indiaLive.filter((s) => (s.status || "").toLowerCase() !== "delivered");
-    const bags = inPlay.reduce((sum, s) => sum + (Number(s.bag_count) || 0), 0);
-    const kg = Math.round(inPlay.reduce((sum, s) => sum + (Number(s.weight_kg) || 0), 0));
+  const totals = useMemo(
+    () => ({
+      bags: delhi.bags + kolkata.bags + bangkok.bags,
+      kg: delhi.kg + kolkata.kg + bangkok.kg,
+      inr: delhi.inr + kolkata.inr,
+      thb: bangkok.thb,
+    }),
+    [delhi, kolkata, bangkok],
+  );
 
-    // Currency/gold arriving India via TH → IN active trips
-    const active = (trips || []).filter((t) => {
-      const st = (t.status || "").toLowerCase();
-      return ["pending", "in_transit", "partial_delivered"].includes(st);
-    });
-    let inr = 0, thb = 0, gold = 0;
-    for (const t of active) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const a = t as any;
-      const dir = String(a.direction || a.route || "").toUpperCase();
-      const isIndiaBound = dir.includes("TH_TO_IN") || dir.includes("TH → IN");
-      if (!isIndiaBound) continue;
-      const cur = String(a.currency_type || "").toUpperCase();
-      const amt = Number(a.currency_amount || 0) || 0;
-      if (cur === "INR") inr += amt;
-      if (cur === "THB") thb += amt;
-      gold += Number(a.gold_baht || a.gold_bt || 0) || 0;
-    }
-    return { bags, kg, inr, thb, gold, activeShipments: activeShipments.length };
-  }, [shipments, trips]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _partyCounts = parties?.length ?? 0;
 
-  // ------- Party counts by location -----------------------------------
-  const partyCounts = useMemo(() => {
-    let ind = 0, thai = 0;
-    for (const p of parties || []) {
-      const norm = normCountry(p.country);
-      if (norm === "IN") ind++;
-      else if (norm === "TH") thai++;
-    }
-    return { india: ind, bangkok: thai };
-  }, [parties]);
+  const openWarehouse = (city?: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.push((city ? `/warehouses?loc=${encodeURIComponent(city)}` : "/warehouses") as any);
+  };
 
   return (
     <View style={styles.wrap}>
       <View style={styles.headerRow}>
         <Text style={styles.sectionTitle}>Vault snapshot</Text>
-        <Text style={styles.sectionHint}>Live · tap to open warehouse</Text>
+        <Text style={styles.sectionHint}>Live · tap a row to open warehouse</Text>
       </View>
 
-      <View style={styles.row}>
-        <LocationColumn
-          flag="🇮🇳"
-          name="India"
-          tint={INDIA_TINT}
-          bags={india.bags}
-          kg={india.kg}
-          inr={india.inr}
-          thb={india.thb}
-          gold={india.gold}
-          parties={partyCounts.india}
-          onOpen={() => router.push("/warehouses")}
-          breathe={breathe}
-          testID="vault-india"
-        />
-        <LocationColumn
-          flag="🇹🇭"
-          name="Bangkok"
-          tint={BKK_TINT}
-          bags={bangkok.bags}
-          kg={bangkok.kg}
-          inr={bangkok.inr}
-          thb={bangkok.thb}
-          gold={bangkok.gold}
-          parties={partyCounts.bangkok}
-          onOpen={() => router.push("/warehouses")}
-          breathe={breathe}
-          testID="vault-bangkok"
-        />
+      {/* India section */}
+      <View style={[styles.section, { borderColor: hexA(INDIA_TINT, 0.30) }, breathe as object]}>
+        <View style={styles.sectionHead}>
+          <Text style={[styles.flag, { textShadowColor: hexA(INDIA_TINT, 0.7) }]}>🇮🇳</Text>
+          <Text style={[styles.sectionName, { color: INDIA_TINT }]}>India</Text>
+        </View>
+        <VaultRow label="Delhi" tint={INDIA_TINT} stats={delhi} onPress={() => openWarehouse("Delhi")} testID="vault-row-delhi" />
+        <VaultRow label="Kolkata" tint={INDIA_TINT} stats={kolkata} onPress={() => openWarehouse("Kolkata")} testID="vault-row-kolkata" />
+      </View>
+
+      {/* Thailand section */}
+      <View style={[styles.section, { borderColor: hexA(THAI_TINT, 0.30) }, breathe as object]}>
+        <View style={styles.sectionHead}>
+          <Text style={[styles.flag, { textShadowColor: hexA(THAI_TINT, 0.7) }]}>🇹🇭</Text>
+          <Text style={[styles.sectionName, { color: THAI_TINT }]}>Thailand</Text>
+        </View>
+        <VaultRow label="Bangkok" tint={THAI_TINT} stats={bangkok} onPress={() => openWarehouse("Bangkok")} testID="vault-row-bangkok" />
+      </View>
+
+      {/* Totals */}
+      <View style={styles.totalRow} testID="vault-row-total">
+        <Text style={styles.totalLbl}>TOTAL</Text>
+        <View style={styles.totalCells}>
+          <Text style={styles.totalCell}>{totals.bags} bags</Text>
+          <Text style={styles.totalCell}>{totals.kg} kg</Text>
+          <Text style={[styles.totalCell, { color: INDIA_TINT }]}>
+            {formatCurrency(totals.inr, "₹")}
+          </Text>
+          <Text style={[styles.totalCell, { color: THAI_TINT }]}>
+            {formatCurrency(totals.thb, "฿")}
+          </Text>
+        </View>
       </View>
     </View>
   );
 }
 
-// ---------------------------------------------------------------------------
-// One column = one location card
-// ---------------------------------------------------------------------------
-
-function LocationColumn({
-  flag,
-  name,
+function VaultRow({
+  label,
   tint,
-  bags,
-  kg,
-  inr,
-  thb,
-  gold,
-  parties,
-  onOpen,
-  breathe,
+  stats,
+  onPress,
   testID,
 }: {
-  flag: string;
-  name: string;
+  label: string;
   tint: string;
-  bags: number;
-  kg: number;
-  inr: number;
-  thb: number;
-  gold: number;
-  parties: number;
-  onOpen: () => void;
-  breathe?: object;
+  stats: RowStats;
+  onPress: () => void;
   testID?: string;
 }) {
-  const empty = bags === 0 && kg === 0 && inr === 0 && thb === 0 && gold === 0;
+  const empty = stats.bags === 0 && stats.kg === 0 && stats.inr === 0 && stats.thb === 0;
   return (
-    <TouchableOpacity
-      activeOpacity={0.85}
-      onPress={onOpen}
-      style={[styles.col, { borderColor: hexA(tint, 0.35) }, breathe as object]}
-      testID={testID}
-    >
-      {/* Header — flag + name */}
-      <View style={styles.colHead}>
-        <Text style={[styles.flag, { textShadowColor: hexA(tint, 0.7) }]}>{flag}</Text>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.locName, { color: tint }]}>{name}</Text>
-          <Text style={styles.locSub}>
-            {parties} part{parties === 1 ? "y" : "ies"} linked
-          </Text>
-        </View>
+    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={styles.row} testID={testID}>
+      <View style={styles.rowLeft}>
+        <View style={[styles.dot, { backgroundColor: tint }]} />
+        <Text style={styles.rowLabel}>{label}</Text>
       </View>
-
-      {/* Bags + weight */}
-      <View style={styles.metricRow}>
-        <View style={styles.metric}>
-          <Ionicons name="cube-outline" size={12} color={tint} />
-          <View style={{ marginLeft: 6, flex: 1, minWidth: 0 }}>
-            <Text style={styles.metricLbl}>Bags</Text>
-            <Text style={[styles.metricVal, empty && styles.metricValDim]} numberOfLines={1}>
-              {empty ? "—" : bags}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.metric}>
-          <Ionicons name="scale-outline" size={12} color={tint} />
-          <View style={{ marginLeft: 6, flex: 1, minWidth: 0 }}>
-            <Text style={styles.metricLbl}>Weight</Text>
-            <Text style={[styles.metricVal, empty && styles.metricValDim]} numberOfLines={1}>
-              {empty ? "—" : `${kg} kg`}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Currency values */}
-      <View style={styles.currencyRow}>
-        <CurrencyPill code="INR" amount={inr} tint={tint} />
-        <CurrencyPill code="THB" amount={thb} tint={tint} />
-      </View>
-
-      {/* Gold row (only when > 0) */}
-      {gold > 0 ? (
-        <View style={styles.goldRow}>
-          <Ionicons name="diamond-outline" size={11} color="#F5C518" />
-          <Text style={styles.goldText}>{gold.toFixed(1)} bt gold</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.cta}>
-        <Text style={styles.ctaText}>View</Text>
+      <View style={styles.rowRight}>
+        <Text style={[styles.rowStat, empty && styles.rowStatDim]} numberOfLines={1}>
+          {empty ? "—" : `${stats.bags} bags`}
+        </Text>
+        <Text style={[styles.rowStat, empty && styles.rowStatDim]} numberOfLines={1}>
+          {empty ? "—" : `${stats.kg} kg`}
+        </Text>
+        <Text style={[styles.rowStatValue, { color: tint }]} numberOfLines={1}>
+          {stats.inr > 0
+            ? formatCurrency(stats.inr, "₹")
+            : stats.thb > 0
+              ? formatCurrency(stats.thb, "฿")
+              : "—"}
+        </Text>
         <Ionicons name="chevron-forward" size={12} color={colors.textDim} />
       </View>
     </TouchableOpacity>
   );
 }
 
-function CurrencyPill({ code, amount, tint }: { code: "INR" | "THB"; amount: number; tint: string }) {
-  const sym = code === "INR" ? "₹" : "฿";
-  const isZero = !amount || amount <= 0;
-  const formatted = isZero
-    ? `${sym}0`
-    : amount >= 100000
-      ? `${sym}${(amount / 100000).toFixed(amount >= 10_000_000 ? 0 : 1)}L`
-      : amount >= 1000
-        ? `${sym}${(amount / 1000).toFixed(amount >= 10_000 ? 0 : 1)}K`
-        : `${sym}${Math.round(amount)}`;
-  return (
-    <View style={[styles.currPill, { borderColor: hexA(tint, 0.35), backgroundColor: hexA(tint, 0.08) }]}>
-      <Text style={[styles.currCode, { color: tint }]}>{code}</Text>
-      <Text style={[styles.currAmt, isZero && styles.currAmtDim]} numberOfLines={1} adjustsFontSizeToFit>
-        {formatted}
-      </Text>
-    </View>
-  );
+function formatCurrency(amount: number, symbol: string): string {
+  if (!amount || amount <= 0) return `${symbol}0`;
+  if (amount >= 10_000_000) return `${symbol}${(amount / 10_000_000).toFixed(1)}Cr`;
+  if (amount >= 100_000) return `${symbol}${(amount / 100_000).toFixed(1)}L`;
+  if (amount >= 1000) return `${symbol}${(amount / 1000).toFixed(1)}K`;
+  return `${symbol}${Math.round(amount)}`;
 }
 
 function hexA(color: string, alpha: number): string {
@@ -315,10 +255,6 @@ function hexA(color: string, alpha: number): string {
   }
   return color;
 }
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
   wrap: { marginBottom: spacing.md },
@@ -338,100 +274,66 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 6,
   },
-  sectionHint: {
-    color: colors.textDim,
-    fontSize: 10,
-    fontWeight: "600",
-  },
+  sectionHint: { color: colors.textDim, fontSize: 10, fontWeight: "600" },
 
-  row: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  col: {
-    flex: 1,
-    minWidth: 0,
+  section: {
     padding: spacing.md,
     borderRadius: radii.lg,
     backgroundColor: "rgba(12,12,30,0.75)",
     borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 8,
   },
-  colHead: {
+  sectionHead: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   flag: {
-    fontSize: 22,
+    fontSize: 20,
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 8,
   },
-  locName: { fontSize: 14, fontWeight: "800", letterSpacing: 0.4 },
-  locSub: { color: colors.textDim, fontSize: 10, marginTop: 1, fontWeight: "600" },
+  sectionName: { fontSize: 13, fontWeight: "800", letterSpacing: 0.4 },
 
-  metricRow: {
-    flexDirection: "row",
-    gap: 6,
-    marginBottom: 8,
-  },
-  metric: {
-    flex: 1,
-    minWidth: 0,
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    backgroundColor: "rgba(255,255,255,0.03)",
-    borderRadius: radii.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.06)",
-  },
-  metricLbl: {
-    color: colors.textDim,
-    fontSize: 9,
-    fontWeight: "700",
-    letterSpacing: 0.4,
-    textTransform: "uppercase",
-  },
-  metricVal: { color: "#FFFFFF", fontSize: 13, fontWeight: "800", marginTop: 1 },
-  metricValDim: { color: colors.textDim },
-
-  currencyRow: {
-    flexDirection: "row",
-    gap: 6,
-    marginBottom: 4,
-  },
-  currPill: {
-    flex: 1,
-    minWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: radii.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
-  },
-  currCode: { fontSize: 9, fontWeight: "800", letterSpacing: 0.4 },
-  currAmt: { color: "#FFFFFF", fontSize: 13, fontWeight: "800", marginTop: 2 },
-  currAmtDim: { color: colors.textDim },
-
-  goldRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 4,
-    paddingTop: 6,
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderTopColor: "rgba(255,255,255,0.06)",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.08)",
   },
-  goldText: { color: "#F5C518", fontSize: 11, fontWeight: "800" },
+  rowLeft: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 },
+  dot: { width: 6, height: 6, borderRadius: 3 },
+  rowLabel: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
+  rowRight: { flexDirection: "row", alignItems: "center", gap: 10 },
+  rowStat: { color: colors.textMuted, fontSize: 11, fontWeight: "600", minWidth: 44, textAlign: "right" },
+  rowStatDim: { color: colors.textDim },
+  rowStatValue: { fontSize: 12, fontWeight: "800", minWidth: 60, textAlign: "right" },
 
-  cta: {
+  totalRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end",
-    marginTop: 8,
-    gap: 2,
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    backgroundColor: "rgba(0,255,136,0.06)",
+    borderRadius: radii.lg,
+    borderColor: "rgba(0,255,136,0.30)",
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  ctaText: { color: colors.textDim, fontSize: 10, fontWeight: "600" },
+  totalLbl: {
+    color: "#00FF88",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+  },
+  totalCells: { flexDirection: "row", alignItems: "center", gap: 8 },
+  totalCell: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+  },
 });
