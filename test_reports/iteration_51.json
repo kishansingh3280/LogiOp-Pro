@@ -1,0 +1,33 @@
+{
+  "summary": "Dashboard Phase 2 (Live Forex + Analytics Charts + Trips Vault Info) verified end-to-end via Playwright on mobile viewport (414x896). All three new widgets render with correct data, are pixel-clean, and existing dashboard widgets are NOT regressed. Login as kishan (Admin) and bsingh (Papa) both show all 3 new widgets. No new backend was added — frontend-only iteration.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "styles", "issue": "Console warning: 'shadow*' style props are deprecated. Use 'boxShadow'. (Pre-existing, not from Phase 2 files, but forex-widget & trips-vault-info also use shadow-family via Platform.select for native.)"},
+      {"component": "forex-widget/trips-vault-info/dashboard-charts", "issue": "Console error 'Invalid style property of \"background\". Please use long-form properties.' — the Platform.select({ web: { background: 'linear-gradient(...)' } }) shorthand is invalid on RN Web. Reference: /app/frontend/src/components/forex-widget.tsx:217. Use backgroundImage/backgroundColor long-form instead."},
+      {"component": "styles", "issue": "Console warning: 'textShadow*' style props are deprecated. Use 'textShadow'. Reference: /app/frontend/src/components/dashboard-charts.tsx:374 and /app/frontend/src/components/trips-vault-info.tsx:236 (pre-existing pattern in codebase)."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional cosmetic cleanup: replace Platform.select web `background: 'linear-gradient(...)'` shorthand with `backgroundImage: 'linear-gradient(...)'` in forex-widget.tsx and trips-vault-info.tsx to silence the 'Invalid style property of background' console error (does not affect rendering).",
+    "Optional: migrate remaining `shadow*` and `textShadow*` shorthand styles to the new RN long-form (`boxShadow` / `textShadow`) — appears across several older components too, safe to leave for a dedicated cleanup pass."
+  ],
+  "critical_code_review_comments": [
+    "forex.ts uses in-memory Map cache — will reset on every full page reload, which is fine for a web preview but if the dashboard is remounted the fetch will re-fire. Consider AsyncStorage/expo-secure-store if you want cross-session caching.",
+    "forex-widget: `inverse` path negates change_pct correctly (1/x is monotonically inverse), and inverts min/max — verified visually with INR→THB card showing -0.66% (opposite sign of USD→THB drift over 30d).",
+    "trips-vault-info: `active` filter is `diff <= 3` (past 3 days through infinite future) with `.slice(0, 6)` — safe. Est. Value falls back gracefully through gold_sale_inr → currency_amount*purchase_rate_inr → gold_cost_inr.",
+    "dashboard-charts RevenueBar: sums `abs(debit)+abs(credit)+abs(amount)` — this double-counts because most entries have either debit XOR credit (not both). The magnitude proxy is fine as-is, but the label 'REVENUE (6M)' may be misleading; consider labelling as 'ACTIVITY (6M)' or using only credit sums for accuracy.",
+    "arcPath draws `M cx cy L start L … Z` which puts an extra point at the center — correct for pie wedges but the `sweep === TAU` full-circle short-circuit is correctly handled with Circle."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (no backend changes)", "frontend": "100% (19/19 testIDs present, all data flows verified)"},
+  "seed_data_creation": "None — used existing seeded shipments (5), ledger entries (6-month bars populated), and 8 carrier trips with linked bullion txns.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Dashboard Phase 2 widgets fully functional. Login via /sign-in (testIDs: signin-username, signin-password, signin-submit). Dashboard testIDs added: forex-widget, forex-card-USD-INR, forex-card-THB-INR, forex-rate-{base}-{quote}, forex-refresh-{base}-{quote}, trips-vault-info, trips-vault-open, trip-row-{id}, dashboard-charts, chart-shipments-pie, chart-revenue-bar, chart-trips-donut. Frankfurter FX API returns HTTP 200; USD→INR observed 95.210, INR→THB 0.34716 (inverted from THB→INR), sparklines render, +/- change pill colored correctly. All existing widgets (Now Brief, ledger cards, warehouse hero, vault snapshot, delivered/in-transit/pending carousel, active trips card, assets-on-hand, reports shortcut) still render. Papa (bsingh/Papa@2026) sees all 3 new widgets. Trips-vault Open→ correctly routes to /bullion.",
+  "rca_of_issue": "N/A — no bugs found. Only cosmetic console warnings from web-shorthand style props which are pre-existing across the codebase."
+}

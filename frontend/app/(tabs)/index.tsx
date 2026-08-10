@@ -14,6 +14,9 @@ import { useTrips, useTxns, usedWeightKgFor } from "@/src/bullion/store";
 import type { BullionTxn, CarrierTrip } from "@/src/bullion/types";
 import { tripCapacityKg } from "@/src/bullion/types";
 import { NowBriefCard } from "@/src/components/now-brief-card";
+import { DashboardCharts } from "@/src/components/dashboard-charts";
+import { ForexWidget } from "@/src/components/forex-widget";
+import { TripsVaultInfo } from "@/src/components/trips-vault-info";
 import { Card } from "@/src/components/ui";
 import { VaultSnapshotSection } from "@/src/components/vault-snapshot-section";
 import { useFY } from "@/src/context/fy-context";
@@ -198,6 +201,12 @@ export default function DashboardScreen() {
           overdueLedger={0}
         />
 
+        {/* Dashboard Phase 2 — Live Forex Rates (USD→INR + INR→THB).
+            Data fetched client-side from frankfurter.app (ECB-backed, no
+            auth) and cached in-memory for 15 min. Sparkline is a 30-day
+            trailing series. */}
+        <ForexWidget />
+
         {/* ---------------- Row 1 (FIXED — no horizontal scroll) ----------------
             Ledger snapshot: 2 widgets side by side. Pinned near the top so
             the operator sees the money position immediately. `flexDirection`
@@ -302,6 +311,22 @@ export default function DashboardScreen() {
           onPress={() => router.push("/bullion" as never)}
         />
         <AssetsOnHandCard txns={batches.data} onPress={() => router.push("/bullion" as never)} />
+
+        {/* Dashboard Phase 2 — Trips vault info: currency/gold/weight
+            rollup + per-trip breakdown for every carrier trip active in
+            the next few days. */}
+        <TripsVaultInfo trips={trips.data || []} txns={batches.data || []} />
+
+        {/* Dashboard Phase 2 — Analytics charts: shipments pie, 6-month
+            revenue bar, and trips semi-donut. Rendered via inline
+            react-native-svg so no additional chart lib is needed. */}
+        <DashboardCharts
+          shipments={shipments.data || []}
+          entries={entries.data || []}
+          trips={trips.data || []}
+          fy={fy}
+          tablet={tablet}
+        />
 
         {/* Reports console shortcut — quick access to PDF exports. */}
         <TouchableOpacity
