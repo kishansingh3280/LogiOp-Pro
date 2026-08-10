@@ -2146,6 +2146,175 @@ async def dashboard_now_brief(body: NowBriefIn, current: UserPublic = Depends(ge
     return {"brief": content, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
+# --------------------------------------------------------------------------
+# Voice AI Wingman — quick non-streaming chat endpoint for the Now Brief card.
+#
+# The Now Brief card wraps a full voice AI conversation. We reuse the same
+# Hinglish persona + real-entity snapshot as /api/assistant/chat, but return
+# the full response text in a single JSON payload so the client can:
+#   - Animate a local typewriter effect
+#   - Kick off ElevenLabs TTS in parallel
+#   - Show conversation history pills
+#
+# Role-aware system prompt: Admin, Papa (bsingh), Staff, Carrier each get a
+# tuned tone + scope.
+# --------------------------------------------------------------------------
+class WingmanChatIn(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+    # Client passes recent turns so multi-turn context is preserved even
+    # if the server hasn't seen this session before.
+    history: List[Dict[str, str]] = Field(default_factory=list)
+
+
+def _wingman_system_for_role(user: Any) -> str:
+    """Return the Hinglish system prompt tuned to the caller's role."""
+    def _g(k: str, default: str = ""):
+        if isinstance(user, dict):
+            return user.get(k, default) or default
+        return getattr(user, k, default) or default
+
+    display = _g("display_name") or _g("username") or "Boss"
+    honorific = _g("honorific") or "Sir"
+    role = (_g("role") or "Admin")
+    salutation = f"{display} {honorific}".strip()
+
+    common = (
+        "You are Wingman — a trusted AI business partner for an India ↔ Thailand "
+        "logistics + bullion trading business.\n\n"
+        "## Language — HINGLISH (Hindi words in English letters)\n"
+        "ALWAYS respond in Hinglish (Latin script Hindi + English mix). Never use "
+        "Devanagari. Examples:\n"
+        f"- 'Namaste {salutation}, aaj kya kaam hai?'\n"
+        "- 'Sir, aapka Delhi shipment ready hai — 3 bags, 15 kg.'\n"
+        "- 'Bataiye party ka naam kya hai?'\n"
+        "- 'Confirm karein, save karoon?'\n\n"
+        "## Etiquette\n"
+        f"1. Address the operator as '{salutation}' or '{honorific}' — never just the "
+        "bare first name.\n"
+        "2. Short, calm sentences. Max 100 words unless detailed info is needed.\n"
+        "3. Correct punctuation (. , ? !) — TTS uses these for natural pauses.\n"
+        "4. Max 1 emoji per reply.\n"
+    )
+
+    if role == "Papa":
+        # B Singh is the operator's dad — very simple, respectful Hindi (Roman)
+        # scope limited to Singh Exports data.
+        return (
+            common +
+            "\n## Scope — Papa Mode\n"
+            "You are speaking to Papa ji (B Singh). Use extra-simple Hindi words. "
+            "Only discuss Singh Exports business — shipments, ledger, parties tied "
+            "to co_singh_exports. Do not mention advanced features (invoices, "
+            "trips, ML). Address as 'Papa ji' — very respectful, warm tone.\n"
+        )
+    if role == "Carrier":
+        return (
+            common +
+            "\n## Scope — Carrier\n"
+            "You are speaking to a carrier. Give clear, direct pickup / delivery "
+            "instructions. No small talk. Focus on trip status, next stop, and "
+            "consignment IDs relevant to their active route.\n"
+        )
+    if role == "Staff":
+        return (
+            common +
+            "\n## Scope — Staff\n"
+            "You are speaking to an ops staff member. Respectful, task-oriented "
+            "tone. Give clear next actions on shipments, ledger entries, and "
+            "invoices. Escalate anything requiring delete or settings changes "
+            "to Kishan Sir.\n"
+        )
+    # Admin — full business access
+    return (
+        common +
+        "\n## Scope — Admin\n"
+        "You are speaking to Kishan Sir — the business owner. Full data access. "
+        "Give direct, insightful summaries. When useful, mention specific "
+        "consignment IDs, party names, and amounts pulled from the real-data "
+        "snapshot below. Confident business-partner tone — no fluff.\n"
+    )
+
+
+@api_router.post("/wingman/quick-chat")
+async def wingman_quick_chat(
+    req: WingmanChatIn,
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+):
+    """Non-streaming Hinglish chat for the Now Brief voice AI card.
+    Returns { response: str, data_used: [...] }.
+    """
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+    # Snapshot of real entities so replies never hallucinate IDs.
+    try:
+        real_ctx = await assistant_context()
+    except Exception:
+        real_ctx = {}
+
+    ships = (real_ctx.get("shipments") or [])[:10]
+    parties = (real_ctx.get("parties") or [])[:10]
+    trips = (real_ctx.get("carrier_trips") or [])[:8]
+
+    data_block = ""
+    data_used: List[str] = []
+    if ships or parties or trips:
+        data_block += "\n=== Real database snapshot (use only these IDs) ===\n"
+        if ships:
+            data_block += "\nActive Shipments (consignment · status · party):\n"
+            for s in ships:
+                cn = s.get("consignment_no") or s.get("id") or "?"
+                data_block += f"  • {cn} · {s.get('status') or '—'} · {s.get('party_name') or '—'}\n"
+                data_used.append(cn)
+        if parties:
+            data_block += "\nParties (name · role):\n"
+            for p in parties:
+                data_block += f"  • {p.get('name')} · {p.get('role') or '—'}\n"
+        if trips:
+            data_block += "\nCarrier Trips (route · carrier · status):\n"
+            for t in trips:
+                data_block += f"  • {t.get('route') or '—'} · {t.get('carrier_name') or '—'} · {t.get('status') or '—'}\n"
+
+    system_prompt = _wingman_system_for_role(user) + data_block
+
+    session_id = req.session_id or f"wingman-{(user or {}).get('username','anon')}"
+
+    chat = (
+        LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=session_id,
+            system_message=system_prompt,
+        )
+        .with_model("anthropic", "claude-haiku-4-5")
+    )
+
+    # Compose a small recap from history so multi-turn context lands.
+    prompt = req.message
+    if req.history:
+        tail = req.history[-6:]
+        recap_lines = []
+        for m in tail:
+            who = "User" if (m.get("role") or "").lower() == "user" else "Me"
+            snippet = (m.get("content") or "").strip().replace("\n", " ")[:200]
+            if snippet:
+                recap_lines.append(f"  • {who}: {snippet}")
+        if recap_lines:
+            recap = "\n=== Previous turns ===\n" + "\n".join(recap_lines) + "\n=== Current turn ===\n"
+            prompt = recap + req.message
+
+    try:
+        text = await chat.send_message(UserMessage(text=prompt))
+        content = (text or "").strip()
+    except Exception as e:
+        logging.warning(f"wingman/quick-chat LLM failed: {e}")
+        content = "Sorry Sir, abhi thoda network issue hai. Dobara try karein? 🙏"
+
+    return {"response": content, "data_used": data_used[:5]}
+
+
 app.include_router(api_router)
 # Lalamove endpoints — mounted under /api/lalamove/*. Registered BEFORE the
 # catch-all proxy so its paths don't get forwarded to the remote backend.

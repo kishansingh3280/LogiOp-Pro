@@ -29,6 +29,7 @@ import type {
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
 import { generatePackingListPdf } from "@/src/utils/packing-list-pdf";
+import { usePapaMode } from "@/src/hooks/use-papa-mode";
 
 // ---------------------------------------------------------------------------
 // Shipment Console 2.0 — multi-party detail screen
@@ -117,6 +118,7 @@ export default function ShipmentDetail({
   const params = useLocalSearchParams<{ id: string }>();
   const id = idOverride || params.id;
   const router = useRouter();
+  const isPapa = usePapaMode();
 
   const shipment = useApi<Shipment>(id ? `/api/shipments/${id}` : null);
   const bags = useApi<ShipmentBag[]>(id ? `/api/shipments/${id}/bags` : null);
@@ -400,9 +402,11 @@ export default function ShipmentDetail({
           >
             <Ionicons name="document-text-outline" size={20} color={colors.lime} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={remove} style={styles.iconBtn} testID="delete-btn">
-            <Ionicons name="trash-outline" size={20} color={colors.danger} />
-          </TouchableOpacity>
+          {!isPapa ? (
+            <TouchableOpacity onPress={remove} style={styles.iconBtn} testID="delete-btn">
+              <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            </TouchableOpacity>
+          ) : null}
         </View>
       )}
 

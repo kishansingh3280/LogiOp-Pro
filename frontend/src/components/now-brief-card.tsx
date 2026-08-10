@@ -1,25 +1,60 @@
 /**
- * NowBriefCard — JARVIS Aura v3 AI daily briefing at the top of the
- * Dashboard. Renders a warm greeting by name + 2-3 sentence summary of
- * the day's operational context + one suggested next action. Backed by
- * POST /api/dashboard/now-brief (Claude Haiku 4.5). Refresh button
- * regenerates on demand; auto-caches for 5 minutes to avoid burning
- * LLM tokens on every screen focus.
+ * NowBriefCard — JARVIS Aura Voice AI Assistant.
+ *
+ * This card is Wingman's entire voice + text interface. The user can:
+ *   • Hold the mic button to speak → audio → Whisper STT → Wingman chat →
+ *     typewriter response + ElevenLabs TTS narration (auto-fallback to
+ *     OpenAI TTS if ElevenLabs 401s).
+ *   • Toggle the keyboard icon → type a message → same AI flow.
+ *   • Tap the mute icon → auto-narrate all future responses.
+ *   • Tap refresh → regenerate the daily "Now Brief" greeting.
+ *
+ * Auto-brief: on first mount (and every 30 min after) we hit
+ * /api/dashboard/now-brief for a warm greeting + one suggested action.
+ * If the mic is un-muted, we narrate that automatically too.
+ *
+ * Visual states (JARVIS Aura theme):
+ *   idle       → purple/green/cyan static gradient
+ *   listening  → red pulse on mic + animated waveform bars
+ *   processing → shimmer overlay + "Soch raha hoon…"
+ *   responding → typewriter text + neon-green breathing border
+ *   speaking   → neon-green breathing border + ⏹ stop button
+ *   error      → dim red text with a retry action
+ *
+ * Only this file changes. No other screen is touched.
  */
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  Easing,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
-import { apiPost } from "@/src/api/client";
+import { useAuth } from "@/src/auth/context";
+import { useMicLevel } from "@/src/hooks/use-mic-level";
 import { colors, radii, spacing } from "@/src/theme";
+import { speakStreaming, type StreamingTtsHandle } from "@/src/utils/tts-stream";
+import {
+  fetchNowBrief,
+  transcribeAudio,
+  wingmanChat,
+  type WingmanTurn,
+} from "@/src/utils/wingman-api";
 
-const CACHE_MS = 5 * 60 * 1000;
-
-// Web-only inline style that applies the JARVIS Aura v3 ✨ AI-card
-// animations (defined as @keyframes in app/_layout.tsx). React Native
-// Web forwards the raw `style` object to the div's style attribute, so
-// setting `animation` / `backdropFilter` / `boxShadow` here works even
-// though these keys are not part of the RN style contract.
+// ---------------------------------------------------------------------------
+// Web-only inline style for the animated AI card gradient — see @keyframes
+// aiCardGradient / aiBreathe defined in app/_layout.tsx.
+// ---------------------------------------------------------------------------
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const webAiCardAnim: any = {
   animation:
@@ -29,15 +64,12 @@ const webAiCardAnim: any = {
   willChange: "background, box-shadow",
 };
 
-export function NowBriefCard({
-  pending,
-  inTransit,
-  delivered,
-  warehouseBags,
-  warehouseKg,
-  activeTrips,
-  overdueLedger = 0,
-}: {
+const CACHE_MS = 30 * 60 * 1000; // Auto-brief refresh window (30 min)
+const HISTORY_MAX = 5;
+
+type UiState = "idle" | "listening" | "processing" | "responding" | "speaking" | "error";
+
+type Props = {
   pending: number;
   inTransit: number;
   delivered: number;
@@ -45,87 +77,692 @@ export function NowBriefCard({
   warehouseKg: number;
   activeTrips: number;
   overdueLedger?: number;
-}) {
-  const [brief, setBrief] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(true);
-  const lastAtRef = useRef<number>(0);
+};
 
-  const generate = useCallback(async () => {
-    setLoading(true);
-    try {
-      const tzOffset = -new Date().getTimezoneOffset(); // minutes east of UTC
-      const res = await apiPost<{ brief: string }>("/api/dashboard/now-brief", {
-        pending,
-        in_transit: inTransit,
-        delivered,
-        warehouse_bags: warehouseBags,
-        warehouse_kg: warehouseKg,
-        active_trips: activeTrips,
-        overdue_ledger: overdueLedger,
-        tz_offset_minutes: tzOffset,
-      });
-      setBrief((res?.brief || "").trim());
-      lastAtRef.current = Date.now();
-    } catch {
-      // Silent — the endpoint already fallback-fills the field.
-    } finally {
-      setLoading(false);
-    }
-  }, [pending, inTransit, delivered, warehouseBags, warehouseKg, activeTrips, overdueLedger]);
+// ---------------------------------------------------------------------------
+// Waveform bars — 12 vertical bars whose height is driven by mic level.
+// ---------------------------------------------------------------------------
+function Waveform({ level, active }: { level: number; active: boolean }) {
+  const bars = 12;
+  const anims = useRef(
+    Array.from({ length: bars }, () => new Animated.Value(0.2)),
+  ).current;
 
-  // First render — generate the brief.
   useEffect(() => {
-    generate();
-    // Regenerate only when the input counters change AND we're past cache TTL.
+    if (!active) {
+      anims.forEach((a) => a.setValue(0.2));
+      return;
+    }
+    // Randomise each bar around the current level so it looks organic.
+    anims.forEach((a, i) => {
+      const jitter = 0.5 + Math.random() * 0.5;
+      const target = Math.max(0.15, Math.min(1, level * jitter + (i % 3) * 0.05));
+      Animated.timing(a, {
+        toValue: target,
+        duration: 120,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }).start();
+    });
+  }, [level, active, anims]);
+
+  return (
+    <View style={styles.waveform} pointerEvents="none">
+      {anims.map((a, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            styles.waveBar,
+            {
+              height: a.interpolate({
+                inputRange: [0, 1],
+                outputRange: [4, 32],
+              }),
+              opacity: active ? 1 : 0.35,
+              backgroundColor: active ? "#FF5C7A" : colors.accent,
+            },
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mic pulse — outer ring that scales while recording.
+// ---------------------------------------------------------------------------
+function MicPulseRing({ active }: { active: boolean }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!active) {
+      scale.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scale, {
+          toValue: 1.4,
+          duration: 900,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(scale, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [active, scale]);
+
+  if (!active) return null;
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.micPulseRing,
+        { transform: [{ scale }] },
+      ]}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Typewriter — animates text char-by-char at ~28ms/char.
+// ---------------------------------------------------------------------------
+function useTypewriter(target: string, active: boolean, speed = 22): string {
+  const [shown, setShown] = useState<string>(active ? "" : target);
+  const iRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (!active) {
+      setShown(target);
+      return;
+    }
+    iRef.current = 0;
+    setShown("");
+    timerRef.current = setInterval(() => {
+      iRef.current += 1;
+      if (iRef.current >= target.length) {
+        setShown(target);
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        return;
+      }
+      setShown(target.slice(0, iRef.current));
+    }, speed);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+    };
+  }, [target, active, speed]);
+
+  return shown;
+}
+
+// ---------------------------------------------------------------------------
+// Border breathing — animated Value between 0..1 (used for glow intensity).
+// ---------------------------------------------------------------------------
+function useBreathe(active: boolean) {
+  const v = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    if (!active) {
+      v.setValue(0.4);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(v, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: false,
+        }),
+        Animated.timing(v, {
+          toValue: 0.4,
+          duration: 1400,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: false,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [active, v]);
+  return v;
+}
+
+// ---------------------------------------------------------------------------
+// Main card
+// ---------------------------------------------------------------------------
+export function NowBriefCard(props: Props) {
+  const auth = useAuth();
+  const role = auth.user?.role || "Admin";
+  const sessionId = useRef<string>(`wingman-${auth.user?.id || "anon"}-${Date.now()}`).current;
+
+  const [uiState, setUiState] = useState<UiState>("idle");
+  const [errorMsg, setErrorMsg] = useState<string>("");
+  const [aiText, setAiText] = useState<string>("");
+  const [typeTarget, setTypeTarget] = useState<string>("");
+  const [typing, setTyping] = useState<boolean>(false);
+  const [muted, setMuted] = useState<boolean>(true);
+  const [showText, setShowText] = useState<boolean>(false);
+  const [textInput, setTextInput] = useState<string>("");
+  const [history, setHistory] = useState<WingmanTurn[]>([]);
+
+  const lastBriefAt = useRef<number>(0);
+  const ttsHandleRef = useRef<StreamingTtsHandle | null>(null);
+  const mic = useMicLevel();
+
+  const shownText = useTypewriter(typeTarget, typing, 22);
+  const breathe = useBreathe(uiState === "responding" || uiState === "speaking");
+
+  // -------------------------------------------------------------------
+  // Kill in-flight TTS on unmount / when user interrupts.
+  // -------------------------------------------------------------------
+  const stopTts = useCallback(() => {
+    if (ttsHandleRef.current) {
+      try {
+        ttsHandleRef.current.stop();
+      } catch {
+        /* ignore */
+      }
+      ttsHandleRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopTts();
+    };
+  }, [stopTts]);
+
+  // -------------------------------------------------------------------
+  // Play a response — typewriter + (if not muted) narrate via TTS.
+  // -------------------------------------------------------------------
+  const playResponse = useCallback(
+    (text: string, autoNarrate: boolean) => {
+      const clean = (text || "").trim();
+      if (!clean) return;
+      // Reset any prior narration.
+      stopTts();
+      setAiText(clean);
+      setTypeTarget(clean);
+      setTyping(true);
+      setUiState("responding");
+
+      // Estimate typewriter duration (~22ms/char) to release UI back to idle.
+      const estMs = Math.max(1200, clean.length * 22 + 400);
+      setTimeout(() => {
+        setTyping(false);
+      }, estMs);
+
+      if (autoNarrate) {
+        setUiState("speaking");
+        const handle = speakStreaming({
+          text: clean,
+          voice: "shimmer",
+          onStart: () => {
+            // No-op — the "speaking" state is already set.
+          },
+          onError: (err) => {
+            // Fall back silently; the text is already shown.
+            // eslint-disable-next-line no-console
+            console.warn("[wingman] TTS error:", err.message);
+          },
+        });
+        ttsHandleRef.current = handle;
+        // When narration finishes, drop back to responding then idle.
+        handle.promise
+          .catch(() => undefined)
+          .finally(() => {
+            ttsHandleRef.current = null;
+            setUiState((s) => (s === "speaking" ? "responding" : s));
+            setTimeout(() => {
+              setUiState((s) => (s === "responding" ? "idle" : s));
+            }, 600);
+          });
+      } else {
+        // Text-only response — return to idle after typewriter finishes.
+        setTimeout(() => {
+          setUiState((s) => (s === "responding" ? "idle" : s));
+        }, estMs + 200);
+      }
+    },
+    [stopTts],
+  );
+
+  // -------------------------------------------------------------------
+  // Generate the daily Now-Brief greeting.
+  // -------------------------------------------------------------------
+  const generateDailyBrief = useCallback(
+    async (autoNarrate: boolean) => {
+      setUiState("processing");
+      setErrorMsg("");
+      try {
+        const brief = await fetchNowBrief({
+          pending: props.pending,
+          in_transit: props.inTransit,
+          delivered: props.delivered,
+          warehouse_bags: props.warehouseBags,
+          warehouse_kg: props.warehouseKg,
+          active_trips: props.activeTrips,
+          overdue_ledger: props.overdueLedger ?? 0,
+        });
+        lastBriefAt.current = Date.now();
+        playResponse(brief, autoNarrate && !muted);
+      } catch (e) {
+        setUiState("error");
+        setErrorMsg((e as Error).message || "Brief generate nahi hua");
+      }
+    },
+    [
+      props.pending,
+      props.inTransit,
+      props.delivered,
+      props.warehouseBags,
+      props.warehouseKg,
+      props.activeTrips,
+      props.overdueLedger,
+      playResponse,
+      muted,
+    ],
+  );
+
+  // Auto-brief on mount + every 30 min if the counters are known.
+  useEffect(() => {
+    if (Date.now() - lastBriefAt.current > CACHE_MS) {
+      generateDailyBrief(!muted);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onRefresh = () => {
-    if (loading) return;
-    generate();
+  // -------------------------------------------------------------------
+  // Send a chat message (voice or text).
+  // -------------------------------------------------------------------
+  const sendMessage = useCallback(
+    async (message: string) => {
+      const clean = message.trim();
+      if (!clean) return;
+      const userTurn: WingmanTurn = { role: "user", content: clean, at: Date.now() };
+      const nextHistory = [...history, userTurn].slice(-HISTORY_MAX * 2);
+      setHistory(nextHistory);
+      setUiState("processing");
+      setErrorMsg("");
+      try {
+        const { response } = await wingmanChat(clean, nextHistory, sessionId);
+        const aiTurn: WingmanTurn = { role: "assistant", content: response, at: Date.now() };
+        setHistory((h) => [...h, aiTurn].slice(-HISTORY_MAX * 2));
+        playResponse(response, !muted);
+      } catch (e) {
+        setUiState("error");
+        setErrorMsg((e as Error).message || "AI response fail hua");
+      }
+    },
+    [history, playResponse, muted, sessionId],
+  );
+
+  // -------------------------------------------------------------------
+  // Hold-to-speak handlers.
+  // -------------------------------------------------------------------
+  const onMicPressIn = useCallback(async () => {
+    stopTts();
+    setUiState("listening");
+    setErrorMsg("");
+    await mic.start();
+  }, [mic, stopTts]);
+
+  const onMicPressOut = useCallback(async () => {
+    setUiState("processing");
+    try {
+      const result = await mic.stop();
+      if (!result) {
+        setUiState("idle");
+        return;
+      }
+      const text = await transcribeAudio(result);
+      if (!text) {
+        setUiState("idle");
+        return;
+      }
+      await sendMessage(text);
+    } catch (e) {
+      setUiState("error");
+      setErrorMsg((e as Error).message || "Voice ko samajh nahi paya");
+    }
+  }, [mic, sendMessage]);
+
+  // -------------------------------------------------------------------
+  // Text input handlers.
+  // -------------------------------------------------------------------
+  const onTextSend = useCallback(async () => {
+    const t = textInput.trim();
+    if (!t) return;
+    setTextInput("");
+    setShowText(false);
+    await sendMessage(t);
+  }, [textInput, sendMessage]);
+
+  // -------------------------------------------------------------------
+  // Header actions.
+  // -------------------------------------------------------------------
+  const toggleMute = useCallback(() => {
+    setMuted((m) => {
+      const next = !m;
+      // If un-muting mid-speech, do nothing extra (audio keeps playing).
+      // If muting mid-speech, stop the current TTS.
+      if (!next === false) {
+        // muting
+        stopTts();
+      }
+      return next;
+    });
+  }, [stopTts]);
+
+  const onRefresh = useCallback(() => {
+    if (uiState === "processing" || uiState === "responding" || uiState === "listening") return;
+    stopTts();
+    generateDailyBrief(!muted);
+  }, [uiState, stopTts, generateDailyBrief, muted]);
+
+  const onStopSpeaking = useCallback(() => {
+    stopTts();
+    setUiState("idle");
+  }, [stopTts]);
+
+  // -------------------------------------------------------------------
+  // Recent history pills — last N user prompts.
+  // -------------------------------------------------------------------
+  const recentPrompts = useMemo(
+    () => history.filter((h) => h.role === "user").slice(-HISTORY_MAX),
+    [history],
+  );
+
+  const replayTurn = useCallback(
+    (idx: number) => {
+      // Replay the assistant response that followed this prompt.
+      const userTurns = history.filter((h) => h.role === "user");
+      const target = userTurns[idx];
+      if (!target) return;
+      const pos = history.indexOf(target);
+      const next = history.slice(pos + 1).find((h) => h.role === "assistant");
+      if (next) playResponse(next.content, !muted);
+    },
+    [history, playResponse, muted],
+  );
+
+  const clearHistory = useCallback(() => {
+    stopTts();
+    setHistory([]);
+  }, [stopTts]);
+
+  // -------------------------------------------------------------------
+  // Render helpers
+  // -------------------------------------------------------------------
+  const stateBadge = () => {
+    if (uiState === "listening") return { color: "#FF5C7A", label: "Sun raha hoon…" };
+    if (uiState === "processing") return { color: "#B98BFF", label: "Soch raha hoon…" };
+    if (uiState === "responding") return { color: colors.accent, label: "Reply" };
+    if (uiState === "speaking") return { color: colors.accent, label: "Bol raha hoon…" };
+    if (uiState === "error") return { color: "#FF6B8A", label: "Error" };
+    return null;
+  };
+  const badge = stateBadge();
+
+  // Border colour bound to the breathing animation on responding/speaking.
+  const animatedBorderStyle = {
+    borderColor: breathe.interpolate({
+      inputRange: [0, 1],
+      outputRange: ["rgba(0, 255, 136, 0.22)", "rgba(0, 255, 136, 0.85)"],
+    }),
+    shadowOpacity: breathe.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.55] }) as unknown as number,
   };
 
   return (
-    <View
-      style={[styles.card, Platform.OS === "web" ? webAiCardAnim : null]}
+    <Animated.View
+      style={[
+        styles.card,
+        Platform.OS === "web" ? webAiCardAnim : null,
+        (uiState === "responding" || uiState === "speaking") ? animatedBorderStyle : null,
+      ]}
       testID="now-brief-card"
     >
+      {/* ---------------- Header ---------------- */}
       <View style={styles.header}>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>✨</Text>
         </View>
         <Text style={styles.title}>NOW BRIEF</Text>
+        {badge ? (
+          <View style={[styles.stateChip, { borderColor: badge.color + "88", backgroundColor: badge.color + "22" }]}>
+            <View style={[styles.stateDot, { backgroundColor: badge.color }]} />
+            <Text style={[styles.stateChipText, { color: badge.color }]} numberOfLines={1}>
+              {badge.label}
+            </Text>
+          </View>
+        ) : null}
+
+        <TouchableOpacity
+          onPress={toggleMute}
+          style={styles.iconBtn}
+          hitSlop={8}
+          testID="now-brief-mute"
+        >
+          <Ionicons
+            name={muted ? "volume-mute" : "volume-high"}
+            size={16}
+            color={muted ? colors.textMuted : colors.accent}
+          />
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={onRefresh}
-          style={styles.refreshBtn}
+          style={styles.iconBtn}
           hitSlop={8}
-          disabled={loading}
+          disabled={uiState === "processing" || uiState === "listening"}
           testID="now-brief-refresh"
         >
-          {loading ? (
+          {uiState === "processing" ? (
             <ActivityIndicator color="#B98BFF" size="small" />
           ) : (
             <Ionicons name="refresh" size={16} color="#B98BFF" />
           )}
         </TouchableOpacity>
       </View>
-      {loading && !brief ? (
-        <Text style={styles.body}>Wingman is composing your morning brief…</Text>
+
+      {/* ---------------- Response body ---------------- */}
+      <ScrollView
+        style={styles.body}
+        contentContainerStyle={styles.bodyContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {uiState === "processing" && !aiText ? (
+          <Text style={styles.bodyText}>Wingman soch raha hai…</Text>
+        ) : uiState === "error" ? (
+          <View>
+            <Text style={[styles.bodyText, { color: "#FF9AA8" }]}>
+              {errorMsg || "Kuch galat ho gaya. Dobara try karein?"}
+            </Text>
+            <TouchableOpacity
+              onPress={onRefresh}
+              style={styles.retryBtn}
+              testID="now-brief-retry"
+            >
+              <Ionicons name="refresh" size={14} color={colors.accent} />
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Text style={styles.bodyText}>
+            {typing ? shownText : aiText || `Namaste ${auth.user?.display_name || "Sir"}! 🙏 Mic dabaake baat karein.`}
+            {typing ? <Text style={styles.caret}>▌</Text> : null}
+          </Text>
+        )}
+      </ScrollView>
+
+      {/* ---------------- Stop-speaking button (mid-narration) ---------------- */}
+      {uiState === "speaking" ? (
+        <TouchableOpacity
+          onPress={onStopSpeaking}
+          style={styles.stopBtn}
+          testID="now-brief-stop-speaking"
+        >
+          <Ionicons name="stop" size={12} color="#FFFFFF" />
+          <Text style={styles.stopBtnText}>Stop</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {/* ---------------- Recent-history pills ---------------- */}
+      {recentPrompts.length > 0 ? (
+        <View style={styles.historyRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 6, paddingRight: 30 }}
+          >
+            {recentPrompts.map((p, i) => (
+              <TouchableOpacity
+                key={i}
+                onPress={() => replayTurn(i)}
+                style={styles.historyPill}
+                testID={`now-brief-history-${i}`}
+              >
+                <Ionicons name="chatbubble-ellipses" size={10} color={colors.accent} />
+                <Text style={styles.historyPillText} numberOfLines={1}>
+                  {p.content}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <TouchableOpacity
+            onPress={clearHistory}
+            hitSlop={8}
+            style={styles.historyClearBtn}
+            testID="now-brief-history-clear"
+          >
+            <Ionicons name="close-circle-outline" size={14} color={colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {/* ---------------- Divider ---------------- */}
+      <View style={styles.divider} />
+
+      {/* ---------------- Input row ---------------- */}
+      {showText ? (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          keyboardVerticalOffset={80}
+          style={styles.textInputRow}
+        >
+          <TextInput
+            value={textInput}
+            onChangeText={setTextInput}
+            placeholder="Kuch pooch lein…"
+            placeholderTextColor={colors.textMuted}
+            style={styles.textInput}
+            autoFocus
+            multiline
+            onSubmitEditing={onTextSend}
+            returnKeyType="send"
+            blurOnSubmit
+            testID="now-brief-text-input"
+          />
+          <TouchableOpacity
+            onPress={() => {
+              setShowText(false);
+              setTextInput("");
+            }}
+            hitSlop={8}
+            style={styles.iconBtn}
+            testID="now-brief-close-text"
+          >
+            <Ionicons name="close" size={16} color={colors.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={onTextSend}
+            style={[styles.iconBtn, styles.sendBtn]}
+            disabled={!textInput.trim()}
+            hitSlop={8}
+            testID="now-brief-text-send"
+          >
+            <Ionicons name="arrow-up" size={16} color={colors.bg} />
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       ) : (
-        <Text style={styles.body}>{brief || "Take a breath — nothing urgent right now. ☕"}</Text>
+        <View style={styles.inputRow}>
+          {/* Hold-to-speak main button */}
+          <View style={styles.micWrap}>
+            <MicPulseRing active={uiState === "listening"} />
+            <Pressable
+              onPressIn={onMicPressIn}
+              onPressOut={onMicPressOut}
+              disabled={uiState === "processing"}
+              style={({ pressed }) => [
+                styles.micBtn,
+                uiState === "listening" ? styles.micBtnListening : null,
+                pressed ? { opacity: 0.85 } : null,
+              ]}
+              testID="now-brief-mic"
+            >
+              {uiState === "listening" ? (
+                <Waveform level={mic.level} active />
+              ) : (
+                <>
+                  <Ionicons
+                    name="mic"
+                    size={18}
+                    color={uiState === "processing" ? colors.textMuted : "#0A0A14"}
+                  />
+                  <Text style={styles.micBtnText}>Hold to Speak</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+
+          <TouchableOpacity
+            onPress={() => setShowText(true)}
+            style={styles.iconBtn}
+            hitSlop={8}
+            testID="now-brief-keyboard-toggle"
+          >
+            <Ionicons name="keypad" size={16} color={colors.textMuted} />
+          </TouchableOpacity>
+        </View>
       )}
-    </View>
+
+      {/* Role tag — small hint for staff/papa/carrier */}
+      {role !== "Admin" ? (
+        <Text style={styles.roleHint}>
+          {role === "Papa"
+            ? "Papa Mode · Simple Hindi · Singh Exports only"
+            : role === "Carrier"
+              ? "Carrier · Trip guidance"
+              : "Staff · Task assistant"}
+        </Text>
+      ) : null}
+    </Animated.View>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
   card: {
     marginBottom: spacing.md,
     padding: spacing.lg,
     borderRadius: radii.lg,
-    // Static base for both native + web. On web the `.jarvis-ai-card`
-    // CSS class overrides this with the animated 3-stop gradient +
-    // breathing halo; on native we keep the static purple-violet glass.
     backgroundColor: "rgba(24, 12, 44, 0.55)",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.12)",
@@ -133,8 +770,6 @@ const styles = StyleSheet.create({
       web: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...({
-          // Background gradient is set by the `.jarvis-ai-card` class; we
-          // still declare a fallback in case CSS keyframes fail to load.
           background:
             "linear-gradient(135deg, rgba(155,77,255,0.20) 0%, rgba(0,255,136,0.12) 40%, rgba(0,245,255,0.15) 80%, rgba(155,77,255,0.18) 100%)",
         } as any),
@@ -147,11 +782,12 @@ const styles = StyleSheet.create({
       },
     }),
   },
+
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    marginBottom: 8,
+    gap: 8,
+    marginBottom: 10,
   },
   badge: {
     width: 26,
@@ -165,7 +801,6 @@ const styles = StyleSheet.create({
   },
   badgeText: { fontSize: 13 },
   title: {
-    flex: 1,
     color: "#B98BFF",
     fontSize: 12,
     fontWeight: "900",
@@ -174,7 +809,29 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 6,
   },
-  refreshBtn: {
+  stateChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginLeft: "auto",
+    marginRight: 4,
+    maxWidth: 140,
+  },
+  stateDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  stateChipText: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  iconBtn: {
     width: 30,
     height: 30,
     borderRadius: 15,
@@ -184,10 +841,201 @@ const styles = StyleSheet.create({
     borderColor: "rgba(185,139,255,0.40)",
     borderWidth: StyleSheet.hairlineWidth,
   },
+  sendBtn: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+
   body: {
+    maxHeight: 220,
+    marginBottom: 8,
+  },
+  bodyContent: {
+    paddingRight: 4,
+  },
+  bodyText: {
     color: colors.text,
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "500",
+  },
+  caret: {
+    color: colors.accent,
+    fontWeight: "900",
+  },
+  retryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.accent + "88",
+    alignSelf: "flex-start",
+  },
+  retryText: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  stopBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 92, 122, 0.85)",
+    marginBottom: 8,
+  },
+  stopBtnText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+
+  historyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  historyPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    maxWidth: 200,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: "rgba(0, 255, 136, 0.08)",
+    borderColor: "rgba(0, 255, 136, 0.35)",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  historyPillText: {
+    color: colors.text,
+    fontSize: 11,
+    maxWidth: 170,
+  },
+  historyClearBtn: {
+    marginLeft: 6,
+    padding: 4,
+  },
+
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    marginVertical: 8,
+  },
+
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  micWrap: {
+    flex: 1,
+    height: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  micBtn: {
+    flex: 1,
+    width: "100%",
+    height: 46,
+    borderRadius: 999,
+    backgroundColor: colors.accent,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    zIndex: 2,
+    ...Platform.select({
+      web: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ boxShadow: "0 0 22px rgba(0,255,136,0.35)" } as any),
+      },
+      default: {
+        shadowColor: colors.accent,
+        shadowOpacity: 0.55,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 0 },
+      },
+    }),
+  },
+  micBtnListening: {
+    backgroundColor: "rgba(255, 92, 122, 0.15)",
+    borderColor: "#FF5C7A",
+    borderWidth: 1,
+  },
+  micBtnText: {
+    color: "#0A0A14",
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  micPulseRing: {
+    position: "absolute",
+    width: "100%",
+    height: 46,
+    borderRadius: 999,
+    borderColor: "#FF5C7A",
+    borderWidth: 2,
+    zIndex: 1,
+    ...Platform.select({
+      web: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ boxShadow: "0 0 24px rgba(255,92,122,0.45)" } as any),
+      },
+      default: {
+        shadowColor: "#FF5C7A",
+        shadowOpacity: 0.55,
+        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 0 },
+      },
+    }),
+  },
+  waveform: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    height: 32,
+  },
+  waveBar: {
+    width: 3,
+    borderRadius: 2,
+    backgroundColor: "#FF5C7A",
+  },
+
+  textInputRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+  },
+  textInput: {
+    flex: 1,
+    minHeight: 46,
+    maxHeight: 90,
+    borderRadius: radii.md,
+    backgroundColor: "rgba(0, 0, 0, 0.35)",
+    borderColor: "rgba(255,255,255,0.14)",
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: colors.text,
+    fontSize: 14,
+  },
+
+  roleHint: {
+    marginTop: 8,
+    fontSize: 10,
+    color: colors.textMuted,
+    letterSpacing: 0.4,
+    textAlign: "center",
   },
 });

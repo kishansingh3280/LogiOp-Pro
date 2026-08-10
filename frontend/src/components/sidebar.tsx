@@ -99,6 +99,26 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+// -- Papa (family owner) mode ------------------------------------------------
+// Papa sees simplified Hindi/Hinglish labels and a trimmed nav that hides
+// screens meant for admins. The route paths stay identical so navigation
+// history + deep-links still work — only the displayed label changes.
+const PAPA_LABEL_OVERRIDES: Record<string, string> = {
+  Overview: "Ghar",           // dashboard = home
+  Shipments: "Maal Bheja",    // "goods sent"
+  Invoices: "Bill",           // simple word for invoices
+  Ledger: "Hisaab",           // "accounts"
+  Trips: "Saman Yatra",       // "goods trip"
+  More: "Aur",                // "more"
+};
+const PAPA_HIDDEN_LABELS = new Set<string>(["More"]);
+
+function papaNavItems(): NavItem[] {
+  return NAV_ITEMS
+    .filter((n) => !PAPA_HIDDEN_LABELS.has(n.label))
+    .map((n) => ({ ...n, label: PAPA_LABEL_OVERRIDES[n.label] || n.label }));
+}
+
 // ---------------------------------------------------------------------------
 // White shiny particles inside the sidebar
 // ---------------------------------------------------------------------------
@@ -180,11 +200,14 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
   const insets = useSafeAreaInsets();
   const stats = useApi<DashboardStats>("/api/dashboard/stats");
   const showLabels = expanded;
+  // Papa-mode gets a trimmed nav with simple Hindi labels.
+  const isPapa = user?.role === "Papa";
+  const navItems = useMemo(() => (isPapa ? papaNavItems() : NAV_ITEMS), [isPapa]);
 
   const activeIndex = useMemo(() => {
-    const idx = NAV_ITEMS.findIndex((n) => n.match(pathname));
+    const idx = navItems.findIndex((n) => n.match(pathname));
     return idx === -1 ? 0 : idx;
-  }, [pathname]);
+  }, [navItems, pathname]);
 
   const goto = (item: NavItem) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -225,7 +248,7 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
 
         {/* Nav items */}
         <View style={styles.navList}>
-          {NAV_ITEMS.map((item, i) => {
+          {navItems.map((item, i) => {
             const active = i === activeIndex;
             return (
               <NavRow

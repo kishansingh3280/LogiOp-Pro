@@ -45,6 +45,9 @@ const COMPANY_SKIP_PREFIXES = [
   "/api/companies",
   "/api/assistant/tts",
   "/api/assistant/stt",
+  "/api/assistant/chat",
+  "/api/wingman/",
+  "/api/dashboard/now-brief",
 ];
 
 export function setApiCompany(company: string | null): void {
