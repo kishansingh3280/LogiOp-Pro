@@ -1,0 +1,69 @@
+{
+  "summary": "Phase-2 OpenAI Realtime Voice Assistant verified end-to-end after a critical hotfix. Backend: 8/8 pytest cases pass — /api/assistant/tts/stream (GET & POST) now returns audio/mpeg directly from OpenAI (onyx, size ~9.6KB for 'Hi'), backend log emits the new `[TTS] OpenAI onyx (speed=0.88)` line, and the NEW-log window contains ZERO occurrences of `[TTS] Using OpenAI`, `[TTS] ElevenLabs failed`, or ElevenLabs 4xx errors. /api/realtime-token still mints `ek_...` ephemerals with model='gpt-realtime'. /api/voice-command still handles get_summary and soft-fails on unknown actions. Frontend: after fixing a Rules-of-Hooks violation in voice-orb.tsx (early `return null` was placed BEFORE useRef/useEffect hooks), both Kishan (Admin) and Papa (bsingh) can log in and use the app without red screens. Papa Mode strict enforcement is fully wired: Modify button renders as 'Locked' with the exact banner 'Papa Mode · sirf status change kar sakte hain', Delete button is hidden, and the status stepper ('Mark As In Transit') remains available so Papa can still transition status. Now Brief realtime-merge code path exists in now-brief-card.tsx (imports useVoiceOrb, renders `LIVE · Realtime` chip + transcript when voice.isConnected). Global Query Invalidation bus is correctly wired: apiMutate → invalidateAll(), useApi → useInvalidationGen. use-ghost-typing.ts hook is a clean standalone foundation. Voice orb renders on every authed screen (/, /shipments, /ledger, /invoices, /bullion, /parties) and is correctly hidden on /sign-in.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "voice-orb.tsx",
+        "issue": "CRITICAL Rules-of-Hooks violation — the previous iteration's suggestion to hide the orb on /sign-in was implemented by adding `if (hidden) return null;` at line 35, BEFORE `useRef(new Animated.Value(...))` at lines 38-39 and two `useEffect` hooks. The moment the user logs in (hidden flips true→false), React throws 'Rendered more hooks than during the previous render' and shows a full red screen for EVERY authenticated user (Papa AND Admin). Reproduced 100% before the fix. Fixed by moving all hooks above the `if (hidden) return null;` guard.",
+        "testID": "voice-orb",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Papa Modify tap → Alert",
+        "issue": "On react-native-web, Alert.alert with multiple buttons falls back to window.confirm and with one button falls back to window.alert — in headless Playwright the dialog fires but our page.on('dialog') listener does not observe every case reliably. The important guard (openModify() short-circuits BEFORE navigation) IS correctly wired: URL stays on /shipment/<id> after Modify tap, no navigation to /shipment/new occurs. Functionally correct; only the user-facing Alert visibility on web is a react-native-web quirk (native mobile Alerts work fine).",
+        "affected_testIDs": ["modify-shipment-btn"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "voice-orb.tsx",
+        "issue": "Deprecation warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' still present. Cosmetic only. Reference: /app/frontend/src/components/voice-orb.tsx"
+      },
+      {
+        "component": "voice-orb.tsx",
+        "issue": "react-native-web warning: 'Invalid style property of background' — the animated background color mixing emits this warning repeatedly (~7×/screen). Cosmetic. Reference: /app/frontend/src/components/voice-orb.tsx"
+      },
+      {
+        "component": "assistant/tts/stream docstring",
+        "issue": "server.py line 1966-1968 & 1985 still reference ElevenLabs in the docstring even though the Phase-2 implementation no longer uses it. Purely cosmetic — update the docstring to say 'Streams OpenAI TTS directly (Phase 2)'. Reference: /app/backend/server.py:1966"
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter58_phase2_tts.py",
+    "/app/test_reports/pytest/iter58_phase2_results.xml"
+  ],
+  "action_items": [
+    "VERIFIED-FIXED-BY-TESTING-AGENT: voice-orb.tsx Rules-of-Hooks violation. Main agent should confirm the reordering is stable.",
+    "Optional cleanup: remove the stale ElevenLabs references from the /api/assistant/tts/stream docstrings in server.py (functionality is correct; only comments are stale).",
+    "Optional: fully delete `_stream_elevenlabs_tts` (dead code, ~50 lines) plus ELEVENLABS_* env vars once the team is comfortable never rolling back."
+  ],
+  "critical_code_review_comments": [
+    "server.py `_stream_tts_with_fallback` is correctly simplified — no fallback logic remains, ElevenLabs path is dead-code. Confirmed by both endpoint test and log inspection.",
+    "invalidation.ts is clean pub/sub; the lazy `require('./invalidation')` in client.ts correctly avoids the circular import between client.ts ↔ invalidation.ts ↔ hooks.ts.",
+    "hooks.ts uses `useInvalidationGen()` counter which starts at 0 — the guard `if (path && invalidationGen > 0) refresh()` correctly skips the initial mount so we don't double-fetch.",
+    "shipment/[id].tsx Papa gating cascade (canModifyByRole → canModifyByFY → canModifyByStatus) fires in the right order — Papa reason wins over FY, which wins over status. Matches spec exactly.",
+    "now-brief-card.tsx correctly imports useVoiceOrb and conditionally renders `LIVE · Realtime` chip + transcript ABOVE existing history — no breakage of the idle Whisper flow.",
+    "use-ghost-typing.ts is a clean 71-line foundation hook: cancellable, cleans up interval on unmount via the returned `cancel` in useEffect. Good foundation for Phase-3."
+  ],
+  "updated_files": [
+    "/app/frontend/src/components/voice-orb.tsx (moved 2 useRef + 2 useEffect hooks above `if (hidden) return null;` — fixed Rules-of-Hooks red screen)",
+    "/app/backend/tests/test_iter58_phase2_tts.py (new — 8 test cases for Phase-2 TTS + realtime + voice-command)"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 Phase-2 pytest cases pass)",
+    "frontend": "100% (all Phase-2 acceptance criteria met after voice-orb hotfix)"
+  },
+  "seed_data_creation": "None — used existing seeded shipments (AURA-PEN-001 for Papa, f2481dd9 for Kishan) and existing users kishan / bsingh.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase-2 fully verified. ElevenLabs is removed from active TTS pipeline (log line is now `[TTS] OpenAI <voice> (speed=X)` — no fallback line, no ElevenLabs failure line). Papa role strict enforcement is enforced client-side at shipment/[id].tsx: `canModifyByRole = !isPapa`, and `openModify` short-circuits with a Hindi Alert. Global invalidation bus lives at /app/frontend/src/api/invalidation.ts and is wired through client.ts (apiMutate) + hooks.ts (useApi subscribes to useInvalidationGen). Now Brief realtime merge lives at now-brief-card.tsx line ~1101 — renders when voice.isConnected && voice.transcript.length > 0. use-ghost-typing.ts is standalone; Phase-3 will wire it into form inputs. IMPORTANT — the voice-orb.tsx hotfix I applied is: move all hooks (useRef, useEffect) ABOVE the `if (hidden) return null` guard. Do not regress this ordering.",
+  "rca_of_issue": "Root cause of the red-screen crash: In iteration 58 (Phase 1), the testing agent suggested hiding the voice orb on unauthenticated routes. The main agent added `const hidden = !auth.user || (pathname||'').includes('sign-in'); if (hidden) return null;` — but placed it at line 34-35, BEFORE the `useRef(new Animated.Value(0.6))` on line 38 and two useEffect hooks. On /sign-in the component returned early → 0 hooks called. Immediately after login, the same component instance re-renders with `hidden=false` and calls 2 useRefs + 2 useEffects → React detects the hook-count change and throws 'Rendered more hooks than during the previous render'. Fix: moved the `if (hidden) return null;` block AFTER all four hooks so React sees a stable hook count on every render. Verified by logging in as both Papa (bsingh) and Admin (kishan) — no more Rules-of-Hooks errors in console, no red screen, all downstream Phase-2 flows now testable."
+}

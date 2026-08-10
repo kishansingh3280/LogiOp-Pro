@@ -41,6 +41,7 @@ import {
 } from "react-native";
 
 import { useAuth } from "@/src/auth/context";
+import { useVoiceOrb } from "@/src/context/voice-orb-context";
 import { useMicLevel } from "@/src/hooks/use-mic-level";
 import { colors, radii, spacing } from "@/src/theme";
 import { speakStreaming, type StreamingTtsHandle } from "@/src/utils/tts-stream";
@@ -508,6 +509,11 @@ export function NowBriefCard(props: Props) {
   const auth = useAuth();
   const role = auth.user?.role || "Admin";
   const sessionId = useRef<string>(`wingman-${auth.user?.id || "anon"}-${Date.now()}`).current;
+
+  // Realtime voice orb — when the orb is connected, we render the LIVE
+  // transcript from OpenAI Realtime API into the chat area. When it's not
+  // connected the card falls back to the existing text/Whisper flow.
+  const voice = useVoiceOrb();
 
   const [uiState, setUiState] = useState<UiState>("idle");
   const [errorMsg, setErrorMsg] = useState<string>("");
@@ -1088,6 +1094,28 @@ export function NowBriefCard(props: Props) {
           </Text>
         ) : null}
 
+        {/* Live realtime transcript (from the voice orb) — only shown
+            when the orb has an active OpenAI Realtime session. Renders
+            above the local Wingman history so the operator sees the
+            most recent voice turns immediately. */}
+        {voice.isConnected && voice.transcript.length > 0 ? (
+          <>
+            <View style={styles.liveTranscriptChip}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveTranscriptChipText}>LIVE · Realtime</Text>
+            </View>
+            {voice.transcript.map((t) => (
+              <ChatBubble
+                key={t.id}
+                role={t.role}
+                content={t.content || (t.role === "user" ? "…" : "…")}
+                // Karaoke reveal for the LAST assistant turn if still speaking.
+                speakingWordIdx={-1}
+              />
+            ))}
+          </>
+        ) : null}
+
         {history.map((turn, i) => {
           const isLatestAssistant =
             turn.role === "assistant" && i === history.length - 1;
@@ -1420,6 +1448,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "500",
+  },
+
+  // ---- Live transcript chip (Realtime badge) ------------------------
+  liveTranscriptChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: "rgba(0, 245, 255, 0.15)",
+    borderColor: "rgba(0, 245, 255, 0.55)",
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 6,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#00F5FF",
+  },
+  liveTranscriptChipText: {
+    color: "#00F5FF",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 0.6,
   },
 
   // ---- Chat bubbles ---------------------------------------------------

@@ -1944,37 +1944,19 @@ class _TTSStreamRequest(BaseModel):
 
 async def _stream_tts_with_fallback(
     text: str,
-    openai_voice: str = "shimmer",
-    speed: float = 0.88,
+    openai_voice: str = "onyx",
+    speed: float = 1.0,
 ):
-    """Try ElevenLabs first (when configured); on any upstream error
-    (bad key, missing permission, network) transparently fall back to
-    OpenAI shimmer so the operator never gets a silent assistant."""
-    use_11 = bool(os.getenv("ELEVENLABS_API_KEY"))
-    if use_11:
-        try:
-            # We need to buffer just the FIRST chunk to catch upstream
-            # errors before streaming to the client. Once we're past that,
-            # we can pipe the rest through.
-            gen = _stream_elevenlabs_tts(text)
-            first = None
-            async for chunk in gen:
-                first = chunk
-                break
-            if first is not None:
-                import logging
-                logging.info(f"[TTS] ElevenLabs streaming ({len(first)}B first chunk)")
-                yield first
-                async for chunk in gen:
-                    yield chunk
-                return
-        except HTTPException as e:
-            # eslint-disable-next-line no-console
-            import logging
-            logging.warning(f"[TTS] ElevenLabs failed ({e.detail}) — falling back to OpenAI")
-    # Fallback path
+    """Stream OpenAI TTS directly.
+
+    Phase 2 note: ElevenLabs was fully removed from the pipeline. All
+    speech now goes through OpenAI TTS (default voice `onyx` — deep male,
+    closest to Indian-English business tone). The ElevenLabs env vars +
+    `_stream_elevenlabs_tts` helper are left in place only for tests /
+    future re-introduction, but are no longer called.
+    """
     import logging
-    logging.info(f"[TTS] Using OpenAI {openai_voice} fallback")
+    logging.info(f"[TTS] OpenAI {openai_voice} (speed={speed})")
     async for chunk in _stream_openai_tts(text, openai_voice, speed):
         yield chunk
 

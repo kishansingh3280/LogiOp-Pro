@@ -29,10 +29,10 @@ export function VoiceOrb() {
   const insets = useSafeAreaInsets();
   const auth = useAuth();
   const pathname = usePathname();
-  // Hide the orb on the sign-in / auth screens — it should only appear
-  // once the user is logged in and inside the app shell.
-  const hidden = !auth.user || (pathname || "").includes("sign-in");
-  if (hidden) return null;
+  // NOTE: All hooks below must be called on every render — do NOT put
+  // an early `return null` before them, or React will throw
+  // "Rendered more hooks than during the previous render" the moment
+  // the user logs in (hidden flips false→true).
 
   // Breathing glow — scale + opacity oscillation. Tuned per state.
   const breathe = useRef(new Animated.Value(0.6)).current;
@@ -75,6 +75,12 @@ export function VoiceOrb() {
     spin.setValue(0);
     return undefined;
   }, [orb.state, spin]);
+
+  // Hide the orb on the sign-in / auth screens — it should only appear
+  // once the user is logged in and inside the app shell. Placed AFTER
+  // all hooks to comply with React's Rules of Hooks.
+  const hidden = !auth.user || (pathname || "").includes("sign-in");
+  if (hidden) return null;
 
   const stateColor = (() => {
     switch (orb.state) {

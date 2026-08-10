@@ -2,6 +2,7 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 
 import { apiGet } from "./client";
+import { useInvalidationGen } from "./invalidation";
 
 interface ApiError extends Error {
   status?: number;
@@ -52,6 +53,16 @@ export function useApi<T>(path: string | null) {
       if (path) refresh();
     }, [path, refresh]),
   );
+
+  // Global invalidation — any successful POST/PUT/DELETE anywhere in the
+  // app bumps this counter, causing every mounted useApi() to refetch.
+  // Enables cross-screen state sync (e.g. "voice command creates a
+  // shipment → dashboard counters update instantly").
+  const invalidationGen = useInvalidationGen();
+  useEffect(() => {
+    if (path && invalidationGen > 0) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invalidationGen]);
 
   return { data, loading, error, status, refresh, setData };
 }

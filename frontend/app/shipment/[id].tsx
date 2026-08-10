@@ -339,16 +339,20 @@ export default function ShipmentDetail({
   const nextIdx = STATUS_FLOW.indexOf(s.status);
   const nextLabel = nextIdx >= 0 && nextIdx < STATUS_FLOW.length - 1 ? STATUS_FLOW[nextIdx + 1] : null;
   const inWarehouse = s.status === "warehouse_arrived";
-  // A shipment can be modified only if:
-  //   1. Its status is still `pending` (business rule — locked once dispatched)
-  //   2. AND either the user is admin OR the shipment's dispatch date falls
-  //      inside the current Financial Year (so historical shipments stay
-  //      read-only for non-admins even in the `pending` bucket).
+  // Papa Mode (strict): Papa users can ONLY change shipment status — no
+  // form modification, no deletion, no field edits. This is enforced at
+  // three layers:
+  //   1. openModify() short-circuits to an Alert
+  //   2. delete button hidden entirely (already handled above)
+  //   3. FY gate + status gate still apply on top
   const canModifyByStatus = s.status === "pending";
   const canModifyByFY = fyGate.canEditDate(s.dispatch_date);
-  const canModify = canModifyByStatus && canModifyByFY;
+  const canModifyByRole = !isPapa; // Papa cannot open the edit form at all
+  const canModify = canModifyByStatus && canModifyByFY && canModifyByRole;
   const modifyLockedReason = !canModify
-    ? !canModifyByFY
+    ? !canModifyByRole
+      ? "Papa Mode · sirf status change kar sakte hain"
+      : !canModifyByFY
       ? `${fyGate.activeFY ? "FY " + fyGate.activeFY : "This FY"} locked — Admin only`
       : s.status === "delivered"
         ? "Delivered · locked"
@@ -361,6 +365,13 @@ export default function ShipmentDetail({
   const shipTone = toneFor(s.status);
 
   const openModify = () => {
+    if (!canModifyByRole) {
+      Alert.alert(
+        "Papa Mode",
+        "Papa ji, aap sirf shipment ka status change kar sakte hain (Pending → In-transit → Delivered). Form edit ke liye Admin ko boliye.",
+      );
+      return;
+    }
     if (!canModifyByFY) {
       Alert.alert(
         "FY locked",

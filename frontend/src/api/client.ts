@@ -240,6 +240,18 @@ export async function apiMutate<T>(method: Method, path: string, body?: unknown)
       // mutation (create/update/delete). Fire-and-forget — cache purge
       // doesn't need to block the caller.
       invalidateCollection(path).catch(() => undefined);
+      // Global invalidation bus — bump the counter so every useApi()
+      // hook mounted anywhere in the app refetches on the next tick.
+      // This is the "Global Query Invalidation" system requested by
+      // the user in Phase 2.
+      try {
+        // Lazy require to avoid a circular import at module init.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { invalidateAll } = require("./invalidation") as typeof import("./invalidation");
+        invalidateAll();
+      } catch {
+        /* ignore — the bus is best-effort */
+      }
       return res;
     } catch (e) {
       // Non-network error — bubble up (validation etc.)
