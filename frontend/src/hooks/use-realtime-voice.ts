@@ -195,7 +195,14 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
         setTranscript((prev) => [...prev, { id, role: "assistant", content: "", at: Date.now(), isFinal: false }]);
         setState("speaking");
       }
-      if (type === "response.output_text.delta" || type === "response.audio_transcript.delta") {
+      if (
+        type === "response.output_text.delta" ||
+        type === "response.audio_transcript.delta" ||
+        // GA Realtime emits this newer event name when the assistant
+        // is speaking; adding it here keeps the on-screen transcript
+        // in sync with the audio instead of showing "…" placeholders.
+        type === "response.output_audio_transcript.delta"
+      ) {
         const delta = msg.delta || "";
         setTranscript((prev) => {
           const id = currentAssistantIdRef.current;
@@ -230,16 +237,43 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
         console.warn("[realtime] server error:", msg);
         setError((msg.error && msg.error.message) || "Realtime error");
       }
+      // --- INTERRUPTION handling ------------------------------------------
+      // The server can cancel an in-flight response either because the
+      // user started talking again (VAD `interrupt_response`) or because
+      // we asked it to (via `response.cancel`). We tag the active
+      // assistant turn as final and immediately flip the orb back to
+      // listening so the operator gets instant feedback.
+      if (
+        type === "response.cancelled" ||
+        type === "response.output_audio_buffer.stopped" ||
+        type === "output_audio_buffer.stopped"
+      ) {
+        setTranscript((prev) => {
+          const id = currentAssistantIdRef.current;
+          if (!id) return prev;
+          const idx = prev.findIndex((t) => t.id === id);
+          if (idx < 0) return prev;
+          const next = [...prev];
+          const trimmed = (next[idx].content || "").replace(/\s+$/g, "");
+          next[idx] = { ...next[idx], content: trimmed + " …", isFinal: true };
+          return next;
+        });
+        currentAssistantIdRef.current = null;
+        setState(dcRef.current && dcRef.current.readyState === "open" ? "listening" : "idle");
+      }
 
       // --- FUNCTION / TOOL CALLS ---------------------------------------
       // The Realtime API emits function-call arguments incrementally
       // (like text deltas) then a `.done` event with the full JSON
       // string. For `fill_form` we don't need the deltas — we just
       // parse the completed args and route the payload through our
-      // fill-form bus. Any other tool name is ignored.
+      // fill-form bus. For `query_dashboard` we fire an HTTP request
+      // to the backend and inject the JSON result back into the
+      // conversation so the model can speak the number.
       if (type === "response.function_call_arguments.done") {
         const name: string = msg.name || msg.function_name || "";
         const rawArgs: string = msg.arguments || "";
+        const callId: string | undefined = msg.call_id || msg.tool_call_id;
         if (name === "fill_form") {
           try {
             const parsed = JSON.parse(rawArgs || "{}");
@@ -264,6 +298,55 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
             // eslint-disable-next-line no-console
             console.warn("[realtime] fill_form parse failed:", e);
           }
+        }
+        if (name === "query_dashboard") {
+          // Fire-and-forget: fetch the metric, push the JSON back as a
+          // tool response, then ask the model to continue with a new
+          // response.create so it speaks the answer.
+          (async () => {
+            let payload: Record<string, unknown> = {};
+            try {
+              payload = JSON.parse(rawArgs || "{}");
+            } catch {
+              payload = {};
+            }
+            let result: unknown = { error: "query failed" };
+            try {
+              const token = getAuthTokenSync();
+              const res = await fetch(`${API_BASE}/api/voice/query`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify(payload),
+              });
+              if (res.ok) result = await res.json();
+              else result = { error: `HTTP ${res.status}` };
+            } catch (e) {
+              result = { error: (e as Error).message };
+            }
+            const dc = dcRef.current;
+            if (!dc || dc.readyState !== "open") return;
+            try {
+              // 1. Push the tool response back into the conversation.
+              dc.send(
+                JSON.stringify({
+                  type: "conversation.item.create",
+                  item: {
+                    type: "function_call_output",
+                    call_id: callId,
+                    output: JSON.stringify(result),
+                  },
+                }),
+              );
+              // 2. Ask the model to continue speaking with the fresh data.
+              dc.send(JSON.stringify({ type: "response.create" }));
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.warn("[realtime] query_dashboard reply failed:", e);
+            }
+          })();
         }
       }
     } catch (e) {
@@ -368,6 +451,11 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
               JSON.stringify({
                 type: "session.update",
                 session: {
+                  // GA Realtime API requires `session.type` on every
+                  // session.update — without this the server rejects
+                  // the payload with `Missing required parameter:
+                  // 'session.type'` and our tools never register.
+                  type: "realtime",
                   tools: [
                     {
                       type: "function",
@@ -403,6 +491,37 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
                         required: ["form", "fields"],
                       },
                     },
+                    {
+                      type: "function",
+                      name: "query_dashboard",
+                      description:
+                        "Fetch live business numbers from the backend so you can answer factual questions like 'kitne shipments pending hain?', 'aaj ka revenue kya hai?', 'X party ka balance kitna hai?'. Call this BEFORE answering any question that asks for a count, sum, or balance — never guess. The result JSON is sent back as a tool response; read it and speak the answer in Hinglish.",
+                      parameters: {
+                        type: "object",
+                        properties: {
+                          metric: {
+                            type: "string",
+                            description: "Which live metric to fetch.",
+                            enum: [
+                              "pending_shipments",
+                              "in_transit_shipments",
+                              "unpaid_invoices",
+                              "active_trips",
+                              "today_revenue",
+                              "party_balance",
+                              "warehouse_bags",
+                              "overview",
+                            ],
+                          },
+                          party_name: {
+                            type: "string",
+                            description:
+                              "Party name — REQUIRED only when metric='party_balance'. Case-insensitive prefix match.",
+                          },
+                        },
+                        required: ["metric"],
+                      },
+                    },
                   ],
                   tool_choice: "auto",
                 },
@@ -423,7 +542,12 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
         await pc.setLocalDescription(offer);
 
         const sdpRes = await fetch(
-          `https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`,
+          // OpenAI Realtime GA WebRTC endpoint. The Beta path
+          // `/v1/realtime` was retired in 2025 and now returns
+          // `beta_api_shape_disabled` — the GA replacement is
+          // `/v1/realtime/calls`. See:
+          // https://developers.openai.com/api/docs/guides/realtime-webrtc
+          `https://api.openai.com/v1/realtime/calls?model=${encodeURIComponent(model)}`,
           {
             method: "POST",
             body: offer.sdp || "",

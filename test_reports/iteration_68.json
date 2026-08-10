@@ -1,0 +1,42 @@
+{
+  "summary": "Verified 4 voice-assistant fixes. Fix 1 (GA SDP endpoint) PASSES at runtime — POST https://api.openai.com/v1/realtime/calls?model=gpt-realtime returned HTTP 201 (was 400). Fix 2 (marin voice) source-verified. Fix 3 (query_dashboard) — backend endpoint /api/voice/query works perfectly (10/10 pytest, live data returned), client tool schema + handler + system prompt all source-verified, BUT runtime tool registration is REJECTED by OpenAI with 'Missing required parameter: session.type'. Fix 4 (response.cancelled handling) source-verified in use-realtime-voice.ts:239-256.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Voice Orb — tool registration on data-channel open",
+        "issue": "The session.update sent from dc.onopen in frontend/src/hooks/use-realtime-voice.ts (lines 442-517) omits session.type. OpenAI GA Realtime API rejects it with invalid_request_error: 'Missing required parameter: session.type' (captured live). Consequence: fill_form AND query_dashboard tools are never registered on the session, so the model can never call query_dashboard — Fix 3 is unreachable at runtime until this is patched. Add session.type: 'realtime' inside the session object.",
+        "affected_testIDs": ["voice-orb"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_voice_query_iter68.py",
+    "/app/test_reports/pytest/iter68_voice_query.xml",
+    "/app/test_reports/voice_assistant_fixes.md"
+  ],
+  "action_items": [
+    "PATCH: Add `type: 'realtime'` to the session object in the session.update payload at frontend/src/hooks/use-realtime-voice.ts:445 (inside dc.onopen). Without this, fill_form and query_dashboard tools are never registered and Fix 3 cannot complete E2E.",
+    "After patching, re-run voice orb flow — expect NO 'server error' event on connect, and expect the model to emit response.function_call_arguments.done with name='query_dashboard' when asked 'kitne shipments pending hain?'."
+  ],
+  "critical_code_review_comments": [
+    "session.update in use-realtime-voice.ts:445 is missing required 'type: realtime' field (blocks tool registration).",
+    "SDP GA URL migration is correct (line 538). Comment above accurately reflects the change.",
+    "voice='marin' in server.py:2468 is correct; comment on lines 2464-2467 now consistent (no verse/onyx drift).",
+    "query_dashboard client handler (lines 295-343) correctly posts to /api/voice/query, injects function_call_output, and triggers response.create — logic is sound; only tool registration is the blocker.",
+    "response.cancelled handling block (lines 239-256) is correctly placed after response.done to handle interruptions from both server VAD interrupt_response and explicit response.cancel."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "75% (3/4 fixes verified working; Fix 3 blocked at runtime by session.type omission)"},
+  "seed_data_creation": "None. Used existing seed (kishan admin, 1 pending shipment AURA-PEN-001, 2 unpaid invoices totaling INR 23896).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent adds `type: 'realtime'` to the session.update payload in use-realtime-voice.ts:445, retest by: (1) log in as kishan via quick-login, (2) click voice-orb, (3) confirm NO 'realtime server error' appears in console, (4) try text-mode via voice-orb-panel-input: send 'kitne shipments pending hain?' via voice-orb-panel-send, (5) expect POST /api/voice/query with body {metric:'pending_shipments'} and expect assistant transcript to contain the number '1' or 'one'. Backend endpoint is already fully working — pytest suite at /app/backend/tests/test_voice_query_iter68.py covers all 7 metrics + edge cases.",
+  "rca_of_issue": "Root cause of the tool-registration failure: OpenAI GA Realtime API tightened session.update validation — the outer 'session' object now requires a 'type' discriminator (same 'realtime' value that /realtime-token uses at server.py:2445). The client's session.update at use-realtime-voice.ts:445-515 only sends tools + tool_choice. Reproduction: log in, click voice orb, watch DevTools console — immediately after 'listening' state you see one 'realtime server error' event with error.param='session.type'. Mitigation: add `type: 'realtime'` next to `tools:` inside the session object; no other code change needed."
+}

@@ -2393,6 +2393,24 @@ or invoices. If unsure, stay silent — do not fill space with acknowledgments.
 2. Call the appropriate tool / execute the command.
 3. Narrate the result in Hinglish.
 
+## TOOLS AVAILABLE
+- `fill_form(form, fields, reason)` — call ONLY when user asks to create/add/
+  make a NEW record (shipment, invoice, party, ledger entry, trip).
+- `query_dashboard(metric, party_name?)` — call BEFORE answering ANY factual
+  question that needs a count / sum / balance. NEVER guess numbers. Available
+  metrics:
+    • pending_shipments — how many shipments are pending
+    • in_transit_shipments — how many are moving
+    • unpaid_invoices — count + total INR / THB unpaid
+    • active_trips — current carrier trips in flight
+    • today_revenue — invoices paid today (INR + THB)
+    • warehouse_bags — current bag count + kg in Bangkok warehouse
+    • party_balance — pass party_name; returns INR + THB running balance
+    • overview — full dashboard stats blob
+  Example: for "kitne shipments pending hain?" call
+  query_dashboard with metric="pending_shipments", then say
+  "Sir, N shipments pending hain." (replace N with the number returned).
+
 Be fast, calm, confident — like a trusted business partner who never wastes a word.
 """.strip()
 
@@ -2443,9 +2461,11 @@ async def realtime_token(
                     "transcription": {"model": "whisper-1"},
                 },
                 "output": {
-                    # `alloy` / `onyx` / `verse` etc. — onyx is deep + male,
-                    # closest to a natural Indian-English business tone.
-                    "voice": "verse",
+                    # `alloy` / `onyx` / `verse` / `marin` etc. — `marin`
+                    # is the warm, expressive default that plays best
+                    # with Wingman's Hinglish persona; keep this in
+                    # sync with the comment below to avoid drift.
+                    "voice": "marin",
                     "format": {"type": "audio/pcm", "rate": 24000},
                     "speed": 1.1,
                 },
@@ -2478,6 +2498,143 @@ async def realtime_token(
 class VoiceCommandIn(BaseModel):
     action: str
     params: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Live-data tool for the Realtime voice assistant
+# ---------------------------------------------------------------------------
+
+async def _proxy_get(path: str) -> Any:
+    """Module-level GET-proxy to the remote logistics backend.
+
+    Mirrors the nested helper used by `/api/todo/blockers` but is
+    reusable from any endpoint. Returns `[]` / `{}` on transport
+    failure so callers can treat it as an empty result rather than
+    raising, which keeps the voice tool graceful even when the
+    upstream is briefly unavailable.
+    """
+    if not REMOTE_BACKEND_URL:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(REMOTE_BACKEND_URL + path)
+            if r.status_code >= 400 or not r.content:
+                return None
+            return r.json()
+    except Exception:
+        return None
+
+
+# `POST /api/voice/query` — the Voice Orb's `query_dashboard` function
+# tool calls this endpoint whenever the AI needs a factual number to
+# answer a question ("kitne shipments pending hain?", etc.). We return
+# a small JSON blob that the client re-injects as a
+# `conversation.item.create` tool response so the model can speak it.
+#
+# Every metric is computed from the LIVE proxy layer so numbers are
+# always fresh — no caching. Party-balance uses the same running-
+# balance logic the ledger page uses.
+class VoiceQueryIn(BaseModel):
+    metric: str
+    party_name: Optional[str] = None
+
+
+@api_router.post("/voice/query")
+async def voice_query(
+    req: VoiceQueryIn,
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+) -> Dict[str, Any]:
+    metric = (req.metric or "").strip().lower()
+    try:
+        if metric == "pending_shipments":
+            ships = await _proxy_get("/api/shipments") or []
+            pending = [s for s in ships if str(s.get("status", "")).lower() == "pending"]
+            return {
+                "metric": metric,
+                "count": len(pending),
+                "sample": [
+                    {"consignment_no": s.get("consignment_no"), "route": f'{s.get("origin","?")} → {s.get("destination","?")}'}
+                    for s in pending[:3]
+                ],
+            }
+        if metric == "in_transit_shipments":
+            ships = await _proxy_get("/api/shipments") or []
+            it = [s for s in ships if str(s.get("status", "")).lower() == "in_transit"]
+            return {"metric": metric, "count": len(it)}
+        if metric == "unpaid_invoices":
+            invs = await _proxy_get("/api/invoices") or []
+            unpaid = [i for i in invs if str(i.get("status", "")).lower() in ("draft", "sent")]
+            total_inr = sum(float(i.get("total") or 0) for i in unpaid if str(i.get("currency", "")).upper() == "INR")
+            total_thb = sum(float(i.get("total") or 0) for i in unpaid if str(i.get("currency", "")).upper() == "THB")
+            return {
+                "metric": metric,
+                "count": len(unpaid),
+                "total_inr": round(total_inr, 2),
+                "total_thb": round(total_thb, 2),
+            }
+        if metric == "active_trips":
+            trips = await _proxy_get("/api/bullion/trips") or []
+            active = [t for t in trips if str(t.get("status", "")).lower() in ("pending", "in_transit", "partial_delivered")]
+            return {
+                "metric": metric,
+                "count": len(active),
+                "sample": [
+                    {"route": t.get("route") or t.get("direction"), "flight_number": t.get("flight_number")}
+                    for t in active[:3]
+                ],
+            }
+        if metric == "today_revenue":
+            invs = await _proxy_get("/api/invoices") or []
+            today = datetime.now(timezone.utc).date().isoformat()
+            paid_today = [
+                i for i in invs
+                if str(i.get("status", "")).lower() == "paid" and str(i.get("date", ""))[:10] == today
+            ]
+            total_inr = sum(float(i.get("total") or 0) for i in paid_today if str(i.get("currency", "")).upper() == "INR")
+            total_thb = sum(float(i.get("total") or 0) for i in paid_today if str(i.get("currency", "")).upper() == "THB")
+            return {
+                "metric": metric,
+                "date": today,
+                "count": len(paid_today),
+                "revenue_inr": round(total_inr, 2),
+                "revenue_thb": round(total_thb, 2),
+            }
+        if metric == "warehouse_bags":
+            wh = await _proxy_get("/api/dashboard/warehouse") or {}
+            return {
+                "metric": metric,
+                "current_bags": wh.get("current_bags", 0),
+                "current_kg": wh.get("current_kg", 0),
+                "booked_deliveries": wh.get("booked_deliveries", 0),
+            }
+        if metric == "party_balance":
+            if not req.party_name:
+                return {"error": "party_name required for party_balance"}
+            parties = await _proxy_get("/api/parties") or []
+            needle = req.party_name.strip().lower()
+            match = next((p for p in parties if str(p.get("name", "")).lower() == needle), None) \
+                or next((p for p in parties if needle in str(p.get("name", "")).lower()), None)
+            if not match:
+                return {"error": f"Party '{req.party_name}' not found"}
+            ledger = await _proxy_get(f"/api/parties/{match['id']}/ledger") or []
+            balance_inr = sum(float(e.get("credit") or 0) - float(e.get("debit") or 0)
+                              for e in ledger if str(e.get("currency", "")).upper() == "INR")
+            balance_thb = sum(float(e.get("credit") or 0) - float(e.get("debit") or 0)
+                              for e in ledger if str(e.get("currency", "")).upper() == "THB")
+            return {
+                "metric": metric,
+                "party_name": match.get("name"),
+                "balance_inr": round(balance_inr, 2),
+                "balance_thb": round(balance_thb, 2),
+                "entry_count": len(ledger),
+            }
+        if metric == "overview":
+            stats = await _proxy_get("/api/dashboard/stats") or {}
+            return {"metric": metric, "stats": stats}
+        return {"error": f"Unknown metric: {metric}"}
+    except Exception as e:  # noqa: BLE001
+        logging.warning(f"[voice/query] {metric} failed: {e}")
+        return {"error": str(e)}
 
 
 @api_router.post("/voice-command")
