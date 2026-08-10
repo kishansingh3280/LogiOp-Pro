@@ -15,6 +15,13 @@ import { Platform } from "react-native";
 
 import { API_BASE } from "@/src/api/client";
 import { getAuthTokenSync } from "@/src/auth/context";
+import {
+  dispatchFillForm,
+  FILL_FORM_ROUTES,
+  type FillFormId,
+  type FillFormPayload,
+} from "@/src/api/fill-form-bus";
+import { getWebRTC, hasWebRTC } from "@/src/utils/webrtc";
 
 export type OrbState = "idle" | "connecting" | "listening" | "processing" | "speaking" | "error";
 
@@ -40,10 +47,10 @@ export interface UseRealtimeVoiceResult {
 }
 
 export function useRealtimeVoice(): UseRealtimeVoiceResult {
-  const supported =
-    Platform.OS === "web" &&
-    typeof window !== "undefined" &&
-    typeof RTCPeerConnection !== "undefined";
+  // Web: check browser WebRTC. Native: check whether the
+  // react-native-webrtc native module linked successfully (only true
+  // inside a development / production build — not in Expo Go).
+  const supported = hasWebRTC();
 
   const [state, setState] = useState<OrbState>("idle");
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
@@ -223,6 +230,42 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
         console.warn("[realtime] server error:", msg);
         setError((msg.error && msg.error.message) || "Realtime error");
       }
+
+      // --- FUNCTION / TOOL CALLS ---------------------------------------
+      // The Realtime API emits function-call arguments incrementally
+      // (like text deltas) then a `.done` event with the full JSON
+      // string. For `fill_form` we don't need the deltas — we just
+      // parse the completed args and route the payload through our
+      // fill-form bus. Any other tool name is ignored.
+      if (type === "response.function_call_arguments.done") {
+        const name: string = msg.name || msg.function_name || "";
+        const rawArgs: string = msg.arguments || "";
+        if (name === "fill_form") {
+          try {
+            const parsed = JSON.parse(rawArgs || "{}");
+            const formId = String(parsed.form || parsed.form_id || "");
+            const fields = (parsed.fields || parsed.data || {}) as Record<
+              string,
+              string | number | boolean | null
+            >;
+            const reason = parsed.reason ? String(parsed.reason) : undefined;
+            if (formId && FILL_FORM_ROUTES[formId as FillFormId]) {
+              const payload: FillFormPayload = {
+                form: formId as FillFormId,
+                fields,
+                reason,
+              };
+              dispatchFillForm(payload);
+            } else {
+              // eslint-disable-next-line no-console
+              console.warn("[realtime] fill_form unknown target:", formId);
+            }
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn("[realtime] fill_form parse failed:", e);
+          }
+        }
+      }
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn("[realtime] event parse failed", e);
@@ -233,12 +276,19 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
   const connect = useCallback(
     async (pageCtx: { page: string; summary?: string }) => {
       if (!supported) {
-        setError("Realtime voice is web-only in Phase 1");
+        setError(
+          Platform.OS === "web"
+            ? "This browser doesn't support WebRTC"
+            : "Voice needs a development build (Expo Go can't run react-native-webrtc)",
+        );
         return;
       }
       setError(null);
       setState("connecting");
       try {
+        const rtc = getWebRTC();
+        if (!rtc) throw new Error("WebRTC not available");
+
         // 1. Mint an ephemeral token from our backend
         const token = getAuthTokenSync();
         const tokRes = await fetch(`${API_BASE}/api/realtime-token`, {
@@ -257,22 +307,34 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
         const ephemeralKey = tokJson.ephemeral_key;
         const model = tokJson.model || "gpt-realtime";
 
-        // 2. Request microphone permission
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // 2. Request microphone permission — uses browser MediaDevices
+        //    on web or react-native-webrtc's mediaDevices bridge on
+        //    native.
+        const stream = await rtc.mediaDevices.getUserMedia({ audio: true });
         micStreamRef.current = stream;
-        startLevelMeter(stream);
+        if (Platform.OS === "web") startLevelMeter(stream);
 
         // 3. Peer connection
-        const pc = new RTCPeerConnection();
+        const pc = new rtc.RTCPeerConnection();
         pcRef.current = pc;
 
-        // 4. Remote audio → <audio> tag
-        const audioEl = document.createElement("audio");
-        audioEl.autoplay = true;
-        audioElRef.current = audioEl;
-        pc.ontrack = (e) => {
-          if (audioElRef.current) audioElRef.current.srcObject = e.streams[0];
-        };
+        // 4. Remote audio — web renders via <audio>. On native, the
+        //    remote track auto-plays through the RN WebRTC bridge; we
+        //    just keep a ref so we can stop it on disconnect.
+        if (Platform.OS === "web") {
+          const audioEl = document.createElement("audio");
+          audioEl.autoplay = true;
+          audioElRef.current = audioEl;
+          pc.ontrack = (e: MessageEvent & { streams: MediaStream[] }) => {
+            if (audioElRef.current) audioElRef.current.srcObject = e.streams[0];
+          };
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          pc.ontrack = (_e: any) => {
+            // No-op on native: react-native-webrtc plays remote audio
+            // through the OS audio route automatically.
+          };
+        }
 
         // 5. Add mic track
         stream.getAudioTracks().forEach((track) => pc.addTrack(track, stream));
@@ -284,6 +346,57 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
         dc.onopen = () => {
           setIsConnected(true);
           setState("listening");
+          // Register the fill_form tool as soon as the channel opens
+          // so the model can invoke it during this session.
+          try {
+            dc.send(
+              JSON.stringify({
+                type: "session.update",
+                session: {
+                  tools: [
+                    {
+                      type: "function",
+                      name: "fill_form",
+                      description:
+                        "Open a form in the app and pre-fill its fields based on the operator's spoken intent. Use ONLY when the user explicitly asks to create/add/make a new record. NEVER invoke silently.",
+                      parameters: {
+                        type: "object",
+                        properties: {
+                          form: {
+                            type: "string",
+                            description: "Which form to open + pre-fill.",
+                            enum: [
+                              "shipment_new",
+                              "invoice_new",
+                              "party_new",
+                              "ledger_entry_new",
+                              "trip_new",
+                            ],
+                          },
+                          fields: {
+                            type: "object",
+                            description:
+                              "Key/value map of form-field values. Keys match the target form's field names. Unknown keys are ignored. Common keys per form: shipment_new → source, destination, carrier_name, weight_kg, bag_count, description. invoice_new → party_name, amount, currency, note. party_new → name, country, role, phone. ledger_entry_new → party_id, amount, currency, note, kind (got|gave). trip_new → route, direction, currency_type, currency_amount, gold_baht, carrier_name.",
+                            additionalProperties: true,
+                          },
+                          reason: {
+                            type: "string",
+                            description:
+                              "Short user-facing reason for opening this form. e.g. 'Naya shipment banate hain'.",
+                          },
+                        },
+                        required: ["form", "fields"],
+                      },
+                    },
+                  ],
+                  tool_choice: "auto",
+                },
+              }),
+            );
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn("[realtime] tool register failed:", e);
+          }
         };
         dc.onerror = (e) => {
           // eslint-disable-next-line no-console

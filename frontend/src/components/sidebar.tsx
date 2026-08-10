@@ -476,11 +476,8 @@ function MobileSidebar() {
           {
             backgroundColor: "rgba(0,0,0,0.5)",
             opacity: scrim,
-            ...Platform.select({
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              web: ({ zIndex: 25 } as any),
-              default: {},
-            }),
+            zIndex: 80,
+            elevation: 18,
           },
         ]}
       >
@@ -494,11 +491,6 @@ function MobileSidebar() {
           {
             width: drawerWidth,
             transform: [{ translateX: anim }],
-            ...Platform.select({
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              web: ({ zIndex: 26 } as any),
-              default: {},
-            }),
           },
         ]}
         testID="sidebar-mobile-drawer"
@@ -722,16 +714,26 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: "center",
     justifyContent: "center",
+    // Cross-platform stacking so the hamburger never sits UNDER
+    // scrims, cards or the AmbientBackground. Native needs
+    // `elevation` for Android + `zIndex` for iOS; web uses zIndex.
+    zIndex: 100,
+    elevation: 12,
     ...Platform.select({
       web: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...({
           backdropFilter: "blur(20px) saturate(160%)",
           WebkitBackdropFilter: "blur(20px) saturate(160%)",
-          zIndex: 20,
+          cursor: "pointer",
         } as any),
       },
-      default: {},
+      default: {
+        shadowColor: "#000",
+        shadowOpacity: 0.4,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
+      },
     }),
   },
   mobileDrawer: {
@@ -742,5 +744,9 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderRightColor: "rgba(255,255,255,0.08)",
     borderRightWidth: StyleSheet.hairlineWidth,
+    // Drawer must sit above the AmbientBackground + all scrim so its
+    // slide-in animation reads correctly on all platforms.
+    zIndex: 90,
+    elevation: 20,
   },
 });

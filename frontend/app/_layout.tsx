@@ -19,6 +19,7 @@ import { SidebarProvider } from "@/src/context/sidebar-context";
 import { VoiceOrbProvider } from "@/src/context/voice-orb-context";
 import { VoiceOrb } from "@/src/components/voice-orb";
 import { RealtimeStatusBar } from "@/src/components/realtime-status-bar";
+import { FillFormBridge } from "@/src/components/fill-form-bridge";
 import { GhostUserProvider } from "@/src/ghost/ghost-user";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { colors } from "@/src/theme";
@@ -112,6 +113,9 @@ function AuthShell({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const onSignIn = segments[0] === "sign-in";
   return (
+    // Keep root Views transparent so AmbientBackground bleeds through on
+    // native. The Stack itself now paints #07070f (see contentStyle in
+    // RootLayout) which stops the RN default-white flash during pushes.
     <View style={{ flex: 1, flexDirection: "row" }}>
       {!onSignIn ? <Sidebar /> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -176,8 +180,10 @@ export default function RootLayout() {
                           <Stack
                             screenOptions={{
                               headerShown: false,
-                              // Transparent content lets the AmbientBackground bleed through.
-                              contentStyle: { backgroundColor: "transparent" },
+                              // Every navigator screen keeps the deep-space
+                              // background so no white flashes during
+                              // native transitions on iOS/Android.
+                              contentStyle: { backgroundColor: colors.bg },
                               animation: "slide_from_right",
                             }}
                           />
@@ -189,6 +195,10 @@ export default function RootLayout() {
                       <VoiceOrb />
                       {/* Top status bar surfaces AI messages on non-dashboard screens */}
                       <RealtimeStatusBar />
+                      {/* Global fill_form bridge: listens for the Voice
+                          Orb's fill_form tool calls and navigates the
+                          user to the target form. Renders nothing. */}
+                      <FillFormBridge />
                     </VoiceOrbProvider>
                   </SidebarProvider>
                 </GhostUserProvider>
