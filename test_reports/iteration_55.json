@@ -1,0 +1,34 @@
+{
+  "summary": "Verified ElevenLabs API key update in /app/backend/.env. .env now contains the new hex key (7a8a152c169e545441b8fadca2fd101deab162b88a3d524612720e99b1a6caf9) and voice ID ibbx9zDYGvLgtYzRbqqG. Backend picks it up (TTS endpoint returns HTTP 200, ~10KB audio/mpeg). HOWEVER, ElevenLabs is NOT actually working — every TTS request logs 'ElevenLabs failed (ElevenLabs 400)' and falls back to OpenAI onyx. ElevenLabs itself is explicitly telling us the value is an API key *ID*, not the API key. User must supply the real API key value that starts with 'sk_'.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/assistant/tts/stream",
+        "issue": "ElevenLabs primary TTS returns HTTP 400 with message: {\"detail\":{\"type\":\"authentication_error\",\"code\":\"invalid_api_key\",\"message\":\"API key ID used as API key - only valid API keys can be used. API keys start with 'sk_' and are shown when the key is created.\"}}. Endpoint still returns 200 because it falls back to OpenAI onyx voice. The new ELEVENLABS_API_KEY value (7a8a152c...) is an API key ID, not a valid API key.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Ask the user for the actual ElevenLabs API KEY (a secret string starting with 'sk_' shown once at key-creation time). The value 7a8a152c169e545441b8fadca2fd101deab162b88a3d524612720e99b1a6caf9 is the public API key ID, not the secret.",
+    "Once real 'sk_...' key is provided, replace ELEVENLABS_API_KEY in /app/backend/.env, run `sudo supervisorctl restart backend`, then hit /api/assistant/tts/stream and confirm backend logs no longer show '[TTS] ElevenLabs failed' and no '[TTS] Using OpenAI ... fallback'."
+  ],
+  "critical_code_review_comments": [
+    "TTS fallback design masks upstream failure — /api/assistant/tts/stream returns 200 even when the ElevenLabs auth fails. Consider surfacing a header like X-TTS-Provider (elevenlabs|openai) so the client and QA can easily verify which engine served the audio without grepping logs."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "50%", "frontend": "n/a"},
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "ElevenLabs key update NOT successful — new value is an API key ID, not the actual key. Endpoint returns 200 only due to OpenAI onyx fallback. Wait for a real 'sk_'-prefixed key from user before retesting.",
+  "rca_of_issue": "Root cause: The value the user provided (7a8a152c...) is the ElevenLabs API key *ID* (a public identifier shown in the ElevenLabs dashboard), not the actual secret API key. Real ElevenLabs API keys begin with 'sk_' and are only shown once at creation time. Evidence: backend logs at 2026-08-10 10:30:04 and 10:31:04 show ElevenLabs HTTP 400 with message 'API key ID used as API key - only valid API keys can be used. API keys start with sk_ and are shown when the key is created.' Reproduction: `curl -s http://localhost:8001/api/assistant/tts/stream?text=Verify&voice=onyx -o /tmp/tts.mp3 -w '%{http_code}'` → 200 (from onyx fallback); `tail /var/log/supervisor/backend.err.log` → ElevenLabs 400. Mitigation: user must retrieve the actual secret key from the ElevenLabs dashboard (or regenerate one — the sk_ value is only visible at creation) and paste that into ELEVENLABS_API_KEY, then restart backend."
+}
