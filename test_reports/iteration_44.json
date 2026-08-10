@@ -1,0 +1,41 @@
+{
+  "summary": "Packing List PDF feature tested on AURA-DEL-001 via web preview. Header button (testID=packing-list-btn) renders correctly in top header row next to delete-btn — visible without scrolling with a green document-text-outline icon. Clicking it opens a new tab (window.open popup captured via context.expect_page) whose HTML matches the Singh Exports layout: brand line, full Delhi address, 'PACKING LIST (AURA-DEL-001)' title, 'DT :- 01.06.2026' (DD.MM.YYYY), 4-column table (Marks & Nos. / Description / PCS / MTR / TOTAL (kg)), single row 'DEEPAK ADAVANI  BAG NO. 1 = 1 BAG' and totals row 'TOTAL = 1 BAG'. Back / Modify / Delete buttons still work — no regression. HOWEVER: the total-weight column shows '0.000' instead of the expected '18.000' — the PDF aggregates bag.weight_kg (which is 0 for this shipment) and never falls back to shipment.weight_kg=18. This is a P0 mismatch vs the spec. RN-Web deprecation warnings (shadow*/pointerEvents/useNativeDriver/'background') and one 401 (ElevenLabs, pre-existing) are unchanged.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "PackingListPDF weight aggregation",
+        "issue": "Total (kg) column shows 0.000 instead of 18.000 for AURA-DEL-001. buildPackingListHtml sums bag.weight_kg only; for shipments where bag weights are not populated the total should fall back to shipment.weight_kg (or distribute it across bags). Reference: /app/frontend/src/utils/packing-list-pdf.ts:68,79",
+        "testID": "packing-list-btn",
+        "priority": "P0"
+      },
+      {
+        "component": "PackingListPDF fallback row string",
+        "issue": "When numeric bag_no cannot be parsed the row falls back to '= N BAGS' with no 'BAG NO.' prefix — spec asks for 'BAG NO. X TO Y = Z BAGS' style even in edge cases. Reference: /app/frontend/src/utils/packing-list-pdf.ts:84",
+        "testID": "packing-list-btn",
+        "priority": "P2"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_44.json"],
+  "action_items": [
+    "Fix packing-list-pdf.ts so the TOTAL (kg) column falls back to shipment.weight_kg when the summed bag.weight_kg is 0 (or when bags[].weight_kg is missing). Suggested: after the loop, if totalWeight === 0 and shipment.weight_kg > 0, set totalWeight = shipment.weight_kg and attribute it to the single row (or split proportionally across groups by bag count). Verify AURA-DEL-001 then shows '18.000' in both the party row and the TOTAL row.",
+    "(P2) When no numeric portion is extractable from bag_no, still emit 'BAG NO. <bag_no>' or 'BAG NOS. = N BAGS' style rather than a bare '= N BAGS' string.",
+    "(P2, pre-existing) Address RN-Web deprecation warnings ('shadow*', 'pointerEvents', 'useNativeDriver', 'background' shorthand) app-wide."
+  ],
+  "critical_code_review_comments": [
+    "packing-list-pdf.ts:68 — g.weight is derived exclusively from bag.weight_kg. For shipments seeded with weight at the shipment level (like AURA-DEL-001) the PDF loses the weight. Consider adding a fallback to shipment.weight_kg.",
+    "packing-list-pdf.ts:167 — window.open('','_blank') may be blocked by popup blockers; the current code silently returns. Consider showing a Toast/Alert when win is null so the user knows why nothing happened.",
+    "shipment/[id].tsx:395 — the .catch is silent; a P1 UX improvement would be to surface print/share failures via Alert on native and console.warn on web."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only test)", "frontend": "~92% (11/12 spec checks pass; weight assertion fails)"},
+  "seed_data_creation": "None — used existing AURA-DEL-001 shipment (party Deepak Adavani, 1 bag, shipment.weight_kg=18, bag.weight_kg=0).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Re-run the same popup-capture flow on /shipment/caadafb6-1807-472a-8bfd-1241ba60cc4f after the weight fallback fix. The single spec assertion that failed is 'TOTAL (kg) == 18.000' and 'party row weight == 18.000'. All other layout/text checks already pass. Login via 'Quick login as Kishan Sir (demo)' on the landing page then navigate directly. Use context.expect_page(timeout=6000) around the click to capture the popup — Playwright can then read popup.content() to assert '18.000' appears twice (party row + total row).",
+  "rca_of_issue": "Root cause: buildPackingListHtml (packing-list-pdf.ts:60-93) computes each group's weight strictly by summing bag.weight_kg values. AURA-DEL-001's single bag has bag.weight_kg=0 while shipment.weight_kg=18 (weight was captured at the shipment level, not per-bag — the Party filter chip on the detail screen also shows '0.0kg' for the same reason). Because no fallback to shipment.weight_kg exists, both the row weight and the totals row weight render as 0.000. Reproduction: open the shipment detail, click the green document icon, inspect the popup HTML — 'DEEPAK ADAVANI ... 0.000' and 'TOTAL = 1 BAG ... 0.000'. Mitigation: after summing, if totalWeight === 0 && shipment.weight_kg, set totalWeight = shipment.weight_kg and, for the single-group case, set that group's weight to shipment.weight_kg as well; for multi-group cases distribute proportionally by bag count."
+}

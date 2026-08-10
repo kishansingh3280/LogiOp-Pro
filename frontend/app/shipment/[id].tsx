@@ -28,6 +28,7 @@ import type {
 } from "@/src/api/types";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
+import { generatePackingListPdf } from "@/src/utils/packing-list-pdf";
 
 // ---------------------------------------------------------------------------
 // Shipment Console 2.0 — multi-party detail screen
@@ -383,6 +384,21 @@ export default function ShipmentDetail({
             <Text style={[styles.modifyText, !canModify && styles.modifyTextDisabled]}>
               {canModify ? "Modify" : "Locked"}
             </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => {
+              if (!shipment.data) return;
+              generatePackingListPdf({
+                shipment: shipment.data,
+                bags: bagList,
+                parties: parties.data || [],
+              }).catch(() => { /* silent — sharing sheet may be cancelled */ });
+            }}
+            style={styles.iconBtn}
+            testID="packing-list-btn"
+            accessibilityLabel="Generate packing list"
+          >
+            <Ionicons name="document-text-outline" size={20} color={colors.lime} />
           </TouchableOpacity>
           <TouchableOpacity onPress={remove} style={styles.iconBtn} testID="delete-btn">
             <Ionicons name="trash-outline" size={20} color={colors.danger} />
