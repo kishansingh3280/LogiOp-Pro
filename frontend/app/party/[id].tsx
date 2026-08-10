@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Invoice, LedgerEntry, Party, Shipment } from "@/src/api/types";
+import { useAuth } from "@/src/auth/context";
 import { FYPicker } from "@/src/components/fy-picker";
 import { toast } from "@/src/components/toast";
 import { Card, KV, StatusPill } from "@/src/components/ui";
@@ -19,6 +20,9 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
   const params = useLocalSearchParams<{ id: string }>();
   const id = idOverride || params.id;
   const router = useRouter();
+  // Papa & other non-Admin roles cannot edit parties — hide the pencil.
+  const { user } = useAuth();
+  const canEdit = user?.role === "Admin";
 
   const party = useApi<Party>(id ? `/api/parties/${id}` : null);
   const ledger = useApi<LedgerEntry[]>("/api/ledger/entries");
@@ -176,13 +180,17 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
           <Text style={styles.headTitle} numberOfLines={1}>
             {p.name}
           </Text>
-          <TouchableOpacity
-            onPress={() => router.push(`/party/new?editId=${p.id}` as never)}
-            style={styles.iconBtn}
-            testID="party-edit-btn"
-          >
-            <Ionicons name="create-outline" size={22} color={colors.lime} />
-          </TouchableOpacity>
+          {canEdit ? (
+            <TouchableOpacity
+              onPress={() => router.push(`/party/new?editId=${p.id}` as never)}
+              style={styles.iconBtn}
+              testID="party-edit-btn"
+            >
+              <Ionicons name="create-outline" size={22} color={colors.lime} />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.iconBtn} />
+          )}
         </View>
       )}
 

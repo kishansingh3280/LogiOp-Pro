@@ -302,7 +302,22 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
             page_data_summary: pageCtx.summary || "",
           }),
         });
-        if (!tokRes.ok) throw new Error(`Token ${tokRes.status}`);
+        if (!tokRes.ok) {
+          // Graceful fallback: turn the orb red-static and expose a
+          // clear message so the operator knows to use text input.
+          // The text send() path continues to work — it uses the same
+          // data channel which is unavailable, but the panel still
+          // opens for the user to type. sendText will no-op silently.
+          let detail = "";
+          try { detail = (await tokRes.text()).slice(0, 120); } catch { /* ignore */ }
+          const status = tokRes.status;
+          const isAuth = status === 401 || status === 403;
+          throw new Error(
+            isAuth
+              ? "Voice mode unavailable (OpenAI key invalid). Use text instead."
+              : `Voice mode unavailable (${status}). ${detail || "Use text instead."}`,
+          );
+        }
         const tokJson = (await tokRes.json()) as { ephemeral_key: string; model: string };
         const ephemeralKey = tokJson.ephemeral_key;
         const model = tokJson.model || "gpt-realtime";

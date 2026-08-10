@@ -6,6 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { API_BASE, flushQueue, getQueue, subscribeQueue } from "@/src/api/client";
 import { useAuth } from "@/src/auth/context";
+import { CompanySwitcher } from "@/src/components/company-switcher";
 import { colors, radii, spacing } from "@/src/theme";
 
 type Row = {
@@ -115,6 +116,16 @@ export default function MoreScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {/* Company switcher — moved here from the sidebar in Phase 5.
+            Admin-only; the CompanySwitcher component internally returns
+            null for other roles. */}
+        {user?.role === "Admin" ? (
+          <View style={{ marginBottom: spacing.lg, alignItems: "flex-start" }}>
+            <Text style={styles.sectionTitle}>Active company</Text>
+            <CompanySwitcher />
+          </View>
+        ) : null}
+
         {groups.map((g) => (
           <View key={g.title} style={{ marginBottom: spacing.lg }}>
             <Text style={styles.sectionTitle}>{g.title}</Text>

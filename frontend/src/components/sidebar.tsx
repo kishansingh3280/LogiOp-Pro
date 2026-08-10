@@ -36,7 +36,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useApi } from "@/src/api/hooks";
 import type { DashboardStats } from "@/src/api/types";
 import { useAuth } from "@/src/auth/context";
-import { CompanySwitcher } from "@/src/components/company-switcher";
 import { FYPicker } from "@/src/components/fy-picker";
 import { currentSidebarWidth, useSidebar } from "@/src/context/sidebar-context";
 import { colors, radii } from "@/src/theme";
@@ -240,12 +239,9 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
           )}
           {showLabels ? (
             <View style={{ marginTop: 10, gap: 8, alignItems: "flex-start" }}>
-              <CompanySwitcher />
-              {/* Role-locked brand label — CompanySwitcher only renders
-                  for Admins, so Papa / Staff / Carrier need a static
-                  read-only badge that shows which brand their account
-                  is pinned to. Uses the same visual language as the
-                  Admin switcher pill so the sidebar looks consistent. */}
+              {/* CompanySwitcher REMOVED in Phase 5 — moved to More tab.
+                  Papa/Staff/Carrier still see a locked brand badge here
+                  so they know which brand they're scoped to. */}
               {user && user.role !== "Admin" ? (
                 <View style={styles.papaBrandBadge} testID="sidebar-brand-locked">
                   <Ionicons name="business-outline" size={12} color={colors.warn} />
@@ -293,36 +289,15 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
         ) : null}
       </ScrollView>
 
-      {/* Bottom section — notifications, settings, user */}
+      {/* Bottom section — notifications only. Profile row REMOVED in
+          Phase 5; profile is now reached via the "More" tab which also
+          hosts the CompanySwitcher. */}
       <View style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, 8) + 8 }]}>
         <BottomAction icon="notifications-outline" label="Notifications" showLabel={showLabels} onPress={() => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           router.push("/notifications" as any);
           onNavigate?.();
         }} />
-        <Pressable
-          style={styles.userRow}
-          onPress={() => {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            router.push("/admin" as any);
-            onNavigate?.();
-          }}
-          testID="sidebar-profile"
-        >
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {(user?.display_name?.[0] || "K").toUpperCase()}
-            </Text>
-          </View>
-          {showLabels ? (
-            <View style={{ flex: 1 }}>
-              <Text style={styles.userName} numberOfLines={1}>
-                {user ? `${user.display_name} ${user.honorific || ""}`.trim() : "Kishan Sir"}
-              </Text>
-              <Text style={styles.userRole} numberOfLines={1}>{user?.role || "admin"}</Text>
-            </View>
-          ) : null}
-        </Pressable>
       </View>
     </View>
   );

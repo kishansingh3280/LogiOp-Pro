@@ -17,7 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { usePathname } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, Easing, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Animated, Easing, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 import { useAuth } from "@/src/auth/context";
 import { useVoiceOrb } from "@/src/context/voice-orb-context";
@@ -42,6 +42,21 @@ export function VoiceOrb() {
   // orb with a text input + send button (voice-only fallback).
   const [panelOpen, setPanelOpen] = useState(false);
   const [text, setText] = useState("");
+
+  // Keyboard-aware lift — track soft-keyboard height so the orb rides
+  // above it on Android/iOS. Web doesn't fire these events.
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const sub1 = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height || 0));
+    const sub2 = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => {
+      sub1.remove();
+      sub2.remove();
+    };
+  }, []);
 
   // Radiating cyan rings — 2-ring outward loop while listening.
   const ring1 = useRef(new Animated.Value(0)).current;
@@ -113,6 +128,19 @@ export function VoiceOrb() {
     return undefined;
   }, [orb.state, spin]);
 
+  // Surface Realtime errors via a toast so the operator knows why the
+  // orb turned red. Fires once per unique error string to avoid spam.
+  const lastErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!orb.error) return;
+    if (lastErrorRef.current === orb.error) return;
+    lastErrorRef.current = orb.error;
+    // Lazy-require the toast to keep the import graph tight.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { toast } = require("@/src/components/toast");
+    toast.warn(orb.error);
+  }, [orb.error]);
+
   // Hide the orb on the sign-in / auth screens — it should only appear
   // once the user is logged in and inside the app shell. Placed AFTER
   // all hooks to comply with React's Rules of Hooks.
@@ -171,7 +199,7 @@ export function VoiceOrb() {
       style={[
         styles.wrapper,
         {
-          bottom: Math.max(24, insets.bottom + 16),
+          bottom: Math.max(24, insets.bottom + 16) + kbHeight,
           right: 16,
           // pointer-events routed through style on web to silence RNW's
           // deprecation warning about the top-level prop.

@@ -1053,18 +1053,8 @@ export function NowBriefCard(props: Props) {
           </View>
         ) : null}
 
-        <TouchableOpacity
-          onPress={toggleMute}
-          style={styles.iconBtn}
-          hitSlop={8}
-          testID="now-brief-mute"
-        >
-          <Ionicons
-            name={muted ? "volume-mute" : "volume-high"}
-            size={16}
-            color={muted ? colors.textMuted : colors.accent}
-          />
-        </TouchableOpacity>
+        {/* Mute button REMOVED in Phase 5 — mute now lives exclusively
+            inside the floating Voice Orb's long-press panel. */}
         <TouchableOpacity
           onPress={onRefresh}
           style={styles.iconBtn}
