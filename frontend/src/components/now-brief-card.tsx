@@ -546,10 +546,13 @@ export function NowBriefCard(props: Props) {
         startKaraoke(clean, estMs);
         const handle = speakStreaming({
           text: clean,
-          // "alloy" is the closest OpenAI TTS voice to a natural Indian
-          // English accent. ElevenLabs (env-set voice ID) is tried first
-          // and this is the fallback when ElevenLabs 401s or fails.
-          voice: "alloy",
+          // Primary: ElevenLabs (voice ID set via backend ELEVENLABS_VOICE_ID
+          // env → `ibbx9zDYGvLgtYzRbqqG`, model eleven_multilingual_v2). If
+          // ElevenLabs returns 401 / 5xx, the backend auto-falls-back to
+          // OpenAI TTS using the voice specified here. `onyx` is OpenAI's
+          // deep male voice — closest to a natural Indian-English tone.
+          // We NEVER use the browser's built-in speechSynthesis.
+          voice: "onyx",
           onStart: () => {},
           onError: (err) => {
             // eslint-disable-next-line no-console

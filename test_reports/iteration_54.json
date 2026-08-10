@@ -1,0 +1,44 @@
+{
+  "summary": "Iter54 — Now Brief TTS voice change to onyx verified end-to-end. Backend TTS pipeline confirmed: ElevenLabs attempted first (returns 401 with current key), transparently falls back to OpenAI onyx. Frontend source has voice: 'onyx' at the single playResponse callsite; zero occurrences of 'alloy' or 'speechSynthesis'/'SpeechSynthesisUtterance' anywhere in /app/frontend/src and /app/frontend/app. Live UI test (kishan/Kishan@Boss2026 quick-login → unmute → refresh) fired a real POST /api/assistant/tts/stream which backend logs show hit the ElevenLabs-fail → OpenAI-onyx fallback path, returning 200 OK; Now Brief card visually rendered 'Speaking… / Bol raha hoon…' confirming audio actually streamed to the client. Also captured an earlier GET wire call with explicit ?voice=onyx query param. All acceptance criteria met, no regressions.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_elevenlabs_tts.py"
+  ],
+  "verifications": {
+    "backend_tts_get_onyx": {
+      "url": "GET /api/assistant/tts/stream?text=Namaste&voice=onyx",
+      "status": 200,
+      "content_type": "audio/mpeg",
+      "body_bytes": 9216,
+      "result": "PASS"
+    },
+    "backend_logs_primary_attempt": "PASS — '[TTS] ElevenLabs failed (ElevenLabs 401: Invalid API key)' present on every TTS request (proves ElevenLabs is tried first)",
+    "backend_logs_fallback_voice": "PASS — '[TTS] Using OpenAI onyx fallback' present on every TTS request (proves fallback voice is onyx, not alloy/shimmer/browser)",
+    "grep_alloy_in_frontend": "PASS — 0 occurrences in /app/frontend/src and /app/frontend/app",
+    "grep_speechSynthesis_in_frontend": "PASS — 0 usages; only one match is a comment 'We NEVER use the browser's built-in speechSynthesis' on line 554 of now-brief-card.tsx",
+    "source_voice_at_playResponse": "PASS — /app/frontend/src/components/now-brief-card.tsx:555 → voice: \"onyx\" inside speakStreaming({...}) call in playResponse",
+    "live_frontend_wire_call": "PASS — 2026-08-10 09:50:07 POST /api/assistant/tts/stream from UI hit ElevenLabs → onyx-fallback path and returned 200 OK; UI transitioned to 'Speaking… / Bol raha hoon…'. Also earlier GET seen with explicit ?voice=onyx query.",
+    "now_brief_card_ui_intact": "PASS — 48px tap-to-speak mic, mute chip, refresh chip, dial-pad chip, chat bubble all render normally on 375x667 mobile viewport"
+  },
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L1990/L2007 default voice arg is 'shimmer' but frontend explicitly passes 'onyx' now — defaults do not affect the current fix but a future caller that omits voice would still get shimmer; consider changing default to 'onyx' for consistency with the stated policy (advisory only, NOT required by this iteration's scope).",
+    "server.py L1953-L1974 catches HTTPException only; any generic exception from the ElevenLabs generator (e.g., httpx.ConnectError) would bubble instead of falling back. Current 401 path works, but hardening is advisory."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "TTS pipeline: ElevenLabs (voice ibbx9zDYGvLgtYzRbqqG, model eleven_multilingual_v2) → 401 with current user-supplied key → auto-falls-back to OpenAI onyx. Frontend passes voice: 'onyx' from now-brief-card.tsx:555. To trigger a live TTS request in the UI: quick-login as kishan → wait for Now Brief render → click mute chip (data-testid contains 'mute') to unmute → click refresh chip (data-testid contains 'refresh'). Card must show 'Speaking… / Bol raha hoon…' and backend logs must show both the ElevenLabs 401 warning and the 'Using OpenAI onyx fallback' info line.",
+  "rca_of_issue": "N/A — this was a targeted single-line fix (voice: 'alloy' → 'onyx' in now-brief-card.tsx). Backend was already correct. Verification confirmed both source and wire."
+}
