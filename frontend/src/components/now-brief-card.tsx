@@ -243,11 +243,18 @@ function useBreathe(active: boolean) {
 }
 
 // ---------------------------------------------------------------------------
-// MicButtonWeb — dedicated web-only implementation. React Native's
-// Pressable delegates to synthetic press handlers that can drop the "up"
-// event on scroll, parent re-renders, or when the pointer leaves the
-// button before release. Web needs raw pointer events to sustain the
-// hold reliably across mouse, touch, and pen inputs.
+// MicButtonWeb — dedicated web-only implementation.
+//
+// The original React Native `Pressable` `onPressIn` / `onPressOut` maps to
+// synthetic press handlers that can drop the "up" event on scroll, parent
+// re-renders, or if the pointer leaves the button before release, so the
+// hold gesture would release immediately.
+//
+// Fix: use raw DOM mouse + touch events (per user spec) so the hold is
+// sustained reliably across every browser. All handlers share a single
+// `pressedRef` guard so the start/stop callbacks fire exactly once
+// regardless of whether the up came from mouseup, mouseleave, touchend
+// or touchcancel.
 // ---------------------------------------------------------------------------
 function MicButtonWeb(props: {
   onDown: () => void;
@@ -260,29 +267,18 @@ function MicButtonWeb(props: {
   const { onDown, onUp, disabled, listening, processing, micLevel } = props;
   const pressedRef = useRef<boolean>(false);
 
-  const handleDown = useCallback(
+  const startPress = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (e: any) => {
-      if (disabled) return;
-      // Prevent default so the browser doesn't start a text selection
-      // or a drag on the button while we hold it down.
+      if (disabled || pressedRef.current) return;
       if (e && typeof e.preventDefault === "function") e.preventDefault();
-      // Capture the pointer so we still receive the up event even if
-      // the finger slides slightly off the button while recording.
-      try {
-        if (e && e.currentTarget && typeof e.currentTarget.setPointerCapture === "function" && e.pointerId != null) {
-          e.currentTarget.setPointerCapture(e.pointerId);
-        }
-      } catch {
-        /* older browsers without pointer capture — safe to ignore */
-      }
       pressedRef.current = true;
       onDown();
     },
     [disabled, onDown],
   );
 
-  const handleUp = useCallback(
+  const endPress = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (e: any) => {
       if (!pressedRef.current) return;
@@ -300,14 +296,21 @@ function MicButtonWeb(props: {
     if (e && typeof e.preventDefault === "function") e.preventDefault();
   }, []);
 
-  // React-native-web forwards these DOM-level props straight through to
-  // the underlying <div>, so we can wire raw pointer events here.
+  // react-native-web forwards these DOM-level props straight through to
+  // the underlying <div>, so we can wire raw mouse + touch events here.
+  // We intentionally register BOTH mouse and touch — pointer events are
+  // less reliable across older Safari + WebView shells.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const webProps: any = {
-    onPointerDown: handleDown,
-    onPointerUp: handleUp,
-    onPointerCancel: handleUp,
-    onPointerLeave: handleUp,
+    // Mouse (desktop)
+    onMouseDown: startPress,
+    onMouseUp: endPress,
+    onMouseLeave: endPress,
+    // Touch (mobile browsers / tablets)
+    onTouchStart: startPress,
+    onTouchEnd: endPress,
+    onTouchCancel: endPress,
+    // Anti-drag / anti-selection while holding
     onDragStart: preventDefault,
     onContextMenu: preventDefault,
   };
@@ -315,12 +318,13 @@ function MicButtonWeb(props: {
   return (
     <View
       {...webProps}
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       style={[
         styles.micBtn,
-        listening ? styles.micBtnListening : null,
+        // Full RED background + red glow when listening (per user spec).
+        listening ? styles.micBtnRecording : null,
         disabled ? { opacity: 0.7 } : null,
-        // Disable text selection + tap highlight while holding.
+        // Disable text selection + tap highlight while holding, and tell
+        // the browser not to intercept the touch for scrolling/zooming.
         {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ...({
@@ -338,7 +342,15 @@ function MicButtonWeb(props: {
       testID="now-brief-mic"
     >
       {listening ? (
-        <Waveform level={micLevel} active />
+        // While holding: red button, mic icon, "Recording…" label, and
+        // waveform bars animated by mic level.
+        <View style={styles.recordingRow}>
+          <Ionicons name="mic" size={16} color="#FFFFFF" />
+          <Text style={styles.recordingText}>Recording…</Text>
+          <View style={styles.recordingWaveWrap}>
+            <Waveform level={micLevel} active />
+          </View>
+        </View>
       ) : (
         <>
           <Ionicons
@@ -1164,6 +1176,41 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255, 92, 122, 0.15)",
     borderColor: "#FF5C7A",
     borderWidth: 1,
+  },
+  // Full-red "Recording…" state used on web while the button is being
+  // held. The native Pressable already lights up correctly via
+  // micBtnListening; on web we go a step further and paint the whole
+  // pill red so the operator has an unmistakable hold indicator.
+  micBtnRecording: {
+    backgroundColor: "#FF3355",
+    borderColor: "#FF3355",
+    borderWidth: 0,
+    ...Platform.select({
+      web: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ boxShadow: "0 0 26px rgba(255,51,85,0.65)" } as any),
+      },
+      default: {
+        shadowColor: "#FF3355",
+        shadowOpacity: 0.65,
+        shadowRadius: 18,
+        shadowOffset: { width: 0, height: 0 },
+      },
+    }),
+  },
+  recordingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  recordingText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  recordingWaveWrap: {
+    marginLeft: 4,
   },
   micBtnText: {
     color: "#0A0A14",
