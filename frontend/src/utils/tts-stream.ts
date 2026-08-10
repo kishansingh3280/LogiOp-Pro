@@ -37,6 +37,10 @@ export type StreamingTtsOptions = {
   /** Called when the audio actually begins playing — useful to switch the
    * orb into "speaking" mode. */
   onStart?: () => void;
+  /** Called ONCE when the audio metadata has loaded and the total
+   * duration (in ms) is known. Callers can use this to re-time the
+   * ghost-typing / karaoke reveal so it matches the real narration. */
+  onDuration?: (durationMs: number) => void;
   /** Called on any error — the caller may want to display a toast. */
   onError?: (err: Error) => void;
   /** Optional auth token; when present, sent as Bearer. */
@@ -111,6 +115,7 @@ function _speakWeb(opts: StreamingTtsOptions): StreamingTtsHandle {
           },
           isCancelled: () => cancelled,
           onStart: opts.onStart,
+          onDuration: opts.onDuration,
         });
       } else {
         // Safari fallback — buffer, then play.
@@ -120,6 +125,13 @@ function _speakWeb(opts: StreamingTtsOptions): StreamingTtsHandle {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const el = new (window as any).Audio(url) as HTMLAudioElement;
         audioEl = el;
+        // Emit total duration as soon as the metadata is available so the
+        // caller can re-time character reveal to match the real audio.
+        el.onloadedmetadata = () => {
+          if (isFinite(el.duration) && el.duration > 0) {
+            opts.onDuration?.(el.duration * 1000);
+          }
+        };
         el.onplaying = () => opts.onStart?.();
         await el.play();
         await new Promise<void>((resolve) => {
@@ -142,6 +154,7 @@ async function _playViaMediaSource(
     onCreateAudio: (a: HTMLAudioElement) => void;
     isCancelled: () => boolean;
     onStart?: () => void;
+    onDuration?: (durationMs: number) => void;
   },
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -152,12 +165,22 @@ async function _playViaMediaSource(
   el.autoplay = true;
   el.src = URL.createObjectURL(mediaSource);
   let startedFired = false;
+  let durationFired = false;
   el.addEventListener("playing", () => {
     if (!startedFired) {
       startedFired = true;
       helpers.onStart?.();
     }
   });
+  const tryEmitDuration = () => {
+    if (durationFired) return;
+    if (isFinite(el.duration) && el.duration > 0) {
+      durationFired = true;
+      helpers.onDuration?.(el.duration * 1000);
+    }
+  };
+  el.addEventListener("loadedmetadata", tryEmitDuration);
+  el.addEventListener("durationchange", tryEmitDuration);
 
   const openPromise = new Promise<SourceBuffer>((resolve, reject) => {
     mediaSource.addEventListener("sourceopen", () => {

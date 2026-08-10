@@ -186,22 +186,64 @@ export function VoiceOrb() {
           <Text style={[styles.labelText, { color: stateColor }]}>{labelText}</Text>
         </View>
       ) : null}
-      {/* Long-press text panel — mini glass card ABOVE the orb. Opens
-          on 500ms hold so the operator can type when voice isn't
-          practical (loud environment / typing preferred). */}
+      {/* Long-press mini glass panel — bundles ALL orb controls in one
+          compact card so the operator can type, toggle mute, or start/
+          stop listening without needing separate UI surfaces. */}
       {panelOpen ? (
         <View style={styles.panel} testID="voice-orb-panel">
+          {/* Row 1 — text input full width */}
           <TextInput
             value={text}
             onChangeText={setText}
             placeholder="Wingman ko batao…"
-            placeholderTextColor="rgba(255,255,255,0.45)"
+            placeholderTextColor="rgba(255,255,255,0.55)"
             style={styles.panelInput}
             autoFocus
             multiline
             testID="voice-orb-panel-input"
+            onSubmitEditing={() => {
+              const clean = text.trim();
+              if (!clean) return;
+              if (!orb.isConnected) orb.toggle();
+              setTimeout(() => orb.sendText(clean), orb.isConnected ? 0 : 800);
+              setText("");
+            }}
           />
+          {/* Row 2 — action row: mic | mute | close | send */}
           <View style={styles.panelRow}>
+            {/* Mic toggle — starts/stops the realtime listening session */}
+            <TouchableOpacity
+              onPress={() => orb.toggle()}
+              style={[
+                styles.panelBtn,
+                orb.state === "listening" && styles.panelBtnActive,
+              ]}
+              testID="voice-orb-panel-mic"
+              accessibilityLabel={orb.isConnected ? "Stop listening" : "Start listening"}
+            >
+              <Ionicons
+                name={orb.state === "listening" ? "mic" : "mic-outline"}
+                size={16}
+                color={orb.state === "listening" ? "#0A0A14" : "#00F5FF"}
+              />
+            </TouchableOpacity>
+            {/* Mute — silences the AI narration/TTS globally */}
+            <TouchableOpacity
+              onPress={() => orb.toggleMute()}
+              style={[
+                styles.panelBtn,
+                orb.muted && styles.panelBtnMuted,
+              ]}
+              testID="voice-orb-panel-mute"
+              accessibilityLabel={orb.muted ? "Unmute AI voice" : "Mute AI voice"}
+            >
+              <Ionicons
+                name={orb.muted ? "volume-mute" : "volume-high"}
+                size={16}
+                color={orb.muted ? "#FF5C7A" : "#00FF88"}
+              />
+            </TouchableOpacity>
+            {/* Close panel */}
             <TouchableOpacity
               onPress={() => {
                 setPanelOpen(false);
@@ -209,25 +251,25 @@ export function VoiceOrb() {
               }}
               style={styles.panelBtn}
               testID="voice-orb-panel-close"
+              accessibilityLabel="Close panel"
             >
               <Ionicons name="close" size={16} color="#B98BFF" />
             </TouchableOpacity>
+            {/* Send — spacer + primary CTA */}
+            <View style={{ flex: 1 }} />
             <TouchableOpacity
               onPress={() => {
                 const clean = text.trim();
                 if (!clean) return;
-                // If not connected yet, open the realtime session first
-                // so the text has a channel to travel on.
                 if (!orb.isConnected) orb.toggle();
-                // Small delay to let the data channel open before we
-                // push the message. If disconnected, sendText is a no-op
-                // and we accept that as a graceful failure.
                 setTimeout(() => orb.sendText(clean), orb.isConnected ? 0 : 800);
                 setText("");
                 setPanelOpen(false);
               }}
               style={[styles.panelBtn, styles.panelSendBtn]}
               testID="voice-orb-panel-send"
+              accessibilityLabel="Send message"
+              disabled={!text.trim()}
             >
               <Ionicons name="arrow-up" size={16} color="#0A0A14" />
             </TouchableOpacity>
@@ -378,12 +420,14 @@ const styles = StyleSheet.create({
     borderRadius: 40,
   },
   panel: {
-    minWidth: 220,
-    maxWidth: 300,
+    minWidth: 260,
+    maxWidth: 320,
     padding: 10,
-    borderRadius: 14,
+    borderRadius: 16,
     marginBottom: 8,
-    backgroundColor: "rgba(24, 12, 44, 0.92)",
+    // Fallback base (50% opacity dark). Web gets the AI gradient over
+    // this layer via `backgroundImage` below.
+    backgroundColor: "rgba(24, 12, 44, 0.50)",
     borderColor: "rgba(155, 77, 255, 0.55)",
     borderWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
@@ -391,9 +435,10 @@ const styles = StyleSheet.create({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...({
           backgroundImage:
-            "linear-gradient(135deg, rgba(155,77,255,0.22) 0%, rgba(0,255,136,0.12) 50%, rgba(0,245,255,0.18) 100%)",
-          backdropFilter: "blur(18px)",
-          boxShadow: "0 8px 28px rgba(0,0,0,0.55)",
+            "linear-gradient(135deg, rgba(155,77,255,0.50) 0%, rgba(0,255,136,0.50) 50%, rgba(0,245,255,0.50) 100%)",
+          backdropFilter: "blur(22px) saturate(160%)",
+          WebkitBackdropFilter: "blur(22px) saturate(160%)",
+          boxShadow: "0 10px 32px rgba(0,0,0,0.55)",
         } as any),
       },
       default: {
@@ -409,24 +454,37 @@ const styles = StyleSheet.create({
     maxHeight: 88,
     color: "#FFFFFF",
     fontSize: 13,
-    paddingHorizontal: 6,
+    fontWeight: "500",
+    paddingHorizontal: 8,
     paddingVertical: 6,
+    backgroundColor: "rgba(0,0,0,0.25)",
+    borderRadius: 10,
+    borderColor: "rgba(255,255,255,0.15)",
+    borderWidth: StyleSheet.hairlineWidth,
   },
   panelRow: {
     flexDirection: "row",
-    justifyContent: "flex-end",
+    alignItems: "center",
     gap: 6,
-    marginTop: 4,
+    marginTop: 8,
   },
   panelBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(155,77,255,0.14)",
-    borderColor: "rgba(185,139,255,0.55)",
+    backgroundColor: "rgba(0,0,0,0.28)",
+    borderColor: "rgba(255,255,255,0.22)",
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  panelBtnActive: {
+    backgroundColor: "#00F5FF",
+    borderColor: "#00F5FF",
+  },
+  panelBtnMuted: {
+    backgroundColor: "rgba(255,92,122,0.18)",
+    borderColor: "rgba(255,92,122,0.6)",
   },
   panelSendBtn: {
     backgroundColor: "#00FF88",

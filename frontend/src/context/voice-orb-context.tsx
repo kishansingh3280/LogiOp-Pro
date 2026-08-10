@@ -5,6 +5,9 @@
  *   • Report its current route + a short data-summary via `setPageContext`
  *   • Read the live transcript + orb state so screens can (in Phase 2)
  *     ghost-fill forms driven by the model.
+ *   • Toggle a global `muted` flag that silences the AI narration
+ *     (TTS) coming out of Now Brief without touching the mic/text
+ *     flow. The Wingman TTS player subscribes to this flag.
  */
 import React, {
   createContext,
@@ -29,9 +32,12 @@ interface VoiceOrbCtx {
   transcript: TranscriptTurn[];
   error: string | null;
   page: string;
+  muted: boolean;
   setPageContext: (page: string, summary?: string) => void;
   toggle: () => void; // start or stop the realtime session
   sendText: (message: string) => void;
+  setMuted: (m: boolean) => void;
+  toggleMute: () => void;
 }
 
 const VoiceOrbContext = createContext<VoiceOrbCtx | null>(null);
@@ -39,6 +45,9 @@ const VoiceOrbContext = createContext<VoiceOrbCtx | null>(null);
 export function VoiceOrbProvider({ children }: { children: React.ReactNode }) {
   const rv = useRealtimeVoice();
   const [page, setPage] = useState<string>("dashboard");
+  // Global mute for Wingman narration. Default = muted (matches the old
+  // Now Brief default so nobody gets surprised by talking on load).
+  const [muted, setMuted] = useState<boolean>(true);
   const summaryRef = useRef<string>("");
 
   const setPageContext = useCallback((newPage: string, summary?: string) => {
@@ -54,6 +63,8 @@ export function VoiceOrbProvider({ children }: { children: React.ReactNode }) {
     rv.connect({ page, summary: summaryRef.current });
   }, [rv, page]);
 
+  const toggleMute = useCallback(() => setMuted((m) => !m), []);
+
   const value = useMemo<VoiceOrbCtx>(
     () => ({
       supported: rv.supported,
@@ -63,11 +74,14 @@ export function VoiceOrbProvider({ children }: { children: React.ReactNode }) {
       transcript: rv.transcript,
       error: rv.error,
       page,
+      muted,
       setPageContext,
       toggle,
       sendText: rv.sendText,
+      setMuted,
+      toggleMute,
     }),
-    [rv.supported, rv.isConnected, rv.state, rv.micLevel, rv.transcript, rv.error, page, setPageContext, toggle, rv.sendText],
+    [rv.supported, rv.isConnected, rv.state, rv.micLevel, rv.transcript, rv.error, page, muted, setPageContext, toggle, rv.sendText, toggleMute],
   );
 
   return <VoiceOrbContext.Provider value={value}>{children}</VoiceOrbContext.Provider>;
@@ -85,9 +99,12 @@ export function useVoiceOrb(): VoiceOrbCtx {
       transcript: [],
       error: null,
       page: "dashboard",
+      muted: true,
       setPageContext: () => undefined,
       toggle: () => undefined,
       sendText: () => undefined,
+      setMuted: () => undefined,
+      toggleMute: () => undefined,
     };
   }
   return ctx;

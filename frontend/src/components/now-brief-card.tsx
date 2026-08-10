@@ -520,7 +520,11 @@ export function NowBriefCard(props: Props) {
   const [aiText, setAiText] = useState<string>("");
   const [typeTarget, setTypeTarget] = useState<string>("");
   const [typing, setTyping] = useState<boolean>(false);
-  const [muted, setMuted] = useState<boolean>(true);
+  // Mute state now lives in the shared VoiceOrb context so the mute
+  // toggle inside the floating orb panel and the header mute toggle
+  // stay in perfect sync across the whole app.
+  const muted = voice.muted;
+  const setMuted = voice.setMuted;
   const [showText, setShowText] = useState<boolean>(false);
   const [textInput, setTextInput] = useState<string>("");
   const [history, setHistory] = useState<WingmanTurn[]>([]);
@@ -657,12 +661,18 @@ export function NowBriefCard(props: Props) {
 
       if (autoNarrate) {
         setUiState("speaking");
-        // Karaoke + typewriter share the same estimated TTS duration so
-        // characters appear at the exact pace they're being spoken.
+        // ------ Ghost typing / karaoke sync (Phase 2) ------
+        // 1. Start with a slow 45 ms-per-char fallback so text still
+        //    reveals even if TTS never comes online.
+        // 2. As soon as the streaming TTS reports its real duration,
+        //    restart the reveal so total-chars ÷ audio-duration hits
+        //    exactly aligns each character with the corresponding
+        //    spoken word.
         const words = clean.split(/\s+/).filter(Boolean).length;
-        const estMs = Math.max(1200, words * 260);
-        startTypewriter(clean, estMs);
-        startKaraoke(clean, estMs);
+        const fallbackMs = clean.length * 45;
+        const initialEst = Math.max(1200, fallbackMs);
+        startTypewriter(clean, initialEst);
+        startKaraoke(clean, initialEst);
         const handle = speakStreaming({
           text: clean,
           // Primary: ElevenLabs (voice ID set via backend ELEVENLABS_VOICE_ID
@@ -673,6 +683,13 @@ export function NowBriefCard(props: Props) {
           // We NEVER use the browser's built-in speechSynthesis.
           voice: "onyx",
           onStart: () => {},
+          // Re-time the reveal to match the ACTUAL narration length.
+          onDuration: (durMs) => {
+            if (durMs > 200) {
+              startTypewriter(clean, durMs);
+              startKaraoke(clean, durMs);
+            }
+          },
           onError: (err) => {
             // eslint-disable-next-line no-console
             console.warn("[wingman] TTS error:", err.message);
@@ -940,17 +957,11 @@ export function NowBriefCard(props: Props) {
   // Header actions.
   // -------------------------------------------------------------------
   const toggleMute = useCallback(() => {
-    setMuted((m) => {
-      const next = !m;
-      // If un-muting mid-speech, do nothing extra (audio keeps playing).
-      // If muting mid-speech, stop the current TTS.
-      if (!next === false) {
-        // muting
-        stopTts();
-      }
-      return next;
-    });
-  }, [stopTts]);
+    const next = !muted;
+    setMuted(next);
+    // If muting mid-speech, cut narration immediately.
+    if (next) stopTts();
+  }, [muted, setMuted, stopTts]);
 
   const onRefresh = useCallback(() => {
     if (uiState === "processing" || uiState === "responding" || uiState === "listening") return;
@@ -1069,7 +1080,12 @@ export function NowBriefCard(props: Props) {
         </TouchableOpacity>
       </View>
 
-      {/* ---------------- Response body — CHAT BUBBLES ---------------- */}
+      {/* ---------------- Response body — UNIFIED CHAT STREAM ----------
+          One vertical conversation. First AI bubble is the daily
+          brief (from `aiText`); subsequent turns come from `history`
+          (Wingman chat) and `voice.transcript` (Realtime).  There is
+          NO inner "brief box + chat box" wrapper — bubbles use the
+          entire card area for maximum vertical room. */}
       <ScrollView
         ref={scrollRef}
         style={styles.body}
@@ -1088,16 +1104,26 @@ export function NowBriefCard(props: Props) {
         }}
         scrollEventThrottle={64}
       >
-        {history.length === 0 && !aiText && uiState !== "processing" && uiState !== "error" ? (
-          <Text style={styles.bodyText}>
-            {`Namaste ${auth.user?.display_name || "Sir"}! 🙏 Neeche mic dabaake baat karein.`}
-          </Text>
+        {/* Daily brief as the FIRST AI bubble. It stays pinned at the
+            top of the conversation even after the user starts chatting,
+            so context is always visible. */}
+        {aiText ? (
+          <ChatBubble
+            role="assistant"
+            content={aiText}
+            speakingWordIdx={
+              uiState === "speaking" && history.length === 0 ? speakingWordIdx : -1
+            }
+            revealChars={
+              uiState === "speaking" && history.length === 0 ? revealChars : -1
+            }
+          />
         ) : null}
 
-        {/* Live realtime transcript (from the voice orb) — only shown
-            when the orb has an active OpenAI Realtime session. Renders
-            above the local Wingman history so the operator sees the
-            most recent voice turns immediately. */}
+        {/* Realtime voice orb transcript — appears inline with the
+            local Wingman history so the operator sees one continuous
+            conversation regardless of which channel produced each
+            turn. Small "LIVE" pill signals which transport is active. */}
         {voice.isConnected && voice.transcript.length > 0 ? (
           <>
             <View style={styles.liveTranscriptChip}>
@@ -1109,7 +1135,6 @@ export function NowBriefCard(props: Props) {
                 key={t.id}
                 role={t.role}
                 content={t.content || (t.role === "user" ? "…" : "…")}
-                // Karaoke reveal for the LAST assistant turn if still speaking.
                 speakingWordIdx={-1}
               />
             ))}
@@ -1126,24 +1151,11 @@ export function NowBriefCard(props: Props) {
               key={`${turn.at}-${i}`}
               role={turn.role}
               content={turn.content}
-              // Karaoke + typewriter reveal only on the latest assistant
-              // turn while narration is active.
               speakingWordIdx={isLatestAssistant && midNarration ? speakingWordIdx : -1}
               revealChars={isLatestAssistant && midNarration ? revealChars : -1}
             />
           );
         })}
-
-        {/* Show the "in-flight" assistant text (from daily-brief which
-            doesn't hit the history array). */}
-        {aiText && history.length === 0 ? (
-          <ChatBubble
-            role="assistant"
-            content={aiText}
-            speakingWordIdx={uiState === "speaking" ? speakingWordIdx : -1}
-            revealChars={uiState === "speaking" ? revealChars : -1}
-          />
-        ) : null}
 
         {uiState === "processing" ? (
           <View style={styles.thinkingRow}>
@@ -1165,6 +1177,21 @@ export function NowBriefCard(props: Props) {
               <Ionicons name="refresh" size={14} color={colors.accent} />
               <Text style={styles.retryText}>Retry</Text>
             </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {/* Empty-state hint — only when there truly is nothing to show. */}
+        {history.length === 0 &&
+        !aiText &&
+        (!voice.isConnected || voice.transcript.length === 0) &&
+        uiState !== "processing" &&
+        uiState !== "error" ? (
+          <View style={styles.emptyBubbleRow}>
+            <View style={styles.bubbleAi}>
+              <Text style={styles.bubbleText}>
+                {`Namaste ${auth.user?.display_name || "Sir"}! 🙏 Neeche mic dabaake baat karein.`}
+              </Text>
+            </View>
           </View>
         ) : null}
       </ScrollView>
@@ -1198,38 +1225,9 @@ export function NowBriefCard(props: Props) {
         </TouchableOpacity>
       ) : null}
 
-      {/* ---------------- Recent-history pills ---------------- */}
-      {recentPrompts.length > 0 ? (
-        <View style={styles.historyRow}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 6, paddingRight: 30 }}
-          >
-            {recentPrompts.map((p, i) => (
-              <TouchableOpacity
-                key={i}
-                onPress={() => replayTurn(i)}
-                style={styles.historyPill}
-                testID={`now-brief-history-${i}`}
-              >
-                <Ionicons name="chatbubble-ellipses" size={10} color={colors.accent} />
-                <Text style={styles.historyPillText} numberOfLines={1}>
-                  {p.content}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-          <TouchableOpacity
-            onPress={clearHistory}
-            hitSlop={8}
-            style={styles.historyClearBtn}
-            testID="now-brief-history-clear"
-          >
-            <Ionicons name="close-circle-outline" size={14} color={colors.textMuted} />
-          </TouchableOpacity>
-        </View>
-      ) : null}
+      {/* Recent-history pills REMOVED in Phase 2 — the unified chat
+          stream above already shows the full conversation, so we
+          don't need a duplicate horizontal shortcut row. */}
 
       {/* ---------------- Divider ---------------- */}
       <View style={styles.divider} />
@@ -1267,7 +1265,7 @@ const styles = StyleSheet.create({
       web: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...({
-          background:
+          backgroundImage:
             "linear-gradient(135deg, rgba(155,77,255,0.20) 0%, rgba(0,255,136,0.12) 40%, rgba(0,245,255,0.15) 80%, rgba(155,77,255,0.18) 100%)",
         } as any),
       },
@@ -1344,11 +1342,21 @@ const styles = StyleSheet.create({
   },
 
   body: {
-    maxHeight: 220,
+    // Larger chat area — Task 3: chat bubbles use the entire card
+    // area. Grow up to ~480px on tall screens; on short devices the
+    // ScrollView still scrolls beyond this.
+    minHeight: 260,
+    maxHeight: 480,
     marginBottom: 8,
   },
   bodyContent: {
     paddingRight: 4,
+    paddingBottom: 6,
+  },
+  emptyBubbleRow: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    marginBottom: 8,
   },
   bodyText: {
     color: colors.text,

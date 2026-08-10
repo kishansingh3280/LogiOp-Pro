@@ -16,7 +16,6 @@ import { tripCapacityKg } from "@/src/bullion/types";
 import { NowBriefCard } from "@/src/components/now-brief-card";
 import { DashboardCharts } from "@/src/components/dashboard-charts";
 import { ForexWidget } from "@/src/components/forex-widget";
-import { TripsVaultInfo } from "@/src/components/trips-vault-info";
 import { Card } from "@/src/components/ui";
 import { VaultSnapshotSection } from "@/src/components/vault-snapshot-section";
 import { useFY } from "@/src/context/fy-context";
@@ -335,10 +334,9 @@ export default function DashboardScreen() {
         />
         <AssetsOnHandCard txns={batches.data} onPress={() => router.push("/bullion" as never)} />
 
-        {/* Dashboard Phase 2 — Trips vault info: currency/gold/weight
-            rollup + per-trip breakdown for every carrier trip active in
-            the next few days. */}
-        <TripsVaultInfo trips={trips.data || []} txns={batches.data || []} />
+        {/* Note: legacy `TripsVaultInfo` widget removed in Phase 2 —
+            the VaultSnapshotSection 2-column card already exposes the
+            same India vs Bangkok bag/currency/gold rollup. */}
 
         {/* Dashboard Phase 2 — Analytics charts: shipments pie, 6-month
             revenue bar, and trips semi-donut. Rendered via inline

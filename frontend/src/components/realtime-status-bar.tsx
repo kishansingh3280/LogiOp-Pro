@@ -1,17 +1,22 @@
 /**
- * RealtimeStatusBar — top-of-screen overlay strip that surfaces the
- * latest AI message + orb state on every non-dashboard screen.
+ * RealtimeStatusBar — thin AI gradient strip pinned to the top of every
+ * NON-dashboard screen. Shows the current Wingman state + latest
+ * assistant message so the operator always knows what the AI is doing
+ * even after they navigate away from the dashboard.
  *
- * On the Dashboard the Now Brief card already shows the full transcript,
- * so this bar is auto-hidden there.
- *
- * Auto-dismiss: 4 seconds after the last assistant turn finishes
- * (state returns to `idle`). Tap × to dismiss immediately.
+ * Design spec (Phase 2):
+ *   • Full width, ~52 px tall, sits below the safe-area inset
+ *   • Background = AI gradient (purple → green → cyan) at 50% opacity so
+ *     the underlying screen is still visible through it
+ *   • Only a small orb icon + a single line of text — no chrome
+ *   • Auto-dismiss 4 s after the last activity finishes
+ *   • Hidden on the dashboard (Now Brief shows the full chat) and on
+ *     the sign-in screen (nothing to summarise there yet).
  */
 import { Ionicons } from "@expo/vector-icons";
 import { usePathname } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Animated, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useVoiceOrb } from "@/src/context/voice-orb-context";
@@ -23,8 +28,12 @@ export function RealtimeStatusBar() {
   const pathname = usePathname() || "";
   const insets = useSafeAreaInsets();
 
-  // Dashboard already shows the transcript inside NowBriefCard — skip.
-  const onDashboard = pathname === "/" || pathname === "/(tabs)" || pathname === "" || pathname === "/index";
+  const onDashboard =
+    pathname === "/" ||
+    pathname === "/(tabs)" ||
+    pathname === "" ||
+    pathname === "/index" ||
+    pathname === "/(tabs)/index";
   const onSignIn = pathname.includes("sign-in");
 
   const [dismissed, setDismissed] = useState(false);
@@ -32,7 +41,6 @@ export function RealtimeStatusBar() {
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const anim = useRef(new Animated.Value(0)).current;
 
-  // Latest assistant turn text used as the bar's message.
   const latestAssistant = useMemo(() => {
     for (let i = orb.transcript.length - 1; i >= 0; i--) {
       if (orb.transcript[i].role === "assistant") return orb.transcript[i];
@@ -42,8 +50,6 @@ export function RealtimeStatusBar() {
 
   const status = orb.state;
 
-  // Show whenever the orb is doing anything OR there's a fresh assistant
-  // message that hasn't been dismissed.
   useEffect(() => {
     if (onDashboard || onSignIn) {
       setVisible(false);
@@ -61,7 +67,6 @@ export function RealtimeStatusBar() {
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
       return;
     }
-    // Idle after activity — auto-dismiss after 4s unless already gone.
     if (latestAssistant && !dismissed) {
       setVisible(true);
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
@@ -82,13 +87,13 @@ export function RealtimeStatusBar() {
 
   const label =
     status === "connecting"
-      ? "Connecting…"
+      ? "Wingman connecting…"
       : status === "listening"
         ? "Sun raha hoon…"
         : status === "processing"
           ? "Soch raha hoon…"
           : status === "speaking"
-            ? (latestAssistant?.content || "Bol raha hoon…")
+            ? latestAssistant?.content || "Bol raha hoon…"
             : status === "error"
               ? "Dobara bolein"
               : latestAssistant?.content || "";
@@ -100,33 +105,31 @@ export function RealtimeStatusBar() {
       style={[
         styles.wrap,
         {
-          top: insets.top,
+          paddingTop: insets.top,
           opacity: anim,
           transform: [
-            { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-20, 0] }) },
+            { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-24, 0] }) },
           ],
           ...(Platform.OS === "web" ? ({ position: "fixed" } as any) : {}),
         },
       ]}
       testID="realtime-status-bar"
     >
-      <View style={styles.chip}>
-        <Ionicons name="sparkles" size={14} color="#B98BFF" />
-      </View>
-      <Text style={styles.text} numberOfLines={2}>
-        {label}
-      </Text>
-      <TouchableOpacity
+      <Pressable
         onPress={() => {
           setDismissed(true);
           setVisible(false);
         }}
-        hitSlop={10}
-        style={styles.close}
-        testID="realtime-status-close"
+        style={styles.inner}
+        accessibilityLabel="Dismiss Wingman status"
       >
-        <Ionicons name="close" size={14} color="rgba(255,255,255,0.7)" />
-      </TouchableOpacity>
+        <View style={styles.iconWrap}>
+          <Ionicons name="sparkles" size={14} color="#FFFFFF" />
+        </View>
+        <Text style={styles.text} numberOfLines={1}>
+          {label}
+        </Text>
+      </Pressable>
     </Animated.View>
   );
 }
@@ -134,60 +137,55 @@ export function RealtimeStatusBar() {
 const styles = StyleSheet.create({
   wrap: {
     position: "absolute",
-    left: 8,
-    right: 8,
+    top: 0,
+    left: 0,
+    right: 0,
     zIndex: 90,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 14,
-    backgroundColor: "rgba(24, 12, 44, 0.92)",
-    borderColor: "rgba(155, 77, 255, 0.55)",
-    borderWidth: StyleSheet.hairlineWidth,
+    // 50%-opacity AI gradient — see web block below for the actual
+    // gradient. Native falls back to a semi-transparent purple wash.
+    backgroundColor: "rgba(24, 12, 44, 0.50)",
     ...Platform.select({
       web: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ...({
           backgroundImage:
-            "linear-gradient(135deg, rgba(155,77,255,0.28) 0%, rgba(0,255,136,0.14) 50%, rgba(0,245,255,0.20) 100%)",
-          backdropFilter: "blur(16px)",
-          boxShadow: "0 8px 28px rgba(0,0,0,0.55)",
+            "linear-gradient(90deg, rgba(155,77,255,0.50) 0%, rgba(0,255,136,0.50) 50%, rgba(0,245,255,0.50) 100%)",
+          backdropFilter: "blur(14px) saturate(160%)",
+          WebkitBackdropFilter: "blur(14px) saturate(160%)",
         } as any),
       },
-      default: {
-        shadowColor: "#9B4DFF",
-        shadowOpacity: 0.45,
-        shadowRadius: 14,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 10,
-      },
+      default: {},
     }),
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255,255,255,0.20)",
   },
-  chip: {
+  inner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    height: 52,
+    paddingHorizontal: 14,
+  },
+  iconWrap: {
     width: 26,
     height: 26,
     borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(155,77,255,0.18)",
-    borderColor: "rgba(185,139,255,0.55)",
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderColor: "rgba(255,255,255,0.45)",
     borderWidth: StyleSheet.hairlineWidth,
   },
   text: {
     flex: 1,
     color: "#FFFFFF",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "700",
-    lineHeight: 17,
     letterSpacing: 0.2,
-  },
-  close: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
+    // High-contrast dark shadow so the text stays readable over the
+    // 50%-opacity multi-hue gradient background.
+    textShadowColor: "rgba(0,0,0,0.65)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
 });
