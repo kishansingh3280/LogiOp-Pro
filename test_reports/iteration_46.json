@@ -1,0 +1,32 @@
+{
+  "summary": "FY iteration frontend verification — all 9 primary assertions PASS. Dashboard header no longer renders CompanySwitcher/FYPicker (both moved to sidebar). Sidebar FY picker opens a modal listing FY 2026-27 (green 'CURRENT' tag) + FY 2025-26 / 2024-25 / 2023-24 (gold 'Read-only' tag). Selecting FY 2025-26 triggers client-side re-filter: Customer Will Pay changed ₹39,656→₹46,500 and You Pay Carrier changed ₹61,488.78→₹31,750, confirming FYContext propagates. Read-only banner (testID='fy-readonly-banner') appears with copy 'You are viewing FY 2025-26  (Read-only)' — no duplicate 'FY FY' — plus green CTA (testID='fy-banner-switch-current') 'Switch to FY 2026-27 →'. Banner is confirmed present on /shipments, /invoices and /ledger, and hidden when FY===2026-27. CTA click restores FY, hides banner instantly, and restores original totals. /sign-in has neither sidebar nor banner (AuthShell suppression works). No new console errors introduced by this iter — only pre-existing RN-Web deprecation warnings (shadow*/pointerEvents/textShadow*/useNativeDriver) and one 401 to ElevenLabs, all called out as pre-existing.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "FYBanner (desktop)", "issue": "Top-right notification bell (BlockerBell) sits with a high absolute z-index and visually overlaps the right edge of the 'Switch to FY 2026-27 →' CTA on desktop widths. Functionally the CTA is still tappable (verified click restored FY), but the last character of the arrow/label is partially occluded. Consider adding right padding to the FYBanner or moving BlockerBell below the banner. Reference: /app/frontend/src/components/fy-banner.tsx and /app/frontend/src/components/blocker-bell.tsx.", "testID": "fy-banner-switch-current", "priority": "P2"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard (FY 2025-26 read-only view)", "issues": ["Banner CTA visually clipped by notification bell overlay on desktop — see ui_bugs above. Functionality intact."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_46.json"],
+  "action_items": [
+    "(Optional P2) Add right padding / z-index handling so BlockerBell does not visually overlap the FYBanner CTA on wide viewports.",
+    "(Deferred per handoff note) Item 4 — per-screen edit-permission gating for older FYs (not tested here, flagged EXPECTED / deferred).",
+    "(Deferred per handoff note) Item 5 — global cache invalidation on mutating edits (not tested here, flagged EXPECTED / deferred)."
+  ],
+  "critical_code_review_comments": [
+    "fy-banner.tsx (lines 25-27): copy uses fyLabel(fy) which already prefixes 'FY ', so final banner reads 'You are viewing FY 2025-26 (Read-only)' — correct, no duplicate 'FY FY'. Verified in DOM.",
+    "fy-picker.tsx: CURRENT/Read-only tag rendering is clean and only depends on currentFYKey() comparison; no risk of both tags rendering on the same row.",
+    "_layout.tsx AuthShell mounts <FYBanner/> above screen children and is skipped on /sign-in — correct scoping."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only iter)", "frontend": "100% (9/9 assertions)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "This iter validates FY header cleanup + sidebar picker tags + global read-only banner. Deferred work: (4) per-screen edit gating and (5) cross-screen cache invalidation on mutations — those need dedicated iters. Known pre-existing noise: ElevenLabs 401, RN-Web shadow*/pointerEvents/textShadow*/useNativeDriver deprecation warnings, 'Invalid style property of background' console error — all present before this iter.",
+  "rca_of_issue": "N/A — no failing assertions."
+}

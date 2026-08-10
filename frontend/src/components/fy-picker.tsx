@@ -16,7 +16,7 @@ import {
 
 import { useFY } from "@/src/context/fy-context";
 import { colors, radii, spacing } from "@/src/theme";
-import { fyLabel, listFYKeys, type FYKey } from "@/src/utils/fy";
+import { currentFYKey, fyLabel, listFYKeys, type FYKey } from "@/src/utils/fy";
 
 interface Props {
   /** Optional earliest FY to include (e.g., date of first shipment). */
@@ -54,6 +54,7 @@ export function FYPicker({ earliest, compact }: Props) {
               <ScrollView style={{ maxHeight: 340 }}>
                 {options.map((k: FYKey) => {
                   const active = fy === k;
+                  const isCurrent = k === currentFYKey();
                   return (
                     <TouchableOpacity
                       key={k}
@@ -64,9 +65,20 @@ export function FYPicker({ earliest, compact }: Props) {
                       }}
                       testID={`fy-option-${k}`}
                     >
-                      <Text style={[styles.rowText, active && styles.rowTextActive]}>
-                        {fyLabel(k)}
-                      </Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                        <Text style={[styles.rowText, active && styles.rowTextActive]}>
+                          {fyLabel(k)}
+                        </Text>
+                        {isCurrent ? (
+                          <View style={styles.tagCurrent}>
+                            <Text style={styles.tagCurrentText}>CURRENT</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.tagReadonly}>
+                            <Text style={styles.tagReadonlyText}>Read-only</Text>
+                          </View>
+                        )}
+                      </View>
                       {active ? <Ionicons name="checkmark" size={16} color={colors.lime} /> : null}
                     </TouchableOpacity>
                   );
@@ -137,4 +149,20 @@ const styles = StyleSheet.create({
     backgroundColor: colors.chipBg,
   },
   cancelText: { color: colors.text, fontWeight: "700" },
+  tagCurrent: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: "#00FF88",
+  },
+  tagCurrentText: { color: "#000000", fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
+  tagReadonly: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,215,0,0.18)",
+    borderColor: "rgba(255,215,0,0.55)",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  tagReadonlyText: { color: "#FFD700", fontSize: 9, fontWeight: "800", letterSpacing: 0.4 },
 });

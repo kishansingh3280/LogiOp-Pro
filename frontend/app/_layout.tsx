@@ -9,6 +9,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "@/src/auth/context";
 import { AmbientBackground } from "@/src/components/ambient-background";
 import { BlockerBell } from "@/src/components/blocker-bell";
+import { FYBanner } from "@/src/components/fy-banner";
 import { GlassOverlay } from "@/src/components/glass-overlay";
 import { Sidebar } from "@/src/components/sidebar";
 import { ToastHost } from "@/src/components/toast";
@@ -112,6 +113,7 @@ function AuthShell({ children }: { children: React.ReactNode }) {
     <View style={{ flex: 1, flexDirection: "row" }}>
       {!onSignIn ? <Sidebar /> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
+        {!onSignIn ? <FYBanner /> : null}
         {children}
       </View>
     </View>

@@ -13,8 +13,6 @@ import { computeAssetTotals } from "@/src/bullion/AssetMap";
 import { useTrips, useTxns, usedWeightKgFor } from "@/src/bullion/store";
 import type { BullionTxn, CarrierTrip } from "@/src/bullion/types";
 import { tripCapacityKg } from "@/src/bullion/types";
-import { CompanySwitcher } from "@/src/components/company-switcher";
-import { FYPicker } from "@/src/components/fy-picker";
 import { NowBriefCard } from "@/src/components/now-brief-card";
 import { Card } from "@/src/components/ui";
 import { VaultSnapshotSection } from "@/src/components/vault-snapshot-section";
@@ -177,8 +175,6 @@ export default function DashboardScreen() {
             <Text style={styles.subtitle}>Live view of shipments, ledger and warehouse.</Text>
           </View>
           <View style={{ gap: 8, alignItems: "flex-end" }}>
-            <CompanySwitcher />
-            <FYPicker earliest="2024-04-01" />
             {pending > 0 ? (
               <TouchableOpacity style={styles.badge} onPress={onRefresh} testID="sync-badge">
                 <Ionicons name="cloud-upload-outline" size={14} color={colors.lime} />
