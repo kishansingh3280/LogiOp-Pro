@@ -9,7 +9,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "@/src/auth/context";
 import { AmbientBackground } from "@/src/components/ambient-background";
 import { BlockerBell } from "@/src/components/blocker-bell";
-import { FloatingJarvis } from "@/src/components/floating-jarvis";
 import { GlassOverlay } from "@/src/components/glass-overlay";
 import { Sidebar } from "@/src/components/sidebar";
 import { ToastHost } from "@/src/components/toast";
@@ -141,7 +140,6 @@ export default function RootLayout() {
                       </AuthShell>
                     </AuthGate>
                     <BlockerBell />
-                    <FloatingJarvis />
                     <ToastHost />
                   </SidebarProvider>
                 </GhostUserProvider>

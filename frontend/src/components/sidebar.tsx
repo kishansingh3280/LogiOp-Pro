@@ -259,12 +259,15 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
           router.push("/notifications" as any);
           onNavigate?.();
         }} />
-        <BottomAction icon="settings-outline" label="Settings" showLabel={showLabels} onPress={() => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          router.push("/admin" as any);
-          onNavigate?.();
-        }} />
-        <View style={styles.userRow}>
+        <Pressable
+          style={styles.userRow}
+          onPress={() => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            router.push("/admin" as any);
+            onNavigate?.();
+          }}
+          testID="sidebar-profile"
+        >
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>
               {(user?.display_name?.[0] || "K").toUpperCase()}
@@ -278,7 +281,7 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
               <Text style={styles.userRole} numberOfLines={1}>{user?.role || "admin"}</Text>
             </View>
           ) : null}
-        </View>
+        </Pressable>
       </View>
     </View>
   );

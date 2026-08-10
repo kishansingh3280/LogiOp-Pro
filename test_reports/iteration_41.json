@@ -1,0 +1,33 @@
+{
+  "summary": "Verified 3 removals (Settings from sidebar, Ledger from More, FloatingJarvis component). All 8 acceptance criteria PASS on both mobile (390x844) and tablet (1280x800). No Metro resolve errors, no new console errors introduced.",
+  "test_results": {
+    "signin_no_crash": "PASS - demo quick login worked, dashboard loaded",
+    "mobile_drawer_no_sidebar_settings": "PASS - [data-testid='sidebar-settings'] ABSENT in DOM",
+    "mobile_drawer_shows_notifications_and_profile": "PASS - both testIDs present",
+    "profile_tap_navigates_to_admin": "PASS - clicking [data-testid='sidebar-profile'] routed to /admin (Admin Console rendered)",
+    "tablet_docked_sidebar_no_settings": "PASS - sidebar-dock present, sidebar-settings ABSENT, notifications+profile PRESENT",
+    "more_screen_no_ledger_row": "PASS - [data-testid='more-ledger'] ABSENT; other rows (parties, items, warehouses, reports, lalamove) all PRESENT",
+    "floating_jarvis_absent_all_routes": "PASS - [data-testid='floating-jarvis'] ABSENT on /, /shipments, /invoices, /bullion, /more, /sign-in",
+    "no_metro_resolve_errors": "PASS - grep confirmed 0 'Unable to resolve module' or floating-jarvis errors in console; component file /app/frontend/src/components/floating-jarvis.tsx confirmed deleted",
+    "no_new_console_errors": "PASS - only pre-existing GoldAPI 403 warning (documented as unrelated)"
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_41.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Comment-only references to 'FloatingJarvis' remain in (tabs)/assistant.tsx line 5, (tabs)/bullion.tsx line 979 (zIndex comment), and src/components/jarvis-store.ts line 3 — these are documentation strings only, no imports, safe to leave (as noted by main agent).",
+    "Sidebar NAV_ITEMS still contains 'Ledger' nav row (line 79 of sidebar.tsx) — this is correct per spec (Ledger stays in sidebar, only removed from More screen)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only test)", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 3 removals verified end-to-end via browser automation with kishan/demo login on mobile 390x844 and tablet 1280x800. Screenshots in /tmp/01_signin.png through /tmp/06_tablet.png confirm visual state — mobile drawer bottom section shows only Notifications bell + Kishan Sir profile row, no Settings gear icon. Profile tap successfully navigates to /admin. More screen shows Business rows without Ledger. No floating cyan bubble on any screen."
+}

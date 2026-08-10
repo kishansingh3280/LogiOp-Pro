@@ -48,7 +48,6 @@ export default function MoreScreen() {
         { key: "parties", label: "Parties", icon: "people-outline", href: "/parties" },
         { key: "items", label: "Items catalog", icon: "pricetags-outline", href: "/items" },
         { key: "warehouses", label: "Warehouses", icon: "business-outline", href: "/warehouses" },
-        { key: "ledger", label: "Ledger", icon: "book-outline", href: "/ledger" },
         { key: "reports", label: "Reports console", icon: "document-text-outline", href: "/reports", hint: "PDFs · invoices · packing · bullion" },
       ],
     },
