@@ -13,6 +13,7 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -38,6 +39,14 @@ interface VoiceOrbCtx {
   sendText: (message: string) => void;
   setMuted: (m: boolean) => void;
   toggleMute: () => void;
+  /** Broadcast a floating cloud-bubble notification above the OPSI orb.
+   * The VoiceOrb component subscribes to this signal via a shared queue. */
+  pushBubble: (message: string) => void;
+  /** Read-only counter incremented every time `pushBubble` is called —
+   * VoiceOrb watches this to show the newest message. */
+  bubbleTick: number;
+  /** Latest broadcast message (paired with `bubbleTick`). */
+  bubbleMessage: string;
 }
 
 const VoiceOrbContext = createContext<VoiceOrbCtx | null>(null);
@@ -65,6 +74,34 @@ export function VoiceOrbProvider({ children }: { children: React.ReactNode }) {
 
   const toggleMute = useCallback(() => setMuted((m) => !m), []);
 
+  // ─── OPSI Cloud Bubble broadcast queue ────────────────────────────
+  // Any component can call `pushBubble(msg)` to surface a floating pill
+  // above the orb (e.g., when Wingman writes a new invoice, when
+  // WhatsApp/LINE receives an inbound reply, or when the operator
+  // completes a critical action). VoiceOrb watches `bubbleTick` and
+  // renders the newest `bubbleMessage`.
+  const [bubbleTick, setBubbleTick] = useState(0);
+  const [bubbleMessage, setBubbleMessage] = useState("");
+  const pushBubble = useCallback((message: string) => {
+    const trimmed = String(message || "").trim();
+    if (!trimmed) return;
+    setBubbleMessage(trimmed);
+    setBubbleTick((t) => t + 1);
+  }, []);
+
+  // Web-only debug hook — lets you fire a bubble from browser devtools
+  // via `window.__opsiBubble("Hello Sir")`. Handy for QA & demos; no-op
+  // on native platforms because `window` is undefined there.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).__opsiBubble = pushBubble;
+    return () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      try { delete (window as any).__opsiBubble; } catch { /* ignore */ }
+    };
+  }, [pushBubble]);
+
   const value = useMemo<VoiceOrbCtx>(
     () => ({
       supported: rv.supported,
@@ -80,8 +117,11 @@ export function VoiceOrbProvider({ children }: { children: React.ReactNode }) {
       sendText: rv.sendText,
       setMuted,
       toggleMute,
+      pushBubble,
+      bubbleTick,
+      bubbleMessage,
     }),
-    [rv.supported, rv.isConnected, rv.state, rv.micLevel, rv.transcript, rv.error, page, muted, setPageContext, toggle, rv.sendText, toggleMute],
+    [rv.supported, rv.isConnected, rv.state, rv.micLevel, rv.transcript, rv.error, page, muted, setPageContext, toggle, rv.sendText, toggleMute, pushBubble, bubbleTick, bubbleMessage],
   );
 
   return <VoiceOrbContext.Provider value={value}>{children}</VoiceOrbContext.Provider>;
@@ -105,6 +145,9 @@ export function useVoiceOrb(): VoiceOrbCtx {
       sendText: () => undefined,
       setMuted: () => undefined,
       toggleMute: () => undefined,
+      pushBubble: () => undefined,
+      bubbleTick: 0,
+      bubbleMessage: "",
     };
   }
   return ctx;

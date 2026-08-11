@@ -212,7 +212,7 @@ export default function DashboardScreen() {
             Row 4: Bangkok Warehouse (full width)
             Row 5+: Vault Snapshot + Delivered/In-Transit/Pending carousel */}
 
-        {/* ---------------- Row 1 — Ledger snapshot (Customer + Carrier) --------- */}
+        {/* ---------------- Row 1 — Ledger snapshot (Aapko Milega + Aapko Dena Hai) --------- */}
         <View style={[styles.row, styles.rowTablet]}>
           <View style={[styles.col, styles.colTablet]}>
             <TouchableOpacity
@@ -220,13 +220,13 @@ export default function DashboardScreen() {
               onPress={() => router.push("/ledger")}
               testID="ledger-get-card"
             >
-              <Card style={styles.ledgerCard}>
+              <Card style={[styles.ledgerCard, { backgroundColor: "rgba(0,255,136,0.15)", borderColor: "rgba(0,255,136,0.35)" }]}>
                 <View style={styles.ledgerHeader}>
-                  <View style={[styles.ledgerDot, { backgroundColor: colors.ok }]} />
-                  <Text style={styles.ledgerLabel}>Customer will pay</Text>
+                  <View style={[styles.ledgerDot, { backgroundColor: "#00FF88" }]} />
+                  <Text style={[styles.ledgerLabel, { color: "#00FF88" }]}>Aapko Milega</Text>
                 </View>
-                <Text style={styles.ledgerBig} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.receivable.inr, "INR")}</Text>
-                <Text style={styles.ledgerAlt} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.receivable.thb, "THB")}</Text>
+                <Text style={[styles.ledgerBig, { color: "#00FF88" }]} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.receivable.inr, "INR")}</Text>
+                <Text style={[styles.ledgerAlt, { color: "#00FF88AA" }]} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.receivable.thb, "THB")}</Text>
                 {ledger.data?.top_get?.[0] ? (
                   <Text style={styles.ledgerHint} numberOfLines={1}>
                     Top: {ledger.data.top_get[0].name}
@@ -241,13 +241,13 @@ export default function DashboardScreen() {
               onPress={() => router.push("/ledger")}
               testID="ledger-give-card"
             >
-              <Card style={styles.ledgerCard}>
+              <Card style={[styles.ledgerCard, { backgroundColor: "rgba(255,68,68,0.15)", borderColor: "rgba(255,68,68,0.35)" }]}>
                 <View style={styles.ledgerHeader}>
-                  <View style={[styles.ledgerDot, { backgroundColor: colors.danger }]} />
-                  <Text style={styles.ledgerLabel}>You pay carrier</Text>
+                  <View style={[styles.ledgerDot, { backgroundColor: "#FF4444" }]} />
+                  <Text style={[styles.ledgerLabel, { color: "#FF4444" }]}>Aapko Dena Hai</Text>
                 </View>
-                <Text style={styles.ledgerBig} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.payable.inr, "INR")}</Text>
-                <Text style={styles.ledgerAlt} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.payable.thb, "THB")}</Text>
+                <Text style={[styles.ledgerBig, { color: "#FF4444" }]} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.payable.inr, "INR")}</Text>
+                <Text style={[styles.ledgerAlt, { color: "#FF4444AA" }]} numberOfLines={1} adjustsFontSizeToFit>{fmtCurrency(fyLedger.payable.thb, "THB")}</Text>
                 {ledger.data?.top_give?.[0] ? (
                   <Text style={styles.ledgerHint} numberOfLines={1}>
                     Top: {ledger.data.top_give[0].name}

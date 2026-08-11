@@ -180,6 +180,13 @@ export interface ShipmentBag {
   bag_no: string;
   shipment_id: string;
   end_customer_id?: string | null;
+  /**
+   * Per-bag carrier assignment. When set, this bag ships with a
+   * different carrier from the parent shipment's `carrier_party_id`
+   * — enabling multi-carrier splits inside a single consignment.
+   * Nullable so legacy bags fall back to the shipment-level carrier.
+   */
+  carrier_party_id?: string | null;
   items: {
     description: string;
     item_id?: string | null;

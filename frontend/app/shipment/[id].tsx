@@ -5,6 +5,7 @@ import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -15,7 +16,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiDelete, apiPost, apiPut } from "@/src/api/client";
+import { API_BASE, apiDelete, apiPost, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type {
   Invoice,
@@ -29,6 +30,7 @@ import type {
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
 import { generatePackingListPdf } from "@/src/utils/packing-list-pdf";
+import { ShareActionBar } from "@/src/components/share-action-bar";
 import { usePapaMode } from "@/src/hooks/use-papa-mode";
 import { useFYEditGate } from "@/src/hooks/use-fy-edit-gate";
 
@@ -135,6 +137,7 @@ export default function ShipmentDetail({
 
   const [busy, setBusy] = useState(false);
   const [bookResult, setBookResult] = useState<BookResult[] | null>(null);
+  const [shareLoading, setShareLoading] = useState<string | null>(null);
   // Filter state — "all" or a specific party ID
   const [partyFilter, setPartyFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -144,6 +147,16 @@ export default function ShipmentDetail({
     (parties.data || []).forEach((p) => (m[p.id] = p));
     return m;
   }, [parties.data]);
+
+  // ─── Multi-carrier per-bag ──────────────────────────────────────
+  // Curated list of carrier-role parties, used by BagCard to pop up an
+  // "Assign carrier" picker for each bag. Includes the parent shipment's
+  // carrier at the top so operators can quickly re-align a bag with the
+  // default carrier without hunting through the full party list.
+  const carriers = useMemo(
+    () => (parties.data || []).filter((p) => p.role === "carrier"),
+    [parties.data],
+  );
 
   const itemMap = useMemo(() => {
     const m: Record<string, Item> = {};
@@ -565,6 +578,98 @@ export default function ShipmentDetail({
           </View>
         </LinearGradient>
 
+        {/* Share action bar — PDF · WhatsApp · LINE · Email */}
+        <ShareActionBar
+          loading={shareLoading}
+          onPdf={async () => {
+            if (!shipment.data) return;
+            setShareLoading("pdf");
+            try {
+              await generatePackingListPdf({
+                shipment: shipment.data,
+                bags: bagList,
+                parties: parties.data || [],
+              });
+            } catch (e) {
+              console.warn("[packing-pdf] failed:", e);
+            } finally {
+              setShareLoading(null);
+            }
+          }}
+          onWhatsapp={async () => {
+            const customer = (parties.data || []).find(
+              (p) => p.id === (s.customer_party_id || s.party_id),
+            );
+            if (!customer?.phone) {
+              Alert.alert("No phone", "Customer ka WhatsApp number save nahi hai.");
+              return;
+            }
+            setShareLoading("whatsapp");
+            try {
+              await fetch(`${API_BASE}/api/whatsapp/send`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  to_phone: customer.phone,
+                  message: `Shipment ${s.consignment_no} — ${s.origin || "?"} → ${s.destination || "?"}, ${bagList.length} bags. Status: ${s.status}. LogiOp Pro.`,
+                  party_id: customer.id,
+                  party_name: customer.name,
+                }),
+              });
+              Alert.alert("Queued", `WhatsApp to ${customer.name} queued.`);
+            } catch (e) {
+              Alert.alert("Failed", String(e));
+            } finally {
+              setShareLoading(null);
+            }
+          }}
+          onLine={async () => {
+            const customer = (parties.data || []).find(
+              (p) => p.id === (s.customer_party_id || s.party_id),
+            );
+            const lineId = (customer as unknown as { line_id?: string })?.line_id;
+            if (!lineId) {
+              Alert.alert("No LINE ID", "Customer ka LINE user id save nahi hai.");
+              return;
+            }
+            setShareLoading("line");
+            try {
+              await fetch(`${API_BASE}/api/line/send`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  to_line_id: lineId,
+                  message: `Shipment ${s.consignment_no} — ${s.origin || "?"} → ${s.destination || "?"}, ${bagList.length} bags. Status: ${s.status}.`,
+                  party_id: customer?.id,
+                  party_name: customer?.name,
+                }),
+              });
+              Alert.alert("Queued", `LINE to ${customer?.name || "customer"} queued.`);
+            } catch (e) {
+              Alert.alert("Failed", String(e));
+            } finally {
+              setShareLoading(null);
+            }
+          }}
+          onEmail={() => {
+            const customer = (parties.data || []).find(
+              (p) => p.id === (s.customer_party_id || s.party_id),
+            );
+            const email = (customer as unknown as { email?: string })?.email;
+            if (!email) {
+              Alert.alert("No email", "Customer ka email save nahi hai.");
+              return;
+            }
+            const subject = encodeURIComponent(`Shipment ${s.consignment_no}`);
+            const body = encodeURIComponent(
+              `Namaste ${customer?.name || ""},\n\nYour shipment ${s.consignment_no} is ${s.status}.\nRoute: ${s.origin || "?"} → ${s.destination || "?"}\nBags: ${bagList.length}\n\nRegards,\nLogiOp Pro`,
+            );
+            Linking.openURL(`mailto:${email}?subject=${subject}&body=${body}`).catch(() => {
+              Alert.alert("Failed", "Email client nahi khula.");
+            });
+          }}
+        />
+
         {/* ============================================================
              Party Filter Carousel
            ============================================================ */}
@@ -737,6 +842,19 @@ export default function ShipmentDetail({
                 itemMap={itemMap}
                 currency={s.freight_currency}
                 showLalamove={inWarehouse}
+                carriers={carriers}
+                shipmentCarrierId={s.carrier_party_id || null}
+                onAssignCarrier={async (carrierId) => {
+                  try {
+                    await apiPut(`/api/bags/${bag.id}`, {
+                      carrier_party_id: carrierId,
+                    });
+                    // Optimistic refresh
+                    bags.refresh();
+                  } catch (e) {
+                    Alert.alert("Failed", (e as Error).message);
+                  }
+                }}
                 onOpenParty={(pid) => router.push(`/party/${pid}` as never)}
                 onBookLalamove={(ecId, bagId) =>
                   router.push(`/lalamove?shipmentId=${s.id}&bagId=${bagId}&endCustomerId=${ecId}` as never)
@@ -1034,6 +1152,9 @@ function BagCard({
   itemMap,
   currency,
   showLalamove,
+  carriers,
+  shipmentCarrierId,
+  onAssignCarrier,
   onOpenParty,
   onBookLalamove,
   busy,
@@ -1043,6 +1164,9 @@ function BagCard({
   itemMap: Record<string, Item>;
   currency: "INR" | "THB" | string;
   showLalamove: boolean;
+  carriers: Party[];
+  shipmentCarrierId: string | null;
+  onAssignCarrier: (carrierId: string | null) => void;
   onOpenParty: (id: string) => void;
   onBookLalamove: (endCustomerId: string, bagId: string) => void;
   busy: boolean;
@@ -1051,6 +1175,37 @@ function BagCard({
   const tone = toneFor(bag.status || "packed");
   const pieces = (bag.items || []).reduce((s, it) => s + (it.quantity || 0), 0);
   const canBook = !!(endCustomer?.phone && endCustomer?.lat && endCustomer?.lng);
+
+  // Effective carrier for this bag — per-bag override wins; falls back
+  // to the parent shipment's default carrier. Empty state gets an
+  // "Assign carrier" affordance.
+  const effectiveCarrierId = bag.carrier_party_id || shipmentCarrierId;
+  const effectiveCarrier = effectiveCarrierId ? partyMap[effectiveCarrierId] : undefined;
+  const carrierIsOverride = !!bag.carrier_party_id;
+
+  const openCarrierPicker = () => {
+    // Prefer native alert-based single-select for cross-platform sanity.
+    const opts = carriers.map((c) => ({
+      text: `${c.name}${shipmentCarrierId === c.id ? " · Default" : ""}`,
+      onPress: () => onAssignCarrier(c.id),
+    }));
+    if (carrierIsOverride) {
+      opts.unshift({
+        text: "Use shipment default",
+        onPress: () => onAssignCarrier(null),
+      });
+    }
+    Alert.alert(
+      `Bag ${bag.bag_no} — carrier`,
+      effectiveCarrier
+        ? `Current: ${effectiveCarrier.name}${carrierIsOverride ? "" : " (default)"}`
+        : "No carrier assigned",
+      [
+        ...opts,
+        { text: "Cancel", style: "cancel" as const },
+      ],
+    );
+  };
 
   return (
     <View style={styles.bagCard} testID={`bag-${bag.bag_no}`}>
@@ -1071,6 +1226,42 @@ function BagCard({
           <Text style={[styles.statusChipTextSm, { color: tone.fg }]}>{tone.label}</Text>
         </View>
       </View>
+
+      {/* Multi-carrier assignment chip — tap to pick a carrier for THIS
+          bag. Overrides the parent shipment's carrier when set. */}
+      {carriers.length > 0 ? (
+        <TouchableOpacity
+          style={[
+            styles.bagCarrierChip,
+            carrierIsOverride && styles.bagCarrierChipOverride,
+            !effectiveCarrier && styles.bagCarrierChipEmpty,
+          ]}
+          onPress={openCarrierPicker}
+          testID={`bag-carrier-${bag.bag_no}`}
+          activeOpacity={0.75}
+        >
+          <Ionicons
+            name={effectiveCarrier ? "car-outline" : "help-circle-outline"}
+            size={12}
+            color={effectiveCarrier ? colors.accent : colors.warn}
+          />
+          <Text
+            style={[
+              styles.bagCarrierChipText,
+              !effectiveCarrier && { color: colors.warn },
+            ]}
+            numberOfLines={1}
+          >
+            {effectiveCarrier ? effectiveCarrier.name : "Assign carrier"}
+          </Text>
+          {carrierIsOverride ? (
+            <Text style={styles.bagCarrierOverrideTag}>OVR</Text>
+          ) : effectiveCarrier ? (
+            <Text style={styles.bagCarrierDefaultTag}>DEFAULT</Text>
+          ) : null}
+          <Ionicons name="chevron-forward" size={11} color={colors.textDim} />
+        </TouchableOpacity>
+      ) : null}
 
       {/* End customer block */}
       <TouchableOpacity
@@ -1730,6 +1921,57 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "800",
     letterSpacing: 0.4,
+  },
+
+  // ─── Multi-carrier per-bag chip ────────────────────────────────
+  bagCarrierChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+    backgroundColor: "rgba(0,209,255,0.06)",
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  bagCarrierChipOverride: {
+    backgroundColor: "rgba(155,77,255,0.12)",
+    borderColor: "#9B4DFF",
+  },
+  bagCarrierChipEmpty: {
+    backgroundColor: "rgba(245,158,11,0.08)",
+    borderColor: colors.warn,
+  },
+  bagCarrierChipText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  bagCarrierOverrideTag: {
+    color: "#9B4DFF",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 3,
+    backgroundColor: "rgba(155,77,255,0.14)",
+    borderColor: "rgba(155,77,255,0.4)",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  bagCarrierDefaultTag: {
+    color: colors.textDim,
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
   },
 
   ecBlock: {

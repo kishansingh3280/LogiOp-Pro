@@ -18,6 +18,14 @@ import { fmtCurrency } from "@/src/utils/format";
 export type InvoicePdfInput = {
   invoice: Invoice;
   party?: Party | null;
+  shipTo?: {
+    name?: string;
+    address?: string;
+    country?: string;
+    phone?: string;
+    consignment_no?: string;
+    route?: string;
+  } | null;
   company?: {
     name: string;
     address?: string;
@@ -49,14 +57,15 @@ function esc(s: unknown): string {
  * Build an HTML string that expo-print renders to PDF. Kept simple —
  * no external CSS or images so the doc is fully self-contained.
  */
-function buildHtml({ invoice, party, company }: Required<Pick<InvoicePdfInput, "invoice">> & Pick<InvoicePdfInput, "party" | "company">): string {
+function buildHtml({ invoice, party, shipTo, company }: Required<Pick<InvoicePdfInput, "invoice">> & Pick<InvoicePdfInput, "party" | "shipTo" | "company">): string {
   const co = { ...DEFAULT_COMPANY, ...(company || {}) };
   const total = fmtCurrency(invoice.total || 0, invoice.currency);
   const subtotal = fmtCurrency(invoice.subtotal ?? invoice.total ?? 0, invoice.currency);
-  const tax = fmtCurrency(invoice.tax || 0, invoice.currency);
-  const items = (invoice.items || []).map((it) => `
+  // Tax line removed per Absolute Final spec — simple Items + Subtotal = Total.
+  const items = (invoice.items || []).map((it, idx) => `
       <tr>
-        <td>${esc(it.description)}</td>
+        <td class="num">${idx + 1}</td>
+        <td>${esc(it.description)}${it.unit ? ` <span class="unit">${esc(it.unit)}</span>` : ""}</td>
         <td class="num">${esc(it.quantity ?? 1)}</td>
         <td class="num">${fmtCurrency(it.rate || 0, invoice.currency)}</td>
         <td class="num">${fmtCurrency((it.quantity || 1) * (it.rate || 0), invoice.currency)}</td>
@@ -94,6 +103,7 @@ function buildHtml({ invoice, party, company }: Required<Pick<InvoicePdfInput, "
   .status.sent { background: #DBEAFE; color: #1E3A8A; }
   .status.draft { background: #FEF3C7; color: #78350F; }
   .status.cancelled { background: #FEE2E2; color: #7F1D1D; }
+  .unit { color: #999; font-size: 10px; font-style: italic; margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -121,6 +131,19 @@ function buildHtml({ invoice, party, company }: Required<Pick<InvoicePdfInput, "
         ${party?.address ? esc(party.address) : ""}
         ${party?.country ? "<br/>" + esc(party.country) : ""}
         ${party?.phone ? "<br/>" + esc(party.phone) : ""}
+        ${party?.gstin ? "<br/>GSTIN " + esc(party.gstin) : ""}
+      </div>
+    </div>
+    <div class="col">
+      <div class="label">Ship To</div>
+      <div class="value">${esc(shipTo?.name || party?.name || "—")}</div>
+      <div class="co-meta">
+        ${shipTo?.address ? esc(shipTo.address) + "<br/>" : ""}
+        ${shipTo?.country ? esc(shipTo.country) + "<br/>" : ""}
+        ${shipTo?.phone ? "📞 " + esc(shipTo.phone) + "<br/>" : ""}
+        ${shipTo?.route ? "Route: " + esc(shipTo.route) + "<br/>" : ""}
+        ${shipTo?.consignment_no ? "Consignment " + esc(shipTo.consignment_no) : ""}
+        ${!shipTo?.name && !shipTo?.address && !shipTo?.route ? "<i>Same as Bill To</i>" : ""}
       </div>
     </div>
   </div>
@@ -128,6 +151,7 @@ function buildHtml({ invoice, party, company }: Required<Pick<InvoicePdfInput, "
   <table>
     <thead>
       <tr>
+        <th class="num">#</th>
         <th>Description</th>
         <th class="num">Qty</th>
         <th class="num">Rate</th>
@@ -135,13 +159,13 @@ function buildHtml({ invoice, party, company }: Required<Pick<InvoicePdfInput, "
       </tr>
     </thead>
     <tbody>
-      ${items || `<tr><td colspan="4" style="text-align:center;color:#999">No line items</td></tr>`}
+      ${items || `<tr><td colspan="5" style="text-align:center;color:#999">No line items</td></tr>`}
     </tbody>
   </table>
 
   <div class="totals">
     <div class="line"><div>Subtotal</div><div>${subtotal}</div></div>
-    ${invoice.tax ? `<div class="line"><div>Tax</div><div>${tax}</div></div>` : ""}
+    <!-- Tax removed per Absolute Final spec -->
     <div class="line grand"><div>Total</div><div>${total}</div></div>
   </div>
 
@@ -163,7 +187,7 @@ function buildHtml({ invoice, party, company }: Required<Pick<InvoicePdfInput, "
  * with a friendly `Invoice_<number>.pdf` name and pops a share sheet.
  */
 export async function generateInvoicePdf(input: InvoicePdfInput): Promise<{ uri?: string; shared?: boolean }> {
-  const html = buildHtml({ invoice: input.invoice, party: input.party, company: input.company });
+  const html = buildHtml({ invoice: input.invoice, party: input.party, shipTo: input.shipTo, company: input.company });
 
   if (Platform.OS === "web") {
     // Web: use expo-print's print dialog directly. Users can Save-as-PDF.

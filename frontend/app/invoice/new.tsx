@@ -218,8 +218,9 @@ export default function NewInvoiceScreen() {
     () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.rate || 0), 0),
     [lines],
   );
-  const tax = (subtotal * Number(taxPct || 0)) / 100;
-  const total = subtotal + tax;
+  // Tax removed per Absolute Final spec — invoices now show simple
+  // Items + Subtotal = Total (no line item for tax).
+  const total = subtotal;
 
   const currentParty = (parties.data || []).find((p) => p.id === partyId);
 
@@ -528,15 +529,6 @@ export default function NewInvoiceScreen() {
             );
           })}
 
-          <Field label="Tax %">
-            <TextInput
-              style={styles.input}
-              keyboardType="decimal-pad"
-              value={taxPct}
-              onChangeText={setTaxPct}
-            />
-          </Field>
-
           <Field label="Notes">
             <TextInput
               style={[styles.input, styles.multiline]}
@@ -552,10 +544,6 @@ export default function NewInvoiceScreen() {
             <View style={styles.totalRow}>
               <Text style={styles.totalLbl}>Subtotal</Text>
               <Text style={styles.totalVal}>{fmtCurrency(subtotal, currency)}</Text>
-            </View>
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLbl}>Tax</Text>
-              <Text style={styles.totalVal}>{fmtCurrency(tax, currency)}</Text>
             </View>
             <View style={[styles.totalRow, { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 }]}>
               <Text style={[styles.totalLbl, { color: colors.text, fontWeight: "800" }]}>Total</Text>

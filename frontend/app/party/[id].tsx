@@ -1,20 +1,22 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiPut } from "@/src/api/client";
+import { API_BASE, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Currency, Invoice, LedgerEntry, Party, Shipment } from "@/src/api/types";
 import { useAuth } from "@/src/auth/context";
 import { FYPicker } from "@/src/components/fy-picker";
+import { ShareActionBar } from "@/src/components/share-action-bar";
 import { toast } from "@/src/components/toast";
 import { Card, KV, StatusPill } from "@/src/components/ui";
 import { useFY } from "@/src/context/fy-context";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
-import { fyLabel, isInFY } from "@/src/utils/fy";
+import { fyBounds, fyLabel, isInFY } from "@/src/utils/fy";
+import { generateStatementPdf } from "@/src/utils/statement-pdf";
 
 export default function PartyDetail({ idOverride, embedded }: { idOverride?: string; embedded?: boolean } = {}) {
   const params = useLocalSearchParams<{ id: string }>();
@@ -49,7 +51,8 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
     let inr = 0;
     let thb = 0;
     return entries.map((e) => {
-      const ccy = (e.currency || "INR").toUpperCase();
+      const raw = (e.currency || "INR").toUpperCase();
+      const ccy: "INR" | "THB" = raw === "THB" ? "THB" : "INR";
       const delta = (e.debit || 0) - (e.credit || 0);
       if (ccy === "THB") thb += delta;
       else inr += delta;
@@ -140,6 +143,56 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
     () => displayRows.filter((r) => r.ccy === selectedCcy),
     [displayRows, selectedCcy],
   );
+
+  // ---------- Statement PDF: date range + share -----------------------
+  // Presets keep the operator one tap away from the four most common
+  // reconciliation windows. "This FY" hooks into the app-wide FY selector
+  // so the closing balance always matches the on-screen Ledger totals.
+  type RangePreset = "week" | "month" | "fy" | "all";
+  const [rangePreset, setRangePreset] = useState<RangePreset>("fy");
+  const [shareLoading, setShareLoading] = useState<string | null>(null);
+
+  const rangeBounds = useMemo(() => {
+    const today = new Date();
+    if (rangePreset === "week") {
+      const start = new Date(today);
+      start.setDate(today.getDate() - 7);
+      return { start, end: today, label: "Last 7 days" };
+    }
+    if (rangePreset === "month") {
+      const start = new Date(today);
+      start.setDate(today.getDate() - 30);
+      return { start, end: today, label: "Last 30 days" };
+    }
+    if (rangePreset === "fy") {
+      const { start, end } = fyBounds(fy);
+      return { start, end, label: fyLabel(fy) };
+    }
+    return { start: new Date(0), end: today, label: "All time" };
+  }, [rangePreset, fy]);
+
+  // Statement rows scoped to the selected date range — used for the PDF.
+  // Runs across ALL ledger entries (not just current FY) so "Last Week"
+  // etc. never gets shortened by the FY filter above.
+  const statementRowsForPdf = useMemo(() => {
+    const inRange = (ledger.data || [])
+      .filter((e) => e.party_id === id)
+      .filter((e) => {
+        const d = new Date(e.date.length === 10 ? e.date + "T00:00:00Z" : e.date);
+        return !isNaN(d.getTime()) && d >= rangeBounds.start && d <= rangeBounds.end;
+      })
+      .sort((a, b) => (a.date > b.date ? 1 : -1));
+    let inr = 0;
+    let thb = 0;
+    return inRange.map((e) => {
+      const raw = (e.currency || "INR").toUpperCase();
+      const ccy: "INR" | "THB" = raw === "THB" ? "THB" : "INR";
+      const delta = (e.debit || 0) - (e.credit || 0);
+      if (ccy === "THB") thb += delta;
+      else inr += delta;
+      return { entry: e, ccy, balanceInr: inr, balanceThb: thb };
+    });
+  }, [ledger.data, id, rangeBounds]);
 
   const Wrapper: React.ComponentType<{ children: React.ReactNode }> = embedded
     ? ({ children }) => <View style={{ flex: 1, backgroundColor: "transparent" }}>{children}</View>
@@ -373,6 +426,138 @@ export default function PartyDetail({ idOverride, embedded }: { idOverride?: str
               </Text>
             </TouchableOpacity>
           ) : null}
+
+          {/* ─── Bank-style Statement PDF · date-range picker + share ─── */}
+          <View style={styles.stmtPdfBlock}>
+            <View style={styles.stmtPdfHeadRow}>
+              <Ionicons name="document-text-outline" size={14} color={colors.lime} />
+              <Text style={styles.stmtPdfHead}>Get Statement PDF</Text>
+            </View>
+            <Text style={styles.stmtPdfSub}>
+              {rangeBounds.label} · {statementRowsForPdf.length} txn
+              {statementRowsForPdf.length === 1 ? "" : "s"}
+            </Text>
+            <View style={styles.rangeRow}>
+              {(
+                [
+                  ["week", "Last Week"],
+                  ["month", "Last Month"],
+                  ["fy", "This FY"],
+                  ["all", "All Time"],
+                ] as [RangePreset, string][]
+              ).map(([key, label]) => {
+                const active = rangePreset === key;
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => setRangePreset(key)}
+                    style={[styles.rangeChip, active && styles.rangeChipActive]}
+                    testID={`range-${key}`}
+                  >
+                    <Text style={[styles.rangeChipText, active && styles.rangeChipTextActive]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <ShareActionBar
+              loading={shareLoading}
+              onPdf={async () => {
+                setShareLoading("pdf");
+                try {
+                  await generateStatementPdf({
+                    party: p,
+                    rows: statementRowsForPdf,
+                    periodLabel: rangeBounds.label,
+                  });
+                } catch (e) {
+                  // eslint-disable-next-line no-console
+                  console.warn("[statement-pdf] failed:", e);
+                  Alert.alert("Failed", (e as Error).message || "Could not generate PDF");
+                } finally {
+                  setShareLoading(null);
+                }
+              }}
+              onWhatsapp={async () => {
+                if (!p.phone) {
+                  Alert.alert("No phone", "Party ka WhatsApp number save nahi hai.");
+                  return;
+                }
+                const last = statementRowsForPdf[statementRowsForPdf.length - 1];
+                const closeInr = last ? last.balanceInr : 0;
+                const closeThb = last ? last.balanceThb : 0;
+                const closingLine = [
+                  Math.abs(closeInr) > 0.5
+                    ? `${fmtCurrency(Math.abs(closeInr), "INR")}${closeInr >= 0 ? " Dr" : " Cr"}`
+                    : null,
+                  Math.abs(closeThb) > 0.5
+                    ? `${fmtCurrency(Math.abs(closeThb), "THB")}${closeThb >= 0 ? " Dr" : " Cr"}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "Settled";
+                setShareLoading("whatsapp");
+                try {
+                  await fetch(`${API_BASE}/api/whatsapp/send`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      to_phone: p.phone,
+                      message: `Statement — ${p.name}\nPeriod: ${rangeBounds.label}\nClosing: ${closingLine}\n— LogiOp Pro`,
+                      party_id: p.id,
+                      party_name: p.name,
+                    }),
+                  });
+                  Alert.alert("Queued", `WhatsApp to ${p.name} queued.`);
+                } catch (e) {
+                  Alert.alert("Failed", String(e));
+                } finally {
+                  setShareLoading(null);
+                }
+              }}
+              onLine={async () => {
+                const lineId = (p as unknown as { line_id?: string })?.line_id;
+                if (!lineId) {
+                  Alert.alert("No LINE ID", "Party ka LINE user id save nahi hai.");
+                  return;
+                }
+                setShareLoading("line");
+                try {
+                  await fetch(`${API_BASE}/api/line/send`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      to_line_id: lineId,
+                      message: `Statement for ${p.name} — Period: ${rangeBounds.label}. LogiOp Pro`,
+                      party_id: p.id,
+                      party_name: p.name,
+                    }),
+                  });
+                  Alert.alert("Queued", `LINE to ${p.name} queued.`);
+                } catch (e) {
+                  Alert.alert("Failed", String(e));
+                } finally {
+                  setShareLoading(null);
+                }
+              }}
+              onEmail={() => {
+                const email = p.email;
+                if (!email) {
+                  Alert.alert("No email", "Party ka email save nahi hai.");
+                  return;
+                }
+                const subject = encodeURIComponent(`Statement of Account — ${p.name}`);
+                const body = encodeURIComponent(
+                  `Namaste ${p.name},\n\nPlease find your statement of account for ${rangeBounds.label}.\n\nRegards,\nLogiOp Pro`,
+                );
+                Linking.openURL(`mailto:${email}?subject=${subject}&body=${body}`).catch(() => {
+                  Alert.alert("Failed", "Email client nahi khula.");
+                });
+              }}
+            />
+          </View>
         </Card>
 
         {partyShipments.length > 0 && (
@@ -778,6 +963,62 @@ const styles = StyleSheet.create({
     backgroundColor: colors.lime,
   },
   verifyBtnText: { color: colors.bg, fontWeight: "800", fontSize: 13 },
+
+  // ---- Statement PDF block ----
+  stmtPdfBlock: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  stmtPdfHeadRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  stmtPdfHead: {
+    color: colors.lime,
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  stmtPdfSub: {
+    color: colors.textDim,
+    fontSize: 11,
+    marginTop: 2,
+    marginBottom: 8,
+  },
+  rangeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginBottom: 4,
+  },
+  rangeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.20)",
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  rangeChipActive: {
+    backgroundColor: colors.limeGlow,
+    borderColor: colors.lime,
+  },
+  rangeChipText: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  rangeChipTextActive: {
+    color: colors.lime,
+    textShadowColor: "rgba(0,255,136,0.5)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
+  },
   linkRow: {
     flexDirection: "row",
     alignItems: "center",

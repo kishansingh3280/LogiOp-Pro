@@ -1,13 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useMemo } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useMemo, useState } from "react";
+import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { generateInvoicePdf } from "@/src/utils/invoice-pdf";
 
+import { API_BASE, apiPut } from "@/src/api/client";
 import { useApi } from "@/src/api/hooks";
 import type { Invoice, Party, Shipment, ShipmentBag } from "@/src/api/types";
+import { ShareActionBar } from "@/src/components/share-action-bar";
+import { toast } from "@/src/components/toast";
 import { Card, KV, StatusPill } from "@/src/components/ui";
 import { colors, radii, spacing } from "@/src/theme";
 import { fmtCurrency, shortDate } from "@/src/utils/format";
@@ -23,6 +26,7 @@ export default function InvoiceDetail({
   const id = idOverride || params.id;
   const router = useRouter();
   const inv = useApi<Invoice>(id ? `/api/invoices/${id}` : null);
+  const [shareLoading, setShareLoading] = useState<string | null>(null);
   const parties = useApi<Party[]>("/api/parties");
   const party = useMemo(
     () => (parties.data || []).find((p) => p.id === inv.data?.party_id),
@@ -126,7 +130,17 @@ export default function InvoiceDetail({
           <TouchableOpacity
             onPress={async () => {
               try {
-                await generateInvoicePdf({ invoice: i, party });
+                await generateInvoicePdf({
+                  invoice: i,
+                  party,
+                  shipTo: linkedShipment.data
+                    ? {
+                        name: linkedShipment.data.destination || party?.name,
+                        route: `${linkedShipment.data.origin || "?"} → ${linkedShipment.data.destination || "?"}`,
+                        consignment_no: linkedShipment.data.consignment_no,
+                      }
+                    : null,
+                });
               } catch (e) {
                 // eslint-disable-next-line no-console
                 console.warn("[invoice-pdf] failed:", e);
@@ -149,16 +163,42 @@ export default function InvoiceDetail({
               <Text style={styles.big}>{i.number}</Text>
               <Text style={styles.sub}>{party?.name || "Unknown party"} · {shortDate(i.date)}</Text>
             </View>
-            <StatusPill status={i.status} />
+            <TouchableOpacity
+              onPress={() => {
+                const options: Invoice["status"][] = ["draft", "sent", "paid", "cancelled"];
+                Alert.alert(
+                  "Change status",
+                  `Current: ${i.status.toUpperCase()}`,
+                  [
+                    ...options.map((s) => ({
+                      text: s.charAt(0).toUpperCase() + s.slice(1),
+                      onPress: async () => {
+                        if (s === i.status) return;
+                        try {
+                          await apiPut(`/api/invoices/${i.id}`, { status: s });
+                          toast.success(`Marked ${s.toUpperCase()}`);
+                          inv.refresh();
+                        } catch (e) {
+                          Alert.alert("Failed", (e as Error).message);
+                        }
+                      },
+                    })),
+                    { text: "Cancel", style: "cancel" as const },
+                  ],
+                );
+              }}
+              testID="invoice-status-toggle"
+              accessibilityLabel="Change invoice status"
+              activeOpacity={0.75}
+            >
+              <StatusPill status={i.status} />
+              <Text style={styles.statusHint}>tap to change</Text>
+            </TouchableOpacity>
           </View>
           <View style={styles.totalRow}>
             <View style={styles.totalCol}>
               <Text style={styles.totalLbl}>Subtotal</Text>
               <Text style={styles.totalVal}>{fmtCurrency(i.subtotal, i.currency)}</Text>
-            </View>
-            <View style={styles.totalCol}>
-              <Text style={styles.totalLbl}>Tax</Text>
-              <Text style={styles.totalVal}>{fmtCurrency(i.tax_amount, i.currency)}</Text>
             </View>
             <View style={styles.totalCol}>
               <Text style={styles.totalLbl}>Total</Text>
@@ -167,24 +207,168 @@ export default function InvoiceDetail({
               </Text>
             </View>
           </View>
+          {/* 4-way share bar — PDF · WhatsApp · LINE · Email */}
+          <ShareActionBar
+            loading={shareLoading}
+            onPdf={async () => {
+              setShareLoading("pdf");
+              try {
+                await generateInvoicePdf({
+                  invoice: i,
+                  party,
+                  shipTo: linkedShipment.data
+                    ? {
+                        name: linkedShipment.data.destination || party?.name,
+                        route: `${linkedShipment.data.origin || "?"} → ${linkedShipment.data.destination || "?"}`,
+                        consignment_no: linkedShipment.data.consignment_no,
+                      }
+                    : null,
+                });
+              } catch (e) {
+                console.warn("[invoice-pdf] failed:", e);
+              } finally {
+                setShareLoading(null);
+              }
+            }}
+            onWhatsapp={async () => {
+              if (!party?.phone) {
+                Alert.alert("No phone", "Party ka WhatsApp number save nahi hai.");
+                return;
+              }
+              setShareLoading("whatsapp");
+              try {
+                await fetch(`${API_BASE}/api/whatsapp/send`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    to_phone: party.phone,
+                    message: `Invoice ${i.number} — ${fmtCurrency(i.total, i.currency)} due ${i.due_date || ""}. Please pay at earliest. LogiOp Pro.`,
+                    party_id: party.id,
+                    party_name: party.name,
+                  }),
+                });
+                Alert.alert("Queued", `WhatsApp to ${party.name} queued.`);
+              } catch (e) {
+                Alert.alert("Failed", String(e));
+              } finally {
+                setShareLoading(null);
+              }
+            }}
+            onLine={async () => {
+              const lineId = (party as unknown as { line_id?: string })?.line_id;
+              if (!lineId) {
+                Alert.alert("No LINE ID", "Party ka LINE user id save nahi hai.");
+                return;
+              }
+              setShareLoading("line");
+              try {
+                await fetch(`${API_BASE}/api/line/send`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    to_line_id: lineId,
+                    message: `Invoice ${i.number} — ${fmtCurrency(i.total, i.currency)} due ${i.due_date || ""}. — LogiOp Pro`,
+                    party_id: party?.id,
+                    party_name: party?.name,
+                  }),
+                });
+                Alert.alert("Queued", `LINE to ${party?.name || "party"} queued.`);
+              } catch (e) {
+                Alert.alert("Failed", String(e));
+              } finally {
+                setShareLoading(null);
+              }
+            }}
+            onEmail={async () => {
+              const email = (party as unknown as { email?: string })?.email;
+              if (!email) {
+                Alert.alert("No email", "Party ka email save nahi hai.");
+                return;
+              }
+              const subject = encodeURIComponent(`Invoice ${i.number}`);
+              const body = encodeURIComponent(
+                `Namaste ${party?.name || ""},\n\nPlease find your invoice ${i.number} for ${fmtCurrency(i.total, i.currency)}.\n\nRegards,\nLogiOp Pro`,
+              );
+              Linking.openURL(`mailto:${email}?subject=${subject}&body=${body}`).catch(() => {
+                Alert.alert("Failed", "Email client nahi khula.");
+              });
+            }}
+          />
+        </Card>
+
+        {/* ─── Bill To · Ship To split ───────────────────────────────
+            Bill-to is the party being invoiced. Ship-to is the linked
+            shipment's destination + carrier (if a shipment is linked). */}
+        <Card style={{ marginTop: spacing.md }}>
+          <View style={styles.addrRow}>
+            <View style={styles.addrCol}>
+              <Text style={styles.addrLabel}>Bill To</Text>
+              <Text style={styles.addrName}>{party?.name || "—"}</Text>
+              {party?.address ? (
+                <Text style={styles.addrLine}>{party.address}</Text>
+              ) : null}
+              {party?.country ? (
+                <Text style={styles.addrLine}>{party.country}</Text>
+              ) : null}
+              {party?.phone ? (
+                <Text style={styles.addrLine}>📞 {party.phone}</Text>
+              ) : null}
+              {party?.gstin ? (
+                <Text style={styles.addrLine}>GSTIN: {party.gstin}</Text>
+              ) : null}
+            </View>
+            <View style={styles.addrDivider} />
+            <View style={styles.addrCol}>
+              <Text style={styles.addrLabel}>Ship To</Text>
+              {linkedShipment.data ? (
+                <>
+                  <Text style={styles.addrName}>
+                    {linkedShipment.data.destination || party?.name || "—"}
+                  </Text>
+                  <Text style={styles.addrLine}>
+                    Via {linkedShipment.data.mode?.toUpperCase()} ·{" "}
+                    {linkedShipment.data.origin || "?"} → {linkedShipment.data.destination || "?"}
+                  </Text>
+                  <Text style={styles.addrLine}>
+                    Consignment {linkedShipment.data.consignment_no || "—"}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.addrLine}>Same as Bill To</Text>
+              )}
+            </View>
+          </View>
         </Card>
 
         <Card style={{ marginTop: spacing.md }}>
           <Text style={styles.sectionTitle}>Items</Text>
+          {/* Table header — Sr | Description | Qty | Rate | Amount */}
+          <View style={styles.itemTableHead}>
+            <Text style={[styles.itemTh, styles.itemColSr]}>#</Text>
+            <Text style={[styles.itemTh, styles.itemColDesc]}>Description</Text>
+            <Text style={[styles.itemTh, styles.itemColQty]}>Qty</Text>
+            <Text style={[styles.itemTh, styles.itemColRate]}>Rate</Text>
+            <Text style={[styles.itemTh, styles.itemColAmt]}>Amount</Text>
+          </View>
           {i.items.map((it, idx) => (
-            <View key={idx} style={styles.item}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemDesc}>{it.description}</Text>
-                <Text style={styles.itemMeta}>
-                  {it.quantity} × {fmtCurrency(it.rate, i.currency)}
-                  {it.unit ? ` ${it.unit}` : ""}
-                </Text>
+            <View key={idx} style={styles.itemTr}>
+              <Text style={[styles.itemTd, styles.itemColSr]}>{idx + 1}</Text>
+              <View style={[styles.itemColDesc, { paddingRight: 6 }]}>
+                <Text style={styles.itemTdDesc} numberOfLines={2}>{it.description}</Text>
+                {it.unit ? <Text style={styles.itemTdMeta}>{it.unit}</Text> : null}
               </View>
-              <Text style={styles.itemTotal}>
+              <Text style={[styles.itemTd, styles.itemColQty]}>{it.quantity}</Text>
+              <Text style={[styles.itemTd, styles.itemColRate]}>
+                {fmtCurrency(it.rate, i.currency)}
+              </Text>
+              <Text style={[styles.itemTdAmt, styles.itemColAmt]}>
                 {fmtCurrency(it.quantity * it.rate, i.currency)}
               </Text>
             </View>
           ))}
+          {i.items.length === 0 ? (
+            <Text style={styles.dim}>No line items</Text>
+          ) : null}
         </Card>
 
         <Card style={{ marginTop: spacing.md }}>
@@ -192,7 +376,6 @@ export default function InvoiceDetail({
           <KV label="Currency" value={i.currency} />
           <KV label="Date" value={shortDate(i.date)} />
           {i.due_date ? <KV label="Due" value={shortDate(i.due_date)} /> : null}
-          {i.tax_percent ? <KV label="Tax %" value={`${i.tax_percent}%`} /> : null}
           {i.notes ? <KV label="Notes" value={i.notes} /> : null}
         </Card>
 
@@ -409,6 +592,111 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0, 255, 136, 0.65)",
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 8,
+  },
+  // ─── Invoice Professional Redesign · Table + Bill To / Ship To ──────
+  statusHint: {
+    color: colors.textDim,
+    fontSize: 9,
+    marginTop: 4,
+    textAlign: "center",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  addrRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  addrCol: {
+    flex: 1,
+    gap: 3,
+  },
+  addrDivider: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+  },
+  addrLabel: {
+    color: colors.lime,
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  addrName: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  addrLine: {
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  itemTableHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingBottom: 8,
+    borderBottomColor: colors.lime,
+    borderBottomWidth: 1,
+    marginBottom: 4,
+  },
+  itemTh: {
+    color: colors.lime,
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  itemTr: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderBottomColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  itemTd: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  itemTdDesc: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  itemTdMeta: {
+    color: colors.textDim,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  itemTdAmt: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+    textShadowColor: "rgba(0, 255, 136, 0.65)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
+    textAlign: "right",
+  },
+  itemColSr: {
+    width: 22,
+    textAlign: "left",
+  },
+  itemColDesc: {
+    flex: 1,
+    paddingLeft: 4,
+  },
+  itemColQty: {
+    width: 34,
+    textAlign: "right",
+  },
+  itemColRate: {
+    width: 68,
+    textAlign: "right",
+  },
+  itemColAmt: {
+    width: 74,
+    textAlign: "right",
   },
   createShipmentBtn: {
     marginTop: spacing.md,
