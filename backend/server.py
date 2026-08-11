@@ -4868,6 +4868,29 @@ async def _startup_proxy_client():
     _proxy_client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
 
 
+@app.on_event("startup")
+async def _startup_seed_users():
+    """Auto-seed default admin + Papa users on every startup.
+
+    Fresh deploys land with an EMPTY MongoDB, so login would fail with
+    "Incorrect username or password" until someone SSHed in and ran
+    `python seed_users.py` manually. This hook makes seeding automatic
+    and idempotent — it uses ``$setOnInsert`` so any existing user's
+    real password is NEVER overwritten. See /app/backend/seed_users.py.
+    """
+    try:
+        from seed_users import ensure_seed_users
+        created = await ensure_seed_users(db)
+        if created:
+            logging.info("[seed] created %d default user(s) on startup", created)
+        else:
+            logging.info("[seed] users collection already populated — nothing to do")
+    except Exception as e:
+        # Never let a seed error kill the app — log and move on so read
+        # paths continue to work while an operator inspects the DB.
+        logging.exception("[seed] failed to seed default users: %s", e)
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
