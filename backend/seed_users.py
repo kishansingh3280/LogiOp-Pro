@@ -22,8 +22,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 SEED_USERS = [
     {
-        "username": "kishan",
-        "password": "Kishan@Boss2026",
+        # Kishan Sir — Admin. Username is his email (login endpoint
+        # accepts either the exact username string or the same value
+        # via the `email` field for a case-insensitive lookup).
+        "username": "kishan.singh3280@gmail.com",
+        "email": "kishan.singh3280@gmail.com",
+        "password": "701A3ahig@",
         "display_name": "Kishan",
         "role": Role.ADMIN.value,
         "honorific": "Sir",
@@ -77,20 +81,25 @@ async def ensure_seed_users(db) -> int:
     now = datetime.now(timezone.utc).isoformat()
     created = 0
     for u in SEED_USERS:
+        seed_doc = {
+            "username": u["username"],
+            "password_hash": hash_password(_pw_for(u)),
+            "display_name": u["display_name"],
+            "role": u["role"],
+            "honorific": u["honorific"],
+            "disabled": False,
+            "created_at": now,
+            "modified_at": now,
+        }
+        # Optional email field — only written on insert if the seed
+        # record supplied one (Kishan's admin doc now stores it so the
+        # username-OR-email login path works out of the box).
+        if u.get("email"):
+            seed_doc["email"] = u["email"]
+
         result = await db.users.update_one(
             {"username": u["username"]},
-            {
-                "$setOnInsert": {
-                    "username": u["username"],
-                    "password_hash": hash_password(_pw_for(u)),
-                    "display_name": u["display_name"],
-                    "role": u["role"],
-                    "honorific": u["honorific"],
-                    "disabled": False,
-                    "created_at": now,
-                    "modified_at": now,
-                }
-            },
+            {"$setOnInsert": seed_doc},
             upsert=True,
         )
         if getattr(result, "upserted_id", None):
