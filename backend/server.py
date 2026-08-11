@@ -1643,18 +1643,17 @@ async def whatsapp_verify(request: Request):
     """Meta Cloud API verification handshake. Meta sends:
     ?hub.mode=subscribe&hub.verify_token=X&hub.challenge=Y
 
-    We echo hub.challenge only if the token matches. Accepts EITHER the
-    `WHATSAPP_VERIFY_TOKEN` env var (preferred for rotation) OR the
-    hard-coded `logiop_verify_2026` fallback so a fresh deploy without
-    the env var still passes Meta's handshake. Returns 403 on mismatch.
+    The expected token comes ONLY from the `WHATSAPP_VERIFY_TOKEN` env
+    var (no committed fallback — rotates per-environment). Returns 403
+    on mismatch. Operators must set the env var and configure the same
+    string in Meta's WhatsApp Business webhook UI.
     """
     params = request.query_params
     mode = params.get("hub.mode")
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
-    expected_env = (os.getenv("WHATSAPP_VERIFY_TOKEN") or "").strip()
-    expected_fallback = "logiop_verify_2026"
-    if mode == "subscribe" and token and token in {expected_env, expected_fallback}:
+    expected = (os.getenv("WHATSAPP_VERIFY_TOKEN") or "").strip()
+    if mode == "subscribe" and expected and token == expected:
         return PlainTextResponse(challenge or "ok", status_code=200)
     return PlainTextResponse("forbidden", status_code=403)
 

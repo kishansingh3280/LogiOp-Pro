@@ -22,36 +22,37 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 SEED_USERS = [
     {
-        # Kishan Sir — Admin. Username is his email (login endpoint
-        # accepts either the exact username string or the same value
-        # via the `email` field for a case-insensitive lookup).
+        # Kishan Sir — Admin. Password MUST be provided via
+        # SEED_KISHAN_PASSWORD env var (loaded from backend/.env, which
+        # is not shipped in the app bundle). If missing, seed generates
+        # a random unusable password so the row still exists but nobody
+        # can log in until an operator sets the env var.
         "username": "kishan.singh3280@gmail.com",
         "email": "kishan.singh3280@gmail.com",
-        "password": "701A3ahig@",
+        "password": None,
         "display_name": "Kishan",
         "role": Role.ADMIN.value,
         "honorific": "Sir",
     },
     {
-        # Papa (Bhupendra Singh) — read-mostly Hinglish console per role
-        # matrix in /app/memory/test_credentials.md. Added to the seed
-        # list so a fresh deploy has both admin and Papa accounts ready.
+        # Papa (Bhupendra Singh) — Hinglish Papa console. Password from
+        # SEED_BSINGH_PASSWORD env var, no committed default.
         "username": "bsingh",
-        "password": "Papa@2026",
+        "password": None,
         "display_name": "B Singh",
         "role": Role.PAPA.value,
         "honorific": "Ji",
     },
     {
         "username": "staff",
-        "password": "Staff@2026",
+        "password": None,
         "display_name": "Ops Staff",
         "role": Role.STAFF.value,
         "honorific": "Ji",
     },
     {
         "username": "carrier",
-        "password": "Carrier@2026",
+        "password": None,
         "display_name": "Demo Carrier",
         "role": Role.CARRIER.value,
         "honorific": "Bhai",
@@ -71,12 +72,36 @@ async def ensure_seed_users(db) -> int:
         # Race with another worker or an older duplicate index name — ignore.
         pass
 
-    # Optional env-override (playbook-recommended for production secrets):
-    # SEED_KISHAN_PASSWORD, SEED_BSINGH_PASSWORD, etc. take precedence
-    # over the hard-coded default if set.
+    # Env-only password source (no committed defaults).
+    #   SEED_KISHAN_PASSWORD, SEED_BSINGH_PASSWORD, SEED_STAFF_PASSWORD,
+    #   SEED_CARRIER_PASSWORD.
+    # If the env var is missing we synthesise a random, unusable
+    # password so the row still gets created (idempotent upserts stay
+    # happy) but nobody can log in until an operator sets the env var.
     def _pw_for(u):
-        key = f"SEED_{u['username'].upper()}_PASSWORD"
-        return os.environ.get(key) or u["password"]
+        key = f"SEED_{u['username'].upper().replace('.', '_').replace('@', '_AT_')}_PASSWORD"
+        # Legacy short-key aliases so operators can also use
+        # SEED_KISHAN_PASSWORD / SEED_BSINGH_PASSWORD / etc.
+        legacy_key = None
+        if u["username"].startswith("kishan"):
+            legacy_key = "SEED_KISHAN_PASSWORD"
+        elif u["username"] == "bsingh":
+            legacy_key = "SEED_BSINGH_PASSWORD"
+        elif u["username"] == "staff":
+            legacy_key = "SEED_STAFF_PASSWORD"
+        elif u["username"] == "carrier":
+            legacy_key = "SEED_CARRIER_PASSWORD"
+        env_val = (
+            os.environ.get(key)
+            or (os.environ.get(legacy_key) if legacy_key else None)
+        )
+        if env_val:
+            return env_val
+        # No env password provided — return a random unusable string
+        # (never printed, never logged). Login for this user stays
+        # closed until the operator sets the env var and restarts.
+        import secrets
+        return secrets.token_urlsafe(32)
 
     now = datetime.now(timezone.utc).isoformat()
     created = 0

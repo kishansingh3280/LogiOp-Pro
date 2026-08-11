@@ -195,24 +195,9 @@ export default function SignInScreen() {
               )}
             </Pressable>
 
-            {/* Quick-fill demo credentials — one tap lands you inside the
-                app without typing anything. Speeds up first-time review
-                and helps if the user can't spot the primary button. */}
-            <Pressable
-              onPress={() => {
-                setUsername("kishan");
-                setPassword("Kishan@Boss2026");
-                setError(null);
-                // Pass credentials explicitly to bypass stale-closure race.
-                onSubmit("kishan", "Kishan@Boss2026");
-              }}
-              style={styles.quickBtn}
-              testID="signin-quick-demo"
-              accessibilityLabel="Login as Kishan Sir with demo credentials"
-            >
-              <Ionicons name="flash" size={14} color={colors.lime} />
-              <Text style={styles.quickBtnText}>Quick login as Kishan Sir (demo)</Text>
-            </Pressable>
+            {/* Demo/quick-login button removed for production security.
+                Developers can log in with the seeded admin credentials
+                (see /app/memory/test_credentials.md — outside app bundle). */}
 
             <Text style={styles.hint}>
               New account? Ask an Admin to create one. Registration is

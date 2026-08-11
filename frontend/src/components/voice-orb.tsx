@@ -479,7 +479,18 @@ export function VoiceOrb() {
   // Hide the orb on the sign-in / auth screens — it should only appear
   // once the user is logged in and inside the app shell. Placed AFTER
   // all hooks to comply with React's Rules of Hooks.
-  const hidden = !auth.user || (pathname || "").includes("sign-in");
+  //
+  // ALSO hide if the native voice stack failed to load (e.g. inside
+  // Expo Go on Android where `react-native-webrtc` isn't linked, OR
+  // when the whole voice pipeline throws at mount). The parent
+  // ErrorBoundary in `_layout.tsx` also catches catastrophic render
+  // errors and replaces the orb with `null` — this early return is the
+  // second line of defence per the "hide silently, don't crash" rule.
+  const stackUnsupported = !orb.supported;
+  const hidden =
+    !auth.user ||
+    (pathname || "").includes("sign-in") ||
+    stackUnsupported;
   if (hidden) return null;
 
   const stateColor = (() => {
@@ -514,17 +525,10 @@ export function VoiceOrb() {
             ? "warning"
             : "sparkles";
 
-  // ─── Voice-disabled affordance ──────────────────────────────────────
-  // When the native WebRTC module isn't linked (Expo Go, broken build)
-  // or the microphone permission was denied, the orb stays visible but
-  // shows a subtle "text-only" hint so the operator knows voice won't
-  // work AND that they can still tap/long-press to open the panel and
-  // type. This is per the "don't crash — degrade gracefully" contract.
-  const voiceDisabled =
-    !orb.supported ||
-    (orb.error || "").toLowerCase().includes("permission");
-
-  const showLabel = orb.state !== "idle" || voiceDisabled;
+  // At this point `orb.supported` is guaranteed true (checked above).
+  // The label only appears for active voice states — no more "text-only"
+  // affordance because the orb is fully hidden when voice is unsupported.
+  const showLabel = orb.state !== "idle";
   const labelText =
     orb.state === "connecting"
       ? "Connecting…"
@@ -536,9 +540,7 @@ export function VoiceOrb() {
             ? "Bol raha hoon"
             : orb.state === "error"
               ? "Error"
-              : voiceDisabled
-                ? "Text only · tap"
-                : "";
+              : "";
 
   return (
     <Animated.View

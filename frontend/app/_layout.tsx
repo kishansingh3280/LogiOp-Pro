@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "@/src/auth/context";
 import { AmbientBackground } from "@/src/components/ambient-background";
+import { ErrorBoundary } from "@/src/components/error-boundary";
 import { FYBanner } from "@/src/components/fy-banner";
 import { GlassOverlay } from "@/src/components/glass-overlay";
 import { Sidebar } from "@/src/components/sidebar";
@@ -177,29 +178,36 @@ export default function RootLayout() {
                       <StatusBar style="light" />
                       <AuthGate>
                         <AuthShell>
-                          <Stack
-                            screenOptions={{
-                              headerShown: false,
-                              // Every navigator screen keeps the deep-space
-                              // background so no white flashes during
-                              // native transitions on iOS/Android.
-                              contentStyle: { backgroundColor: colors.bg },
-                              animation: "slide_from_right",
-                            }}
-                          />
+                          {/* Every routed screen is wrapped in an
+                              ErrorBoundary so a render crash on the
+                              dashboard, invoice detail, etc. never
+                              takes down the whole Android app. */}
+                          <ErrorBoundary label="root-stack">
+                            <Stack
+                              screenOptions={{
+                                headerShown: false,
+                                contentStyle: { backgroundColor: colors.bg },
+                                animation: "slide_from_right",
+                              }}
+                            />
+                          </ErrorBoundary>
                         </AuthShell>
                       </AuthGate>
                       <ToastHost />
-                      {/* Floating OPSI orb — visible on every screen */}
-                      <VoiceOrb />
-                      {/* Global fill_form bridge: listens for OPSI's
-                          fill_form tool calls and navigates the user to
-                          the target form. Renders nothing. */}
-                      <FillFormBridge />
-                      {/* Ghost-typing overlay — animated banner shown
-                          on top of the current screen while Opsi's
-                          magic is filling the form. */}
-                      <WingmanFillOverlay />
+                      {/* Floating OPSI orb — visible on every screen.
+                          Isolated ErrorBoundary so any orb render or
+                          native-module crash NEVER bubbles up to the
+                          main app. If it dies, orb just disappears. */}
+                      <ErrorBoundary label="voice-orb" fallback={() => null}>
+                        <VoiceOrb />
+                      </ErrorBoundary>
+                      {/* Global fill_form bridge. Also isolated. */}
+                      <ErrorBoundary label="fill-form-bridge" fallback={() => null}>
+                        <FillFormBridge />
+                      </ErrorBoundary>
+                      <ErrorBoundary label="wingman-fill-overlay" fallback={() => null}>
+                        <WingmanFillOverlay />
+                      </ErrorBoundary>
                     </VoiceOrbProvider>
                   </SidebarProvider>
                 </GhostUserProvider>

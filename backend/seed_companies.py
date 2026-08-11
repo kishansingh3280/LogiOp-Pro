@@ -139,13 +139,20 @@ async def seed() -> None:
                 "company": "co_singh_exports",
                 "permissions": ["view", "create", "edit_status"],
                 "modified_at": now_dt,
-                "password_hash": pwd_context.hash("Papa@2026"),
+                "password_hash": pwd_context.hash(
+                    # Env-only Papa password. No committed default.
+                    # Fallback = random unusable string so the row
+                    # still upserts idempotently but nobody can log in
+                    # until an operator sets SEED_BSINGH_PASSWORD.
+                    os.environ.get("SEED_BSINGH_PASSWORD")
+                    or __import__("secrets").token_urlsafe(32)
+                ),
             },
             "$setOnInsert": {"created_at": now_dt},
         },
         upsert=True,
     )
-    print("✅ Papa user seeded: bsingh / Papa@2026 (role=Papa, company=co_singh_exports)")
+    print("✅ Papa user seeded: bsingh (password from SEED_BSINGH_PASSWORD env)")
 
     client.close()
 
