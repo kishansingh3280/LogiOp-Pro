@@ -1,0 +1,41 @@
+{
+  "summary": "FULL frontend regression on LogiOp Pro (mobile 390x844 + PC 1280x800). 22/23 test checks PASSED. OPSI orb long-press opens panel with ✨OPSI header, blockers preview, empty-chat state, close/mute/mic/input action row (all testIDs match spec: voice-orb-panel-header/blockers/chat-empty/close-header). Close-via-header X works. window.__opsiBubble('...') fires visible cloud bubble above the orb. Ledger Statement PDF flow on /party/<Deepak Adavani>: STATEMENT section present, all 4 date chips (Last Week/Last Month/This FY/All Time) render, ShareActionBar shows PDF+WhatsApp+LINE+Email (all 4 testIDs share-pdf/share-whatsapp/share-line/share-email present), Last Week chip toggles without crash, PDF tap does not crash. Invoice INV-AURA-PEN-001: 'TAP TO CHANGE' hint visible, Bill To (Lalit/IN) + Ship To (Chennai/Via HAND_CARRY) split card correct, Items table headers # | Description | Qty | Rate | Amount rendered correctly with row data, share-pdf testID present. Shipment AURA-DEL-002: bag-carrier chip renders (testID='bag-carrier-*'), shows 'Abhishek Singh · DEFAULT' tag, chip tap triggers picker. Navigation smoke: /, /shipments, /invoices, /ledger, /more all load without red-screen. PC 1280x800: sidebar highlight works, orb sits 164px above viewport bottom (spec >=140px on width>=900 ✓). Papa (bsingh/Papa@2026) login works, home greets 'WELCOME BACK, B SINGH JI', Admin Console link is hidden on /more, direct /admin URL is blocked (redirects to /). ONE failure: Invoice status pill onPress uses Alert.alert (invoice/[id].tsx:169) which is a NO-OP on React Native Web — the click event fires (testID='invoice-status-toggle' accepts the click) but no dialog, modal, or picker renders in web preview. This is a known RN-Web limitation, not a code bug, and will work on native Expo Go / iOS / Android builds.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "InvoiceDetail status pill",
+        "issue": "Alert.alert() at invoice/[id].tsx:169 is a NO-OP on React Native Web (Expo web preview). Tapping 'DRAFT · TAP TO CHANGE' pill fires onPress but nothing appears on screen — no dialog, no modal, no picker. Works on native mobile but not testable via web preview. Recommend replacing Alert.alert with a cross-platform Modal (or use Platform.OS === 'web' ? window.confirm : Alert.alert) so status change is usable in the web console Kishan Sir uses on desktop.",
+        "testID": "invoice-status-toggle",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/ (Papa dashboard)",
+        "issues": ["OPSI Daily Brief still says 'Dopahar 12:18 PM, Kishan Sir!' when logged in as Papa (bsingh). Greeting should use current user's honorific (B Singh Ji) not the hardcoded 'Kishan Sir'. Minor personalization miss — not a blocker."]
+      }
+    ],
+    "react_native_issues": [
+      {"component": "Alert.alert on web", "issue": "React Native Web Alert.alert is unreliable/no-op. Used in invoice/[id].tsx:169 for status change picker and in multiple other places (WhatsApp/LINE/Email error toasts). Consider a Platform.OS gate or a shared cross-platform Alert shim so web users see feedback. Reference: invoice/[id].tsx:169, 182, 235, 250, 252, 260, 275, 277, 285, 293."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "MEDIUM: Replace Alert.alert in InvoiceDetail status change (invoice/[id].tsx:167-190) with a cross-platform Modal OR add a Platform.OS==='web' branch using window.confirm/prompt, so Kishan Sir can change invoice status from the desktop console (currently only works on mobile native).",
+    "MINOR: Personalize OPSI Daily Brief greeting — currently hardcodes 'Kishan Sir!' regardless of logged-in user. Papa sees 'Kishan Sir' greeting on his own dashboard.",
+    "MINOR: Audit all other Alert.alert callsites (WhatsApp/LINE/Email feedback toasts in invoice/[id].tsx and elsewhere) for the same web no-op issue."
+  ],
+  "critical_code_review_comments": [
+    "Alert.alert() is used ~10x in app/invoice/[id].tsx alone for status changes, share feedback, and error toasts. All are silent no-ops on RN Web. Recommend a global `showAlert` util that branches on Platform.OS.",
+    "OPSI Daily Brief greeting text (dashboard) appears to hardcode 'Kishan Sir' — it should use the auth store's honorific / display_name so Papa/Staff/Carrier see their own name."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (per request; last iteration 100%)", "frontend": "95.6% (22/23 checks passed)"},
+  "seed_data_creation": "None. No data mutated (per instruction 'DO NOT delete any test data'). Only status-pill click was attempted and it was a no-op, so no state change occurred.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All critical UI features from this iteration (OPSI orb+panel+cloud bubble, Ledger PDF share bar with date chips, Invoice bill/ship+items table+share-pdf testID, Shipment bag-carrier chip with DEFAULT tag, PC-orb 164px offset, Papa admin lockout) are confirmed working on the live preview URL. The ONLY web-only regression is Alert.alert not rendering on RN Web — this affects invoice status change and Alert-based feedback toasts across the app. On Expo Go native it will work. testIDs confirmed working: voice-orb, voice-orb-panel-header, voice-orb-panel-blockers, voice-orb-panel-chat-empty, voice-orb-panel-close-header, invoice-status-toggle, share-pdf, share-whatsapp, share-line, share-email, bag-carrier-*.",
+  "rca_of_issue": "Invoice status pill silent-fail RCA: React Native Web's Alert module implementation is limited/inconsistent across versions (in some builds it maps to window.confirm, in others it is a no-op). The code at app/invoice/[id].tsx:167-190 calls Alert.alert('Change status', ..., [{text:'Cancel'}, ...options.map(s => ({text: s.toUpperCase(), onPress: ...}))]). On the current Expo web bundle this silently returns without any UI. Mitigation: wrap the call in a Platform.OS==='web' branch that renders a custom Modal with the four status options, or use react-native-modal / a shared showActionSheet utility. This does NOT affect native builds delivered to Kishan Sir's phone."
+}

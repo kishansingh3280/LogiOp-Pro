@@ -19,7 +19,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-import { API_BASE } from "@/src/api/client";
+import { apiGet } from "@/src/api/client";
 import { GlowingLogo } from "@/src/components/glowing-logo";
 import { colors, radii, spacing } from "@/src/theme";
 
@@ -63,11 +63,10 @@ export function NowBriefCard(_props: Props) {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch(`${API_BASE}/api/now-brief`, {
-        headers: { Accept: "application/json" },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const j = (await r.json()) as BriefPayload;
+      // Use apiGet so the Authorization header is attached — otherwise
+      // the backend can't personalize the greeting for the logged-in
+      // user (falls back to hardcoded "Kishan Sir").
+      const j = await apiGet<BriefPayload>("/api/now-brief");
       setData(j);
     } catch (e) {
       setError(String(e));

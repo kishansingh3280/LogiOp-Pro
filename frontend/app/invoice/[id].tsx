@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { generateInvoicePdf } from "@/src/utils/invoice-pdf";
@@ -27,6 +27,10 @@ export default function InvoiceDetail({
   const router = useRouter();
   const inv = useApi<Invoice>(id ? `/api/invoices/${id}` : null);
   const [shareLoading, setShareLoading] = useState<string | null>(null);
+  // Status-change modal — Alert.alert is a no-op on RN Web, so we render
+  // our own bottom-sheet-style picker that works on all platforms.
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+  const [statusChanging, setStatusChanging] = useState<Invoice["status"] | null>(null);
   const parties = useApi<Party[]>("/api/parties");
   const party = useMemo(
     () => (parties.data || []).find((p) => p.id === inv.data?.party_id),
@@ -164,29 +168,7 @@ export default function InvoiceDetail({
               <Text style={styles.sub}>{party?.name || "Unknown party"} · {shortDate(i.date)}</Text>
             </View>
             <TouchableOpacity
-              onPress={() => {
-                const options: Invoice["status"][] = ["draft", "sent", "paid", "cancelled"];
-                Alert.alert(
-                  "Change status",
-                  `Current: ${i.status.toUpperCase()}`,
-                  [
-                    ...options.map((s) => ({
-                      text: s.charAt(0).toUpperCase() + s.slice(1),
-                      onPress: async () => {
-                        if (s === i.status) return;
-                        try {
-                          await apiPut(`/api/invoices/${i.id}`, { status: s });
-                          toast.success(`Marked ${s.toUpperCase()}`);
-                          inv.refresh();
-                        } catch (e) {
-                          Alert.alert("Failed", (e as Error).message);
-                        }
-                      },
-                    })),
-                    { text: "Cancel", style: "cancel" as const },
-                  ],
-                );
-              }}
+              onPress={() => setStatusPickerOpen(true)}
               testID="invoice-status-toggle"
               accessibilityLabel="Change invoice status"
               activeOpacity={0.75}
@@ -413,6 +395,80 @@ export default function InvoiceDetail({
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* ── Status Picker Modal (cross-platform) ─────────────────────
+          Alert.alert is a no-op on RN Web, so we render this custom
+          bottom-sheet-style modal that works on iOS/Android/Web. */}
+      <Modal
+        visible={statusPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStatusPickerOpen(false)}
+      >
+        <Pressable
+          style={statusModalStyles.backdrop}
+          onPress={() => setStatusPickerOpen(false)}
+        >
+          <Pressable
+            style={statusModalStyles.sheet}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={statusModalStyles.title}>Change status</Text>
+            <Text style={statusModalStyles.subtitle}>
+              Current · {i.status.toUpperCase()}
+            </Text>
+            {(["draft", "sent", "paid", "cancelled"] as Invoice["status"][]).map((s) => {
+              const active = s === i.status;
+              const busy = statusChanging === s;
+              return (
+                <TouchableOpacity
+                  key={s}
+                  style={[
+                    statusModalStyles.row,
+                    active && statusModalStyles.rowActive,
+                  ]}
+                  disabled={active || !!statusChanging}
+                  onPress={async () => {
+                    if (active) return;
+                    setStatusChanging(s);
+                    try {
+                      await apiPut(`/api/invoices/${i.id}`, { status: s });
+                      toast.success(`Marked ${s.toUpperCase()}`);
+                      inv.refresh();
+                      setStatusPickerOpen(false);
+                    } catch (e) {
+                      toast.warn((e as Error).message || "Update failed");
+                    } finally {
+                      setStatusChanging(null);
+                    }
+                  }}
+                  testID={`invoice-status-option-${s}`}
+                >
+                  <Text
+                    style={[
+                      statusModalStyles.rowText,
+                      active && statusModalStyles.rowTextActive,
+                    ]}
+                  >
+                    {busy
+                      ? "Saving…"
+                      : `${s.charAt(0).toUpperCase()}${s.slice(1)}`}
+                  </Text>
+                  {active ? (
+                    <Ionicons name="checkmark" size={16} color={colors.lime} />
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={statusModalStyles.cancelBtn}
+              onPress={() => setStatusPickerOpen(false)}
+            >
+              <Text style={statusModalStyles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </Wrapper>
   );
 }
@@ -856,4 +912,70 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   errorSecondaryText: { color: colors.text, fontSize: 13, fontWeight: "700" },
+});
+
+// ─── Status Picker Modal styles ────────────────────────────────────
+const statusModalStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+  },
+  sheet: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    borderColor: colors.lime,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.lg,
+    gap: 8,
+  },
+  title: {
+    color: colors.lime,
+    fontSize: 15,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  subtitle: {
+    color: colors.textDim,
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.chipBg,
+    borderColor: colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  rowActive: {
+    backgroundColor: colors.limeGlow,
+    borderColor: colors.lime,
+  },
+  rowText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  rowTextActive: {
+    color: colors.lime,
+  },
+  cancelBtn: {
+    marginTop: 6,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  cancelText: {
+    color: colors.textDim,
+    fontSize: 13,
+    fontWeight: "700",
+  },
 });

@@ -20,7 +20,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Dimensions, Easing, Keyboard, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 import { useAuth } from "@/src/auth/context";
-import { API_BASE } from "@/src/api/client";
+import { API_BASE, apiGet } from "@/src/api/client";
 import { useVoiceOrb } from "@/src/context/voice-orb-context";
 import { speakStreaming, type StreamingTtsHandle } from "@/src/utils/tts-stream";
 
@@ -239,11 +239,10 @@ export function VoiceOrb() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/now-brief`, {
-          headers: { Accept: "application/json" },
-        });
-        if (!r.ok || cancelled) return;
-        const j = (await r.json()) as { spoken_summary?: string; top_action?: string };
+        const j = await apiGet<{ spoken_summary?: string; top_action?: string }>(
+          "/api/now-brief",
+        );
+        if (cancelled) return;
         const text = (j?.spoken_summary || j?.top_action || "").trim();
         if (!text || cancelled) return;
         // Show the same message as a cloud bubble for visual cue.
@@ -371,10 +370,16 @@ export function VoiceOrb() {
   ).current;
 
   // Corner anchor helper — converts corner symbol into absolute
-  // positioning style values.
+  // positioning style values. On wide screens (tablet+PC+TV) we bump
+  // the bottom offset UP so the orb doesn't collide with common bottom
+  // FABs like "Add entry", "New Shipment", etc. The user can still
+  // drag it anywhere; this is just a smarter default.
   const anchorStyle = useMemo(() => {
     const off = 16;
-    const bottomBase = Math.max(24, insets.bottom + 16) + kbHeight;
+    const isWide = win.width >= 900;
+    // Wide screens: bump 140 px (FAB height + margin). Narrow: no bump —
+    // tab bar already gives 60 px clearance and the orb is smaller.
+    const bottomBase = Math.max(24, insets.bottom + 16) + kbHeight + (isWide ? 140 : 0);
     switch (corner) {
       case "tl":
         return { top: insets.top + off, left: off };
@@ -386,7 +391,7 @@ export function VoiceOrb() {
       default:
         return { bottom: bottomBase, right: off };
     }
-  }, [corner, insets.top, insets.bottom, kbHeight]);
+  }, [corner, insets.top, insets.bottom, kbHeight, win.width]);
 
   // Radiating cyan rings — 2-ring outward loop while listening.
   const ring1 = useRef(new Animated.Value(0)).current;
@@ -624,6 +629,47 @@ export function VoiceOrb() {
           ]}
           testID="voice-orb-panel"
         >
+          {/* ── OPSI Panel Header — ✨ OPSI + mute + close ─────────────
+              Sticky header so the operator can always mute/close no
+              matter how far they scroll through the blockers/chat. */}
+          <View style={styles.panelHeader} testID="voice-orb-panel-header">
+            <View style={styles.panelHeaderLeft}>
+              <Text style={styles.panelHeaderEmoji}>✨</Text>
+              <Text style={styles.panelHeaderTitle}>OPSI</Text>
+              {orb.state !== "idle" ? (
+                <View style={[styles.panelHeaderStateDot, { backgroundColor: stateColor }]} />
+              ) : null}
+            </View>
+            <View style={styles.panelHeaderRight}>
+              <TouchableOpacity
+                onPress={() => orb.toggleMute()}
+                style={[
+                  styles.panelHeaderBtn,
+                  orb.muted && styles.panelBtnMuted,
+                ]}
+                testID="voice-orb-panel-mute-header"
+                accessibilityLabel={orb.muted ? "Unmute" : "Mute"}
+              >
+                <Ionicons
+                  name={orb.muted ? "volume-mute" : "volume-high"}
+                  size={14}
+                  color={orb.muted ? "#FF5C7A" : "#00FF88"}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setPanelOpen(false);
+                  setText("");
+                }}
+                style={styles.panelHeaderBtn}
+                testID="voice-orb-panel-close-header"
+                accessibilityLabel="Close panel"
+              >
+                <Ionicons name="close" size={14} color="#B98BFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
           {/* ── OPSI Part 4 · Blockers preview (top 3) ────────────────
               Rendered only when the panel is open AND we have items.
               Tapping a row navigates to the offending record and closes
@@ -689,7 +735,13 @@ export function VoiceOrb() {
                 ))}
               </ScrollView>
             </View>
-          ) : null}
+          ) : (
+            <View style={styles.panelChatEmpty} testID="voice-orb-panel-chat-empty">
+              <Text style={styles.panelChatEmptyText}>
+                🎤 Bolo ya ⌨️ likho — OPSI sun raha hai
+              </Text>
+            </View>
+          )}
 
           {/* Row 1 — text input full width */}
           <TextInput
@@ -1088,6 +1140,70 @@ const styles = StyleSheet.create({
     borderColor: "#00FF88",
   },
   // ── OPSI Part 4 · panel section headers, blockers, chat bubbles ────
+  panelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 8,
+    marginBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255,255,255,0.12)",
+  },
+  panelHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  panelHeaderEmoji: {
+    fontSize: 14,
+  },
+  panelHeaderTitle: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 1,
+    textShadowColor: "rgba(155,77,255,0.55)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
+  },
+  panelHeaderStateDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginLeft: 4,
+  },
+  panelHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  panelHeaderBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.28)",
+    borderColor: "rgba(255,255,255,0.22)",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  panelChatEmpty: {
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    marginBottom: 8,
+    borderRadius: 8,
+    backgroundColor: "rgba(155,77,255,0.10)",
+    borderColor: "rgba(155,77,255,0.28)",
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+  },
+  panelChatEmptyText: {
+    color: "rgba(255,255,255,0.72)",
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0.2,
+    textAlign: "center",
+  },
   panelBlockers: {
     marginBottom: 8,
   },

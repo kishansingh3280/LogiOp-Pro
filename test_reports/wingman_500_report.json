@@ -1,0 +1,32 @@
+{
+  "total": 510,
+  "passed": 510,
+  "failed": 0,
+  "rate": 1.0,
+  "elapsed_s": 52.976592779159546,
+  "deterministic_hits": 386,
+  "realtime_fallbacks": 124,
+  "by_category": {
+    "ledger": {
+      "pass": 102,
+      "fail": 0
+    },
+    "shipments": {
+      "pass": 101,
+      "fail": 0
+    },
+    "trips": {
+      "pass": 103,
+      "fail": 0
+    },
+    "invoices": {
+      "pass": 104,
+      "fail": 0
+    },
+    "mixed": {
+      "pass": 100,
+      "fail": 0
+    }
+  },
+  "failures": []
+}
