@@ -99,7 +99,7 @@ export default function SignInScreen() {
           <GlassCard radius="xxl" tone="elevated" padded="lg">
             <Text style={styles.title}>Welcome, Kishan Sir</Text>
             <Text style={styles.subtitle}>
-              Log in to open your dashboard, ledgers, bullion & Wingman AI.
+              Log in to open your dashboard, ledgers, bullion & OPSI.
             </Text>
 
             {/* Top-of-card CTA — always above the fold so the Login action
@@ -220,7 +220,7 @@ export default function SignInScreen() {
             </Text>
           </GlassCard>
 
-          <Text style={styles.footer}>Powered by Wingman AI · v1.0</Text>
+          <Text style={styles.footer}>Powered by OPSI · v1.0</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>

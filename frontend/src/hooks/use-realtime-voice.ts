@@ -2,7 +2,7 @@
  * useRealtimeVoice — WebRTC connection to OpenAI Realtime API.
  *
  * Web-only (Native falls back to the existing Whisper pipeline in the
- * Now Brief card). Flow:
+ * OPSI Daily Brief card). Flow:
  *   1. Hit /api/realtime-token for an ephemeral client_secret
  *   2. Build an RTCPeerConnection + data channel
  *   3. Attach the mic track

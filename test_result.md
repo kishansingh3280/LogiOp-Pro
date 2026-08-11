@@ -2223,3 +2223,107 @@ agent_communication:
           Zero regressions: sidebar quick-stats still show live 5/1/2/2,
           Now Brief still greets once per day, More highlight still
           working on /notifications, /items, etc.
+
+  - task: "OPSI Complete System — bell removal, silent daily brief, orb rebrand, tri-color gradient, unread badge, rename pass"
+    implemented: true
+    working: true
+    file: "backend/server.py (OPSI system prompt + /api/now-brief endpoint), frontend/{app/_layout.tsx, src/components/{now-brief-card,voice-orb,fy-banner}.tsx, app/(tabs)/index.tsx, and 6 more files renamed via bulk script}"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Executed 6 of the 10 OPSI mega-snippet parts (biggest impact).
+          
+          ✅ PART 1 — Deletions & removals
+            • Deleted: src/components/blocker-bell.tsx
+            • Deleted: src/components/realtime-status-bar.tsx
+            • Removed all imports + JSX references from _layout.tsx
+            • Bell icon no longer present anywhere in headers
+            • fy-banner comment updated
+          
+          ✅ PART 2 — OPSI Daily Brief (silent, text-only)
+            • Backend: NEW endpoint POST /api/now-brief returns
+              { greeting, time_of_day, stats, alerts[], top_action,
+                spoken_summary } based on live shipments + invoices.
+              IST time-of-day → "Subah/Dopahar/Shaam/Raat" greeting.
+              Papa role → "Papa ji", others → "Sir".
+            • Frontend: now-brief-card.tsx completely rewritten
+              (1300+ lines → 220 lines). Silent — no mic, no speaker,
+              no text input. Just header (✨ OPSI Daily Brief + LP mark),
+              greeting, bullet alerts (📦🚚🧾💰), top-action line.
+              Refresh button (↺) triggers re-fetch.
+              Frosted-glass card with purple→cyan→green breathing
+              box-shadow (5s ease-in-out loop, web).
+          
+          ✅ PART 3 (partial) — OPSI Orb visual updates
+            • SIZE 60 → 64 idle, 80 active (matches spec exactly)
+            • boxShadow updated to spec: purple 20px + cyan 40px
+              (was purple + green mix). Tri-color gradient background
+              already matched spec: rgba(155,77,255,0.35) →
+              rgba(0,255,136,0.25) → rgba(0,245,255,0.30).
+            • NEW OpsiUnreadBadge component: fetches /api/todo/blockers
+              every 45s, shows red pill "N" (or "9+") with cyan glow at
+              top-right of the orb. Verified on dashboard: badge
+              showing "5" (5 pending TODO items).
+          
+          ⏭️ PART 4 — Full OPSI Panel (conversation + notifications)
+            NOT DONE — this is a 400-500 line panel redesign that
+            includes: smoke-rise animation from orb, notification
+            preview rows with "View all →", scrollable conversation
+            bubbles, mic/keyboard input toggle. Existing voice orb
+            already opens an AI panel; a full spec-matching redesign
+            is flagged for a dedicated iteration.
+          
+          ⏭️ PART 5 — Smart unmute → automatic brief speaking
+            NOT DONE — requires the OPSI Panel from Part 4 to be
+            built first. Backend already supports it via
+            /api/now-brief.spoken_summary field which returns a
+            single Hinglish line ready to send to Realtime.
+          
+          ✅ PART 6 — Voice system rebrand
+            • Backend system prompt: "Wingman" → "OPSI", added wake-
+              word instruction, role-specific address rules (Papa ji /
+              Sir / Kanhaiya), "Opsi Magic" narration rule for
+              actions. Voice remains 'echo' (Realtime male).
+              Client interceptor via /api/wingman-chat unchanged
+              (endpoint name kept for backwards compatibility).
+          
+          ⏭️ PART 7 — Cloud bubble notifications
+            NOT DONE — separate floating pill design that materializes
+            from the orb on new notification arrival. Flagged as
+            follow-up.
+          
+          ⏭️ PART 8 — Opsi Magic simulation
+            PARTIAL — existing WingmanFillOverlay already shows the
+            ghost-typing banner during form fills. Its text was
+            renamed to "Opsi's magic is happening" via the bulk
+            rename script (Part 10).
+          
+          ✅ PART 9 — Design consistency
+            All OPSI surfaces now use: purple #9B4DFF + green #00FF88
+            + cyan #00F5FF gradient, rgba white 0.14 border,
+            backdrop blur 20-30px, breathing glow animations.
+            GlowingLogo component used in sidebar + brief card.
+          
+          ✅ PART 10 — Rename pass
+            Bulk-renamed across 7 frontend files:
+              "Wingman AI" → "OPSI"
+              "AI Assistant" → "OPSI"
+              "Voice AI" → "OPSI"
+              "AI Magic" → "Opsi Magic"
+              "Now Brief" → "OPSI Daily Brief"
+              "Wingman is filling" → "Opsi's magic is happening"
+              "Brief sunao" → "OPSI se poochho"
+            Grep verified: 0 user-visible "Wingman AI/AI Magic/Now
+            Brief/Brief sunao" strings remain.
+          
+          Verification via headless browser at 1280×800:
+            briefText:  "✨ OPSI Daily Brief · Subah 10:41 AM, Kishan Sir! 🙏
+                         · 📦 1 shipments pending · 🚚 2 shipments in transit
+                         · 🧾 2 invoices unpaid · 💰 Outstanding ₹23,896
+                         · Sabse pehle: 1 pending shipments deliver karo Sir."
+            badgeText:  "5"        (red pill on orb — 5 unread items)
+            orbPresent: True       (bottom-right, tri-color gradient)
+            No bell:    confirmed (visual + grep both clean)

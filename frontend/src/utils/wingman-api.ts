@@ -1,5 +1,5 @@
 /**
- * wingman-api — thin client for the Voice AI Wingman in the Now Brief card.
+ * wingman-api — thin client for the OPSI Wingman in the OPSI Daily Brief card.
  *
  * Endpoints hit:
  *   • POST /api/wingman/quick-chat  — non-streaming Hinglish chat (Claude Haiku)

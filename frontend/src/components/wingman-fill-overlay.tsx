@@ -1,5 +1,5 @@
 /**
- * WingmanFillOverlay — animated "✨ Wingman is filling this form…"
+ * WingmanFillOverlay — animated "✨ Opsi's magic is happening this form…"
  * banner that appears the moment a `fill_form` event lands on the
  * current screen. Auto-dismisses after ~3.5 s or when the operator
  * taps it.
@@ -103,7 +103,7 @@ export function WingmanFillOverlay() {
       const nextLines = fieldsToLines(p.fields || {});
       setLines(nextLines);
       setTickerIdx(0);
-      setReason(p.reason || "Wingman is filling this form…");
+      setReason(p.reason || "Opsi's magic is happening this form…");
       setVisible(true);
       if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
       dismissTimerRef.current = setTimeout(() => setVisible(false), AUTO_DISMISS_MS);

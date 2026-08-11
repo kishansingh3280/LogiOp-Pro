@@ -207,7 +207,7 @@ export default function DashboardScreen() {
 
         {/* Phase B — Dashboard widget order (top → bottom):
             Row 1: Customer will pay + You pay carrier (side by side, fixed)
-            Row 2: Now Brief (compact)
+            Row 2: OPSI Daily Brief (compact)
             Row 3: USD→INR + INR→THB forex
             Row 4: Bangkok Warehouse (full width)
             Row 5+: Vault Snapshot + Delivered/In-Transit/Pending carousel */}
@@ -258,16 +258,8 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* ---------------- Row 2 — Now Brief (compact) ---------------- */}
-        <NowBriefCard
-          pending={s.pending}
-          inTransit={s.in_transit + s.warehouse_arrived}
-          delivered={s.delivered}
-          warehouseBags={warehouse.data?.current_bags ?? 0}
-          warehouseKg={warehouse.data?.current_kg ?? 0}
-          activeTrips={(trips.data || []).filter((t) => ["pending","in_transit","partial_delivered"].includes((t.status || "").toLowerCase())).length}
-          overdueLedger={0}
-        />
+        {/* ---------------- Row 2 — OPSI Daily Brief (silent, text only) ---------------- */}
+        <NowBriefCard />
 
         {/* ---------------- Row 3 — USD→INR + INR→THB forex ---------------- */}
         <ForexWidget />

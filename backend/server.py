@@ -2628,21 +2628,27 @@ def _wingman_realtime_instructions(page: str, page_data_summary: str, user: Any,
     role = _g("role") or "Admin"
     salutation = f"{name} {honorific}".strip()
 
-    return f"""You are Wingman — {salutation} ka 24/7 AI business partner for LogiOp Pro (India ↔ Thailand hand-carry logistics).
+    return f"""You are OPSI — {salutation} ka 24/7 AI business partner for LogiOp Pro (India ↔ Thailand hand-carry logistics).
+
+OPSI = Open AI (front) + Wingman (back). Your name is OPSI. When the user
+says "Opsi", "OPSI" or "opsi" — activate and respond immediately.
 
 ## STRICT LANGUAGE RULES
 - ALWAYS respond in HINGLISH (Hindi words in Latin/Roman script + English mix).
 - NEVER Devanagari (देवनागरी). Only Latin letters.
-- Address {name} Sir as "Sir" naturally — never bare first name.
+- Address {name} Sir as "Sir" naturally — vary between "Sir" and "Kishan Sir" — never bare first name.
+- For Papa (role=Papa) → address as "Papa ji" with simple Hindi.
+- For Kanhaiya → clear simple instructions.
 - Keep responses SHORT — max 2 sentences unless a list is explicitly asked for.
 
 ## RESPONSE FORMAT — VERY IMPORTANT
 - For balance queries: "Yashwant Singh ko aap ₹15,000 denge" (direct, no fluff).
 - For "kitna dena/lena": give the exact number + direction ("lena" / "dena") + currency.
-- NEVER say "dashboard mein sync nahi", "data load nahi hua", or any error hedge — the app always gives you real data.
+- NEVER say "dashboard mein sync nahi", "data load nahi hua", or any error hedge — OPSI always gives real data.
 - If party not found in the list below: "Yeh party nahi mili Sir, naam check karein."
 - For memory saves: "Yaad kar liya Sir — [content]."
 - For memory recall: "Sir, yaad hai: [content list]."
+- Every action you perform = call it "Opsi Magic" when announcing.
 - Max 1 emoji per reply.
 
 ## OVERRIDE MODE (CRITICAL)
@@ -3381,6 +3387,103 @@ def _direction_phrase(balance: float, party_name: str, ccy_str: str) -> str:
 class WingmanChatRequest(BaseModel):
     message: str
     page: Optional[str] = None
+
+
+@api_router.get("/now-brief")
+async def now_brief(
+    user: Annotated[Optional[dict], Depends(optional_current_user)] = None,
+):
+    """OPSI Daily Brief — Silent, text-only briefing for the dashboard card.
+    
+    Returns a small JSON payload the frontend can render directly:
+    {
+      greeting: "Subah 8:30, Kishan Sir! 🙏",
+      time_of_day: "morning|afternoon|evening|night",
+      stats: {pending_shipments, in_transit, unpaid_invoices, outstanding_inr},
+      alerts: [{icon, text}, ...],  // 3-5 highest-priority items
+      top_action: "Sabse pehle: <one-liner>",
+    }
+    """
+    # Time-of-day greeting in IST
+    ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    hh = ist.hour
+    if 4 <= hh < 12:
+        tod, salutation = "morning", "Subah"
+    elif 12 <= hh < 16:
+        tod, salutation = "afternoon", "Dopahar"
+    elif 16 <= hh < 20:
+        tod, salutation = "evening", "Shaam"
+    else:
+        tod, salutation = "night", "Raat"
+    name = "Kishan Sir"
+    honorific = "Sir"
+    try:
+        if user:
+            n = user.get("display_name") or user.get("username") or ""
+            h = user.get("honorific") or "Sir"
+            honorific = h
+            if str(user.get("role","")).lower() == "papa":
+                name = "Papa ji"
+            elif n:
+                name = f"{n} {h}".strip()
+    except Exception:
+        pass
+    time_str = ist.strftime("%I:%M %p").lstrip("0")
+    greeting = f"{salutation} {time_str}, {name}! 🙏"
+
+    # Pull live stats
+    try:
+        stats = await _proxy_get("/api/dashboard/stats") or {}
+    except Exception:
+        stats = {}
+    try:
+        invs = await _proxy_get("/api/invoices") or []
+    except Exception:
+        invs = []
+    ships_block = stats.get("shipments") or {}
+    pending = int(ships_block.get("pending") or 0)
+    it = int(ships_block.get("in_transit") or 0)
+    unpaid = sum(1 for i in invs if str(i.get("status","")).lower() in ("draft","sent","unpaid"))
+    outstanding = float((stats.get("outstanding") or {}).get("inr") or 0)
+
+    # Alerts (max 4)
+    alerts: List[Dict[str, Any]] = []
+    if pending:
+        alerts.append({"icon": "📦", "text": f"{pending} shipments pending"})
+    if it:
+        alerts.append({"icon": "🚚", "text": f"{it} shipments in transit"})
+    if unpaid:
+        alerts.append({"icon": "🧾", "text": f"{unpaid} invoices unpaid"})
+    if outstanding > 0.5:
+        alerts.append({"icon": "💰", "text": f"Outstanding ₹{outstanding:,.0f}"})
+
+    # Top action decision
+    if pending > 0:
+        top = f"Sabse pehle: {pending} pending shipments deliver karo {honorific}."
+    elif unpaid > 0:
+        top = f"Sabse pehle: {unpaid} unpaid invoices follow-up karo {honorific}."
+    elif it > 0:
+        top = f"Sabse pehle: in-transit shipments track karo {honorific}."
+    else:
+        top = f"Aaj sab kuch clean hai {honorific} — enjoy karo!"
+
+    return {
+        "greeting": greeting,
+        "time_of_day": tod,
+        "stats": {
+            "pending_shipments": pending,
+            "in_transit": it,
+            "unpaid_invoices": unpaid,
+            "outstanding_inr": outstanding,
+        },
+        "alerts": alerts,
+        "top_action": top,
+        "spoken_summary": (
+            f"{name}, aaj ka update — "
+            + (", ".join(a["text"].lower() for a in alerts[:3]) if alerts else "sab clean hai")
+            + f". {top}"
+        ),
+    }
 
 
 @api_router.post("/wingman-chat")

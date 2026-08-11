@@ -6,7 +6,7 @@
  *   • Read the live transcript + orb state so screens can (in Phase 2)
  *     ghost-fill forms driven by the model.
  *   • Toggle a global `muted` flag that silences the AI narration
- *     (TTS) coming out of Now Brief without touching the mic/text
+ *     (TTS) coming out of OPSI Daily Brief without touching the mic/text
  *     flow. The Wingman TTS player subscribes to this flag.
  */
 import React, {
@@ -46,7 +46,7 @@ export function VoiceOrbProvider({ children }: { children: React.ReactNode }) {
   const rv = useRealtimeVoice();
   const [page, setPage] = useState<string>("dashboard");
   // Global mute for Wingman narration. Default = muted (matches the old
-  // Now Brief default so nobody gets surprised by talking on load).
+  // OPSI Daily Brief default so nobody gets surprised by talking on load).
   const [muted, setMuted] = useState<boolean>(true);
   const summaryRef = useRef<string>("");
 

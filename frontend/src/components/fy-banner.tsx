@@ -63,7 +63,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     paddingLeft: 14,
-    paddingRight: 72, // leave clearance for the BlockerBell in the top-right
+    paddingRight: 72, // leave clearance for the OPSI orb in the top-right
     paddingVertical: 8,
     backgroundColor: "rgba(255, 215, 0, 0.15)",
     borderColor: "rgba(255, 215, 0, 0.55)",

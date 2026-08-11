@@ -332,7 +332,7 @@ export default function ItemDetailScreen() {
             </View>
           </View>
 
-          <Field label="Tags · Wingman AI looks these up">
+          <Field label="Tags · OPSI looks these up">
             <View style={styles.tagWrap}>
               {tags.map((t) => (
                 <TouchableOpacity key={t} style={styles.tagChip} onPress={() => removeTag(t)}>

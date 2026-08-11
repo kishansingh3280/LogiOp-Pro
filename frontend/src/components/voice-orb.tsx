@@ -1,5 +1,5 @@
 /**
- * VoiceOrb — floating Wingman voice orb, rendered on every screen.
+ * VoiceOrb — floating OPSI orb, rendered on every screen.
  *
  * States:
  *   idle       → slow purple breathing glow
@@ -20,9 +20,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Dimensions, Easing, Keyboard, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 import { useAuth } from "@/src/auth/context";
+import { API_BASE } from "@/src/api/client";
 import { useVoiceOrb } from "@/src/context/voice-orb-context";
 
-const SIZE = 60;
+// OPSI orb geometry — per the "OPSI Complete System" spec.
+// 64px idle, 80px active. Two-color aura wrapper (glow) sits 12px
+// larger for the diffuse breathing halo effect.
+const SIZE = 64;
+const SIZE_ACTIVE = 80;
 
 // ---------------------------------------------------------------------------
 // Draggable orb — persisted corner + geometry helpers.
@@ -69,6 +74,49 @@ function anchorFor(
       return { x: w - off, y: h - bottomBase };
   }
 }
+
+function OpsiUnreadBadge() {
+  // Lightweight unread-notification counter for the OPSI orb.
+  // Reads /api/todo/blockers which returns the unified TODO list
+  // (unpaid invoices, verified-carrier gates, etc.). Any item that
+  // isn't dismissed counts as "unread". We refresh every 45 s so it
+  // stays live without polling too aggressively.
+  const [count, setCount] = useState<number>(0);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/todo/blockers`, {
+          headers: { Accept: "application/json" },
+        });
+        if (!r.ok) return;
+        const j = (await r.json()) as { items?: unknown[]; total?: number };
+        const total =
+          typeof j?.total === "number"
+            ? j.total
+            : Array.isArray(j?.items)
+              ? j.items.length
+              : 0;
+        if (alive) setCount(total);
+      } catch {
+        /* silent — badge just hides */
+      }
+    };
+    load();
+    const id = setInterval(load, 45_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+  if (count <= 0) return null;
+  return (
+    <View style={styles.badgeWrap} pointerEvents="none" testID="opsi-unread-badge">
+      <Text style={styles.badgeText}>{count > 9 ? "9+" : String(count)}</Text>
+    </View>
+  );
+}
+
 
 export function VoiceOrb() {
   const orb = useVoiceOrb();
@@ -350,7 +398,7 @@ export function VoiceOrb() {
           <TextInput
             value={text}
             onChangeText={setText}
-            placeholder="Wingman ko batao…"
+            placeholder="OPSI ko batao…"
             placeholderTextColor="rgba(255,255,255,0.55)"
             style={styles.panelInput}
             autoFocus
@@ -433,6 +481,11 @@ export function VoiceOrb() {
       ) : null}
 
       <View style={styles.orbWrap}>
+        {/* OPSI unread notifications badge — small red dot with count
+            in the top-right corner of the orb. Refreshes when the
+            component mounts and every 30s so it feels live without
+            hammering the API. */}
+        <OpsiUnreadBadge />
         {/* Radiating cyan rings while listening — expand outward + fade. */}
         {orb.state === "listening" ? (
           <>
@@ -501,7 +554,7 @@ export function VoiceOrb() {
             },
           ]}
           testID="voice-orb"
-          accessibilityLabel="Toggle Wingman voice assistant"
+          accessibilityLabel="Toggle OPSI"
         >
           <Ionicons
             name={icon}
@@ -570,9 +623,44 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   orbLarge: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: SIZE_ACTIVE,
+    height: SIZE_ACTIVE,
+    borderRadius: SIZE_ACTIVE / 2,
+  },
+  // Red unread-count badge floated over the top-right of the orb.
+  badgeWrap: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 5,
+    borderRadius: 10,
+    backgroundColor: "#FF3B30",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 5,
+    borderWidth: 2,
+    borderColor: "#0A0A14",
+    ...Platform.select({
+      web: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({ boxShadow: "0 0 8px rgba(255,59,48,0.7)" } as any),
+      },
+      default: {
+        shadowColor: "#FF3B30",
+        shadowOpacity: 0.7,
+        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 0 },
+      },
+    }),
+  },
+  badgeText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+    lineHeight: 12,
+    textAlign: "center",
   },
   panel: {
     minWidth: 260,
@@ -675,7 +763,7 @@ const styles = StyleSheet.create({
           backdropFilter: "blur(20px) saturate(180%)",
           WebkitBackdropFilter: "blur(20px) saturate(180%)",
           boxShadow:
-            "0 0 20px rgba(155,77,255,0.4), 0 0 40px rgba(0,255,136,0.2)",
+            "0 0 20px rgba(155,77,255,0.5), 0 0 40px rgba(0,245,255,0.3)",
           cursor: "pointer",
         } as any),
       },

@@ -7,7 +7,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "@/src/auth/context";
-import { AmbientBackground } from "@/src/components/ambient-background";import { BlockerBell } from "@/src/components/blocker-bell";
+import { AmbientBackground } from "@/src/components/ambient-background";
 import { FYBanner } from "@/src/components/fy-banner";
 import { GlassOverlay } from "@/src/components/glass-overlay";
 import { Sidebar } from "@/src/components/sidebar";
@@ -18,7 +18,6 @@ import { ScreenContextProvider } from "@/src/context/screen-context";
 import { SidebarProvider } from "@/src/context/sidebar-context";
 import { VoiceOrbProvider } from "@/src/context/voice-orb-context";
 import { VoiceOrb } from "@/src/components/voice-orb";
-import { RealtimeStatusBar } from "@/src/components/realtime-status-bar";
 import { FillFormBridge } from "@/src/components/fill-form-bridge";
 import { WingmanFillOverlay } from "@/src/components/wingman-fill-overlay";
 import { GhostUserProvider } from "@/src/ghost/ghost-user";
@@ -190,19 +189,16 @@ export default function RootLayout() {
                           />
                         </AuthShell>
                       </AuthGate>
-                      <BlockerBell />
                       <ToastHost />
-                      {/* Floating Wingman voice orb — visible on every screen */}
+                      {/* Floating OPSI orb — visible on every screen */}
                       <VoiceOrb />
-                      {/* Top status bar surfaces AI messages on non-dashboard screens */}
-                      <RealtimeStatusBar />
-                      {/* Global fill_form bridge: listens for the Voice
-                          Orb's fill_form tool calls and navigates the
-                          user to the target form. Renders nothing. */}
+                      {/* Global fill_form bridge: listens for OPSI's
+                          fill_form tool calls and navigates the user to
+                          the target form. Renders nothing. */}
                       <FillFormBridge />
                       {/* Ghost-typing overlay — animated banner shown
-                          on top of the current screen while Wingman is
-                          filling the form. */}
+                          on top of the current screen while Opsi's
+                          magic is filling the form. */}
                       <WingmanFillOverlay />
                     </VoiceOrbProvider>
                   </SidebarProvider>
