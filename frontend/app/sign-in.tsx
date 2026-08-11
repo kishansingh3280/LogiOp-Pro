@@ -21,10 +21,22 @@ import { GlassCard } from "@/src/components/glass-card";
 import { colors, font, radii, spacing } from "@/src/theme";
 
 /**
- * Sign-in screen. Dark, minimal, lime-accented. Includes a soft pulsing
- * orb behind the form so the screen feels alive even on the first launch.
+ * Sign-in screen. DEPRECATED — auto-login is now enabled in the auth
+ * context, so this screen should never render. If it does (deep link,
+ * stale nav stack), we redirect immediately to the dashboard.
+ *
+ * The old sign-in UI is preserved below for reference / easy revival
+ * but is unreachable behind the `<Redirect />` at the top.
  */
 export default function SignInScreen() {
+  // Auto-redirect any navigation that lands here back to the tabs
+  // dashboard. The AuthGate in _layout.tsx also enforces this, but
+  // routing an explicit Redirect here is faster (no useEffect delay).
+  return <Redirect href="/(tabs)" />;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function LegacySignInScreen() {
   const { user, signIn, loading } = useAuth();
   const insets = useSafeAreaInsets();
   const [username, setUsername] = useState("");

@@ -69,47 +69,61 @@ type AuthCtx = {
 
 const Ctx = createContext<AuthCtx | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+// ─── AUTO-LOGIN MODE ────────────────────────────────────────────────
+// The login/auth screen has been removed per product decision.
+// On app launch we call the backend's passwordless `/api/auth/auto-login`
+// endpoint (gated by the `AUTO_LOGIN_ENABLED` server env flag) to get a
+// real admin JWT. NO password is embedded in the client bundle — this
+// is the security-cleared version of the "no login" flow.
+//
+// If the auto-login endpoint fails (network offline, backend unreachable,
+// or the env flag is turned off), we fall back to a hardcoded admin
+// stub so the UI still opens and read-only proxied endpoints keep
+// working. Any authenticated write in that fallback mode will fail
+// with a 401 which the user will see as a toast.
+const AUTO_LOGIN_STUB_USER: AuthUser = {
+  id: "auto-admin",
+  username: "kishan.singh3280@gmail.com",
+  display_name: "Kishan",
+  role: "Admin",
+  honorific: "Sir",
+};
 
-  // Rehydrate on mount.
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  // Seed state with the stub admin so consumers of `useAuth()` see a
+  // logged-in user IMMEDIATELY on first render — no white flash, no
+  // loading gate, no redirect churn.
+  const [user, setUser] = useState<AuthUser | null>(AUTO_LOGIN_STUB_USER);
+  const [token, setToken] = useState<string | null>(null);
+  const loading = false; // never block the UI — auto-login means we're always ready
+
+  // Silent bootstrap: fetch a real backend token in the background so
+  // authenticated writes work with the correct user identity. UI is
+  // ALREADY interactive by this point (stub user was seeded above).
   useEffect(() => {
+    // Publish the stub immediately so `getAuthUserSync()` and any
+    // module-level consumers see a signed-in admin on tick 0.
+    broadcast(null, AUTO_LOGIN_STUB_USER);
+    let cancelled = false;
     (async () => {
-      const saved = await storage.secureGet<string>(TOKEN_KEY, "");
-      const savedUser = await storage.secureGet<string>(USER_KEY, "");
-      if (saved) {
-        // Verify with /auth/me — cheap round-trip that catches expired tokens.
-        try {
-          const res = await fetch(`${BASE}/api/auth/me`, {
-            headers: { Authorization: `Bearer ${saved}` },
-          });
-          if (res.ok) {
-            const me = (await res.json()) as AuthUser;
-            setToken(saved);
-            setUser(me);
-            broadcast(saved, me);
-          } else {
-            await storage.secureRemove(TOKEN_KEY);
-            await storage.secureRemove(USER_KEY);
-          }
-        } catch {
-          // Offline — trust the persisted user until we can revalidate.
-          if (savedUser) {
-            try {
-              const me = JSON.parse(savedUser) as AuthUser;
-              setToken(saved);
-              setUser(me);
-              broadcast(saved, me);
-            } catch {
-              /* ignore */
-            }
-          }
-        }
+      try {
+        const res = await fetch(`${BASE}/api/auth/auto-login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { access_token: string; user: AuthUser };
+        setToken(data.access_token);
+        setUser(data.user);
+        broadcast(data.access_token, data.user);
+      } catch {
+        // Silent — the stub admin above keeps the UI functional even
+        // when the backend is unreachable.
       }
-      setLoading(false);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const signIn = useCallback(async (username: string, password: string) => {

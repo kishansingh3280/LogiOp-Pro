@@ -1,4 +1,4 @@
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
@@ -6,7 +6,7 @@ import { LogBox, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { AuthProvider, useAuth } from "@/src/auth/context";
+import { AuthProvider } from "@/src/auth/context";
 import { AmbientBackground } from "@/src/components/ambient-background";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { FYBanner } from "@/src/components/fy-banner";
@@ -129,26 +129,15 @@ function AuthShell({ children }: { children: React.ReactNode }) {
 
 /**
  * Root layout — wraps everything in Auth + Screen-context providers.
- * `AuthGate` redirects between /sign-in and /(tabs) based on token state.
+ *
+ * `AuthGate` is now a pure PASS-THROUGH — the login screen has been
+ * removed and the AuthProvider auto-populates a signed-in admin user
+ * on mount. Any accidental navigation to `/sign-in` is handled by the
+ * `<Redirect href="/(tabs)" />` inside that route file itself, which
+ * is the mount-safe expo-router primitive (does NOT race with the
+ * Root Layout initialization).
  */
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  const segments = useSegments();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (loading) return;
-    const inAuthGroup = segments[0] === "sign-in";
-    if (!user && !inAuthGroup) {
-      router.replace("/sign-in");
-    } else if (user && inAuthGroup) {
-      router.replace("/(tabs)");
-    }
-  }, [user, loading, segments, router]);
-
-  if (loading) {
-    return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
-  }
   return <>{children}</>;
 }
 

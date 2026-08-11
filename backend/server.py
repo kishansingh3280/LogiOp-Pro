@@ -155,6 +155,38 @@ async def auth_me(user: Annotated[dict, Depends(get_current_user)]):
     return user_public(user)
 
 
+@api_router.post("/auth/auto-login", response_model=TokenResponse)
+async def auth_auto_login():
+    """Passwordless admin bootstrap for the "no login screen" flow.
+
+    The mobile client calls this once on launch to get a real JWT for
+    the seeded admin. No credentials transit the client bundle — the
+    ADMIN username comes from `AUTO_LOGIN_USERNAME` env (defaults to
+    `kishan.singh3280@gmail.com`) and NO password is checked.
+
+    This endpoint is intentionally gated:
+      • Disabled by default in production.
+      • Enable by setting `AUTO_LOGIN_ENABLED=true` in backend env.
+      • Returns 404 (not 403) when disabled so it looks like the
+        route doesn't exist to anyone probing.
+
+    When we're ready to bring auth back, flip `AUTO_LOGIN_ENABLED=false`
+    and the client will fall back to the stub-user path (still no crash,
+    just fewer authenticated write privileges).
+    """
+    if (os.getenv("AUTO_LOGIN_ENABLED") or "").strip().lower() not in ("1", "true", "yes"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    admin_username = (os.getenv("AUTO_LOGIN_USERNAME") or "kishan.singh3280@gmail.com").strip().lower()
+    user = await db.users.find_one({"username": admin_username})
+    if not user:
+        # Fallback lookup by email (accepts either form).
+        user = await db.users.find_one({"email": admin_username})
+    if not user or user.get("disabled", False):
+        raise HTTPException(status_code=404, detail="Not Found")
+    token = create_access_token(str(user["_id"]))
+    return TokenResponse(access_token=token, user=user_public(user))
+
+
 @api_router.post("/auth/register", response_model=UserPublic)
 async def auth_register(
     payload: RegisterPayload,
