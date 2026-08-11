@@ -465,7 +465,7 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
         setError(
           Platform.OS === "web"
             ? "This browser doesn't support WebRTC"
-            : "Voice needs a development build (Expo Go can't run react-native-webrtc)",
+            : "Voice is disabled on mobile — use the text panel instead",
         );
         return;
       }

@@ -476,21 +476,12 @@ export function VoiceOrb() {
     toast.warn(orb.error);
   }, [orb.error]);
 
-  // Hide the orb on the sign-in / auth screens — it should only appear
-  // once the user is logged in and inside the app shell. Placed AFTER
-  // all hooks to comply with React's Rules of Hooks.
-  //
-  // ALSO hide if the native voice stack failed to load (e.g. inside
-  // Expo Go on Android where `react-native-webrtc` isn't linked, OR
-  // when the whole voice pipeline throws at mount). The parent
-  // ErrorBoundary in `_layout.tsx` also catches catastrophic render
-  // errors and replaces the orb with `null` — this early return is the
-  // second line of defence per the "hide silently, don't crash" rule.
-  const stackUnsupported = !orb.supported;
-  const hidden =
-    !auth.user ||
-    (pathname || "").includes("sign-in") ||
-    stackUnsupported;
+  // Hide the orb ONLY on the sign-in / auth screens — it should appear
+  // on every screen inside the app shell, INCLUDING on mobile where
+  // voice is disabled (WebRTC was removed to prevent Android crashes).
+  // On native the orb still renders as a text-only interface: long-press
+  // opens the panel with blockers preview + text input; tap is a no-op.
+  const hidden = !auth.user || (pathname || "").includes("sign-in");
   if (hidden) return null;
 
   const stateColor = (() => {
@@ -902,10 +893,19 @@ export function VoiceOrb() {
             ]}
           />
         ) : null}
-        {/* Solid orb — Tap toggles voice, long-press (500ms) opens
-            the text panel. Orb size grows to 80×80 while listening. */}
+        {/* Solid orb — On web tap toggles voice, long-press opens the
+            panel. On native (mobile) voice is disabled (WebRTC removed
+            to prevent Android crashes) so tap ALSO opens the panel —
+            text-input becomes the primary interaction. */}
         <Pressable
-          onPress={() => orb.toggle()}
+          onPress={() => {
+            if (orb.supported) {
+              orb.toggle();
+            } else {
+              // No WebRTC on this platform — just open the text panel.
+              setPanelOpen((o) => !o);
+            }
+          }}
           onLongPress={() => setPanelOpen((o) => !o)}
           delayLongPress={500}
           style={({ pressed }) => [

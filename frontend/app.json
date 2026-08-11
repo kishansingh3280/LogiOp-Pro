@@ -52,8 +52,7 @@
         {
           "microphonePermission": "Voice commands ke liye — talk to Wingman AI"
         }
-      ],
-      "@config-plugins/react-native-webrtc"
+      ]
     ],
     "experiments": {
       "typedRoutes": true
