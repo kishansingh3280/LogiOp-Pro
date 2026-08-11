@@ -514,7 +514,17 @@ export function VoiceOrb() {
             ? "warning"
             : "sparkles";
 
-  const showLabel = orb.state !== "idle";
+  // ─── Voice-disabled affordance ──────────────────────────────────────
+  // When the native WebRTC module isn't linked (Expo Go, broken build)
+  // or the microphone permission was denied, the orb stays visible but
+  // shows a subtle "text-only" hint so the operator knows voice won't
+  // work AND that they can still tap/long-press to open the panel and
+  // type. This is per the "don't crash — degrade gracefully" contract.
+  const voiceDisabled =
+    !orb.supported ||
+    (orb.error || "").toLowerCase().includes("permission");
+
+  const showLabel = orb.state !== "idle" || voiceDisabled;
   const labelText =
     orb.state === "connecting"
       ? "Connecting…"
@@ -526,7 +536,9 @@ export function VoiceOrb() {
             ? "Bol raha hoon"
             : orb.state === "error"
               ? "Error"
-              : "";
+              : voiceDisabled
+                ? "Text only · tap"
+                : "";
 
   return (
     <Animated.View

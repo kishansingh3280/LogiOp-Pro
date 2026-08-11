@@ -50,7 +50,20 @@ export function useRealtimeVoice(): UseRealtimeVoiceResult {
   // Web: check browser WebRTC. Native: check whether the
   // react-native-webrtc native module linked successfully (only true
   // inside a development / production build — not in Expo Go).
-  const supported = hasWebRTC();
+  //
+  // Belt-and-suspenders try/catch — `hasWebRTC()` itself already guards
+  // its `require()` calls, but a corrupted native binary could still
+  // throw during property access on the resolved module. Treat any
+  // throw as "voice not supported" so the app never crashes at mount.
+  const supported = (() => {
+    try {
+      return hasWebRTC();
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[realtime] hasWebRTC threw at mount — voice disabled:", e);
+      return false;
+    }
+  })();
 
   const [state, setState] = useState<OrbState>("idle");
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);

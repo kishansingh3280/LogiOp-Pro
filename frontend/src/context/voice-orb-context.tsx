@@ -65,11 +65,20 @@ export function VoiceOrbProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toggle = useCallback(() => {
-    if (rv.isConnected || rv.state === "connecting") {
-      rv.disconnect();
-      return;
+    // Wrap in try/catch — `rv.connect()` returns a Promise but its
+    // synchronous entry (setState + rtc bridge lookup) can throw on
+    // Android if the native module is broken. Never let this crash
+    // the app; the orb will just stay red with an error toast.
+    try {
+      if (rv.isConnected || rv.state === "connecting") {
+        rv.disconnect();
+        return;
+      }
+      rv.connect({ page, summary: summaryRef.current });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[voice-orb] toggle threw — swallowed:", e);
     }
-    rv.connect({ page, summary: summaryRef.current });
   }, [rv, page]);
 
   const toggleMute = useCallback(() => setMuted((m) => !m), []);
