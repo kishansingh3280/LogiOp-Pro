@@ -1642,13 +1642,19 @@ async def _send_whatsapp_reply(to_phone: str, text: str) -> bool:
 async def whatsapp_verify(request: Request):
     """Meta Cloud API verification handshake. Meta sends:
     ?hub.mode=subscribe&hub.verify_token=X&hub.challenge=Y
-    We echo hub.challenge only if the token matches our env var."""
+
+    We echo hub.challenge only if the token matches. Accepts EITHER the
+    `WHATSAPP_VERIFY_TOKEN` env var (preferred for rotation) OR the
+    hard-coded `logiop_verify_2026` fallback so a fresh deploy without
+    the env var still passes Meta's handshake. Returns 403 on mismatch.
+    """
     params = request.query_params
     mode = params.get("hub.mode")
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
-    expected = os.getenv("WHATSAPP_VERIFY_TOKEN") or ""
-    if mode == "subscribe" and token and token == expected:
+    expected_env = (os.getenv("WHATSAPP_VERIFY_TOKEN") or "").strip()
+    expected_fallback = "logiop_verify_2026"
+    if mode == "subscribe" and token and token in {expected_env, expected_fallback}:
         return PlainTextResponse(challenge or "ok", status_code=200)
     return PlainTextResponse("forbidden", status_code=403)
 
@@ -1796,56 +1802,155 @@ async def line_broadcast_log(limit: int = 50):
 
 @api_router.post("/whatsapp/webhook")
 async def whatsapp_incoming(request: Request):
-    """Handle an incoming WhatsApp message. We always return 200 so Meta
-    doesn't disable the webhook on transient errors."""
+    """Handle an incoming WhatsApp Cloud API message and send an
+    OpenAI-generated auto-reply as OPSI (K Singh's AI assistant).
+
+    Flow per user spec:
+      1. Parse Meta payload → extract sender phone + message text
+      2. Call OpenAI (uses OPENAI_API_KEY env var) with the OPSI system
+         persona to generate a smart reply
+      3. POST the reply back via Cloud API v18.0 using
+         WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_NUMBER_ID from env
+
+    We ALWAYS return 200 so Meta doesn't disable the webhook on
+    transient errors — errors are logged instead.
+    """
     try:
         payload = await request.json()
     except Exception:
         return {"ok": True}
 
-    # Meta payload shape (simplified):
-    # { entry: [{ changes: [{ value: { messages: [{ from, text: { body } }] } }] }] }
+    # ---- Extract sender phone + message text (Meta v18.0 payload shape) ----
     try:
         entry = (payload.get("entry") or [{}])[0]
         changes = (entry.get("changes") or [{}])[0]
         value = changes.get("value") or {}
         messages = value.get("messages") or []
         if not messages:
-            return {"ok": True}
+            return {"ok": True}  # status callback or non-message event
         msg = messages[0]
-        from_phone = msg.get("from") or ""
-        text = (msg.get("text") or {}).get("body") or ""
-        if not text.strip():
+        from_phone = (msg.get("from") or "").strip()
+        text = ((msg.get("text") or {}).get("body") or "").strip()
+        if not from_phone or not text:
             return {"ok": True}
-    except Exception:
+    except Exception as e:
+        logging.warning("[whatsapp/webhook] payload parse failed: %s", e)
         return {"ok": True}
 
-    user_id, user_key = _resolve_whatsapp_user(from_phone)
-    reply = await _generate_wingman_reply(
-        user_id=user_id,
-        user_key=user_key,
-        message=text,
-        session_id=f"user:{user_id}" if user_id else f"whatsapp:{from_phone}",
-    )
-    # Best-effort delivery. Log if send fails so the operator can see it
-    # in the Wingman Activity log too.
-    ok = await _send_whatsapp_reply(from_phone, reply)
+    # ---- Generate smart reply via OpenAI as OPSI ----
+    reply = await _opsi_openai_reply(text, from_phone)
+
+    # ---- Send back via WhatsApp Cloud API v18.0 ----
+    delivery_ok = await _send_whatsapp_v18(from_phone, reply)
+
+    # ---- Persist to activity log (same shape as prior handler) ----
     try:
         await db.wingman_activity.insert_one({
             "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "user_key": user_key,
+            "user_id": None,
+            "user_key": None,
             "action": "whatsapp_reply",
             "entity_type": "whatsapp",
             "entity_label": f"WhatsApp → {from_phone}",
-            "status": "ok" if ok else "error",
-            "error": None if ok else "delivery failed (check env vars)",
+            "status": "ok" if delivery_ok else "error",
+            "error": None if delivery_ok else "delivery failed (check env vars)",
             "summary": reply[:200],
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
     except Exception:
         pass
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-powered OPSI reply generator (used by the WhatsApp webhook).
+# Kept intentionally small and self-contained so it doesn't touch any
+# other assistant/chat wiring — per the "do NOT modify existing
+# endpoints" contract for this integration.
+# ---------------------------------------------------------------------------
+_OPSI_SYSTEM_PROMPT = (
+    "You are OPSI, K Singh's personal AI assistant for a India-Thailand "
+    "logistics + bullion trading business. You reply on WhatsApp.\n\n"
+    "Style:\n"
+    "  • Warm, concise Hinglish (mix Hindi + English) unless the user "
+    "    writes in pure English, then reply in English.\n"
+    "  • Address K Singh with 'Sir' honorific.\n"
+    "  • Keep replies short (2-4 sentences) — WhatsApp texts should be scannable.\n"
+    "  • If the user asks about shipments, invoices, ledger, or trips, tell "
+    "    them to check the LogiOp Pro app (you can't yet access the DB from "
+    "    WhatsApp — that's coming).\n"
+    "  • Never invent data (numbers, party names, dates). If unsure, say so.\n"
+    "  • Never mention that you are 'ChatGPT', 'GPT-4', 'OpenAI', or any model "
+    "    name — you are OPSI.\n"
+    "  • Emojis are welcome but sparingly (max 2 per reply)."
+)
+
+
+async def _opsi_openai_reply(user_text: str, from_phone: str) -> str:
+    """Non-streaming smart reply as OPSI, via OpenAI. Falls back to a
+    friendly canned message when the API key is missing or the request
+    fails so the webhook never leaves the sender hanging."""
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return "Namaste Sir 🙏 — OPSI abhi setup ho raha hai. LogiOp Pro app kholein."
+    try:
+        # Lazy import so a missing openai wheel never breaks server import.
+        from openai import AsyncOpenAI  # type: ignore
+        client = AsyncOpenAI(api_key=api_key)
+        completion = await client.chat.completions.create(
+            model=os.getenv("OPSI_WHATSAPP_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": _OPSI_SYSTEM_PROMPT},
+                {"role": "user", "content": user_text[:2000]},
+            ],
+            temperature=0.6,
+            max_tokens=280,
+        )
+        text = ((completion.choices[0].message.content or "").strip())
+        # WhatsApp body cap is 4096 chars; we stay well under.
+        return text[:1500] if text else "Sir, samajh nahi paaya — thoda saaf batayein? 🙏"
+    except Exception as e:
+        logging.warning("[opsi/openai] reply failed for %s: %s", from_phone, e)
+        return "Sir, abhi thoda issue aa raha hai — thodi der baad try karein 🙏"
+
+
+async def _send_whatsapp_v18(to_phone: str, text: str) -> bool:
+    """POST a text reply back to the Meta WhatsApp Cloud API on v18.0
+    (per integration spec). Returns True on 2xx. Silent no-op with a
+    logged warning if the required env vars are missing."""
+    token = (os.getenv("WHATSAPP_ACCESS_TOKEN") or "").strip()
+    phone_id = (os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip()
+    if not token or not phone_id:
+        logging.info("[whatsapp/v18] not configured — skipping send to %s", to_phone)
+        return False
+    url = f"https://graph.facebook.com/v18.0/{phone_id}/messages"
+    body = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "text",
+        "text": {"body": text[:4000]},  # WhatsApp text body cap
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                url,
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            if r.status_code >= 300:
+                logging.warning(
+                    "[whatsapp/v18] send %s -> %d: %s",
+                    to_phone,
+                    r.status_code,
+                    r.text[:200],
+                )
+            return r.status_code < 300
+    except Exception as e:
+        logging.warning("[whatsapp/v18] send %s exception: %s", to_phone, e)
+        return False
 
 
 
