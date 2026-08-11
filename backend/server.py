@@ -130,8 +130,18 @@ async def get_status_checks():
 # --------------------------------------------------------------------------
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def auth_login(payload: LoginPayload):
+    # Accept EITHER a `username` OR an `email` in the payload. The
+    # Pydantic model already enforces that at least one is present, so
+    # here we just pick whichever the caller supplied and query Mongo.
+    # Case-insensitive match on both fields (usernames and emails are
+    # stored lowercased on this backend).
     username = (payload.username or "").strip().lower()
-    user = await db.users.find_one({"username": username})
+    email = (payload.email or "").strip().lower()
+    user = None
+    if username:
+        user = await db.users.find_one({"username": username})
+    if not user and email:
+        user = await db.users.find_one({"email": email})
     # Always run bcrypt to keep the response time constant (no user-enum leak).
     stored_hash = user["password_hash"] if user else hash_password("dummy-timing")
     if not user or not verify_password(payload.password, stored_hash) or user.get("disabled", False):

@@ -28,7 +28,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 load_dotenv()
 
@@ -64,8 +64,25 @@ class TokenResponse(BaseModel):
 
 
 class LoginPayload(BaseModel):
-    username: str
+    # Login accepts EITHER a username OR an email. This matches how the
+    # user document is stored today (username-only for legacy accounts)
+    # while remaining compatible with any client that historically sent
+    # `email` (the remote proxy schema used it before). At least one of
+    # the two must be provided — the model_validator below enforces it.
+    #
+    # Password check itself is unchanged (bcrypt against the stored
+    # `password_hash`). Only the *identifier* lookup is now flexible.
+    username: Optional[str] = None
+    email: Optional[str] = None
     password: str
+
+    @model_validator(mode="after")
+    def _require_identifier(self) -> "LoginPayload":  # type: ignore[override]
+        if not (self.username and self.username.strip()) and not (
+            self.email and self.email.strip()
+        ):
+            raise ValueError("username or email is required")
+        return self
 
 
 class RegisterPayload(BaseModel):
