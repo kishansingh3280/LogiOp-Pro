@@ -37,6 +37,7 @@ import { useApi } from "@/src/api/hooks";
 import type { DashboardStats } from "@/src/api/types";
 import { useAuth } from "@/src/auth/context";
 import { FYPicker } from "@/src/components/fy-picker";
+import { GlowingLogo } from "@/src/components/glowing-logo";
 import { currentSidebarWidth, useSidebar } from "@/src/context/sidebar-context";
 import { colors, radii } from "@/src/theme";
 
@@ -278,11 +279,12 @@ function SidebarBody({ width, expanded, onNavigate }: { width: number; expanded:
         {/* Header — logo, company, FY */}
         <View style={styles.header}>
           {showLabels ? (
-            <Text style={styles.logo} testID="sidebar-logo-full">LogiOp Pro</Text>
+            // Expanded sidebar: the full "LogiOp Pro" horizontal lockup
+            // with the breathing tri-color glow animation baked in.
+            <GlowingLogo variant="lockup" width={160} style={{ alignItems: "flex-start" }} />
           ) : (
-            <View style={styles.logoDot} testID="sidebar-logo-mini">
-              <Ionicons name="flash" size={18} color={colors.lime} />
-            </View>
+            // Collapsed rail: just the square LP mark, same glow.
+            <GlowingLogo variant="mark" size={32} style={{ alignItems: "flex-start" }} />
           )}
           {showLabels ? (
             <View style={{ marginTop: 10, gap: 8, alignItems: "flex-start" }}>

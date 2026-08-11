@@ -2151,3 +2151,75 @@ agent_communication:
           Both test suites now green:
           • test_wingman_100_commands.py:  100 / 100
           • test_wingman_200_ultimate.py:  200 / 200
+
+  - task: "LP branding — favicon.png/ico, sidebar lockup logo, breathing tri-color glow"
+    implemented: true
+    working: true
+    file: "frontend/public/{favicon.png,favicon.ico,lp-logo-full.png}, frontend/assets/images/{icon,favicon,adaptive-icon,splash-image,lp-icon,lp-logo-full}.png, frontend/src/components/glowing-logo.tsx, frontend/src/components/sidebar.tsx, frontend/app.json"
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Full branding pass — LP purple/cyan/mint neon aesthetic wired up.
+          
+          Assets:
+          • Downloaded both provided JPEG artworks from Emergent CDN.
+          • Converted to 512×512 transparent PNG (square LP icon) + multi-size
+            .ico (16/32/48/64) via PIL.
+          • Sidebar lockup PNG resized to 480×322 (aspect preserved).
+          • Copied same LP icon to icon.png / favicon.png / adaptive-icon.png /
+            splash-image.png so every Expo touchpoint (iOS home icon, Android
+            adaptive, web favicon, splash) uses the LP mark.
+          • Files placed at:
+            /app/frontend/public/{favicon.png, favicon.ico, lp-logo-full.png}
+            /app/frontend/assets/images/{icon, favicon, adaptive-icon,
+                                          splash-image, lp-icon,
+                                          lp-logo-full}.png
+          
+          GlowingLogo component (src/components/glowing-logo.tsx):
+          • Cross-platform (web + iOS + Android) with two variants:
+             - variant="mark" (square LP, size=32 default)
+             - variant="lockup" (horizontal "LogiOp Pro" at width=160 default)
+          • WEB: keyframes injected once at module load, applied via
+            React Native Web's `animationName`/`animationDuration`/
+            `animationIterationCount`/`animationTimingFunction` inline
+            style props (className is stripped by RN Web so we use the
+            native RN-Web animation shim instead).
+          • Verified live via computed style in headless browser:
+             frame @ 0.0s : drop-shadow(#00FF88 10px) drop-shadow(#9B4DFF 20px)
+             frame @ 1.5s : drop-shadow(#9652FF 8px) drop-shadow(#00F5FB 16px)
+             — colors literally interpolating mint→violet→cyan every 4s.
+          • NATIVE (iOS): Reanimated `interpolateColor` on shadowColor
+            with 4s ease-in-out looping shared value.
+          • NATIVE (Android): scale pulse ±2% (shadows can't be tinted
+            on Android — closest cross-platform approximation).
+          • Module also injects <link rel="icon"/apple-touch-icon/shortcut>
+            tags so browsers/PWA installers pick up the LP favicon
+            reliably even before Expo's HTML template runs.
+          
+          Sidebar integration:
+          • "LogiOp Pro" text replaced with <GlowingLogo variant="lockup"
+            width={160} /> in expanded sidebar.
+          • Compact rail: <GlowingLogo variant="mark" size={32} /> replaces
+            the old flash-icon dot.
+          
+          app.json:
+          • name: "frontend" → "LogiOp Pro"
+          • splash backgroundColor: "#000000" → "#07070f" (deep space)
+          • android adaptiveIcon backgroundColor: "#000000" → "#07070f"
+          • All image paths already point to the new LP artwork via the
+            asset copies above.
+          
+          Web validation:
+          • http://localhost:3000/favicon.ico → 200 OK
+          • http://localhost:3000/favicon.png → 200 OK
+          • Browser title → "LogiOp Pro"
+          • Screenshot at 1280×800 shows the lockup logo cleanly rendered
+            in the sidebar with the neon halo visible (mid-animation
+            captured — cyan/violet drop-shadow bloom around LP mark).
+          
+          Zero regressions: sidebar quick-stats still show live 5/1/2/2,
+          Now Brief still greets once per day, More highlight still
+          working on /notifications, /items, etc.

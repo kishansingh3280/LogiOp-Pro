@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "LogiOp Pro",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -20,7 +20,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#07070f"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.emergent.nativelogisticshub.ay4275",
@@ -43,7 +43,7 @@
           "image": "./assets/images/splash-image.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#000000"
+          "backgroundColor": "#07070f"
         }
       ],
       "@react-native-community/datetimepicker",
