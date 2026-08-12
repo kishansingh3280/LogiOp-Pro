@@ -19,6 +19,7 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   ScrollView,
   Share,
@@ -29,7 +30,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiGet } from "@/src/lib/api";
+import { apiGet, apiPatch } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { fmtCurrency, longDate, shortDate } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -71,20 +72,28 @@ export default function PartyStatement() {
   const router = useRouter();
   const [party, setParty] = useState<Party | null>(null);
   const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [verifiedIds, setVerifiedIds] = useState<Set<string>>(new Set());
+  const [lastVerifiedAt, setLastVerifiedAt] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     setError(null);
     try {
-      const [p, es] = await Promise.all([
+      const [p, es, v] = await Promise.all([
         apiGet<Party>(`/api/parties/${id}`),
         apiGet<Entry[]>(`/api/ledger/entries?party_id=${id}`),
+        apiGet<{ entry_ids: string[]; last_verified_at?: string }>(
+          `/api/ledger/verified?party_id=${id}`,
+        ).catch(() => ({ entry_ids: [] as string[], last_verified_at: "" })),
       ]);
       setParty(p);
       setEntries(Array.isArray(es) ? es : []);
+      setVerifiedIds(new Set(v?.entry_ids || []));
+      setLastVerifiedAt(v?.last_verified_at || "");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -95,6 +104,32 @@ export default function PartyStatement() {
   useEffect(() => {
     if (token && id) load();
   }, [token, id, load]);
+
+  // Fix 1b — mark all unverified entries as verified
+  const markAllVerified = useCallback(async () => {
+    if (verifying || !entries || entries.length === 0) return;
+    const unverified = entries.filter((e) => !verifiedIds.has(e.id));
+    if (unverified.length === 0) {
+      Alert.alert("Already verified", "All entries are already verified.");
+      return;
+    }
+    setVerifying(true);
+    try {
+      await Promise.all(
+        unverified.map((e) =>
+          apiPatch(`/api/ledger/entries/${e.id}`, { verified: true }).catch(() => null),
+        ),
+      );
+      // Re-fetch verified map so the UI reflects the new state
+      await load();
+      const today = new Date().toISOString().slice(0, 10);
+      Alert.alert("Verified", `All entries verified till ${today}.`);
+    } catch (e) {
+      Alert.alert("Mark failed", (e as Error).message || "Try again.");
+    } finally {
+      setVerifying(false);
+    }
+  }, [verifying, entries, verifiedIds, load]);
 
   // ── Ledger balance convention (per-party):
   //     +ve balance → they owe us (receivable)
@@ -263,6 +298,16 @@ export default function PartyStatement() {
               />
             </View>
 
+            {/* Fix 1b — Verified till banner */}
+            {lastVerifiedAt ? (
+              <View style={styles.verifiedBanner}>
+                <Ionicons name="shield-checkmark" size={16} color={colors.brand} />
+                <Text style={styles.verifiedText}>
+                  Verified till {shortDate(lastVerifiedAt)}
+                </Text>
+              </View>
+            ) : null}
+
             {/* Statement table */}
             <Text style={styles.section}>Entries · {rows.length}</Text>
             <GlassCard padded={false} style={styles.tableCard}>
@@ -290,7 +335,17 @@ export default function PartyStatement() {
                         idx < rows.length - 1 && styles.tableRowBorder,
                       ]}
                     >
-                      <Text style={[styles.tdDate, { flex: 1.4 }]}>{shortDate(r.entry.date)}</Text>
+                      <View style={[styles.tdDateWrap, { flex: 1.4 }]}>
+                        {verifiedIds.has(r.entry.id) ? (
+                          <Ionicons
+                            name="checkmark-circle"
+                            size={12}
+                            color={colors.textDim}
+                            style={{ marginRight: 4 }}
+                          />
+                        ) : null}
+                        <Text style={styles.tdDate}>{shortDate(r.entry.date)}</Text>
+                      </View>
                       <View style={{ flex: 3 }}>
                         <Text style={styles.tdDesc} numberOfLines={2}>
                           {r.entry.description}
@@ -329,6 +384,31 @@ export default function PartyStatement() {
               Tip: from the share sheet, pick <Text style={styles.tipStrong}>Print</Text> and
               choose <Text style={styles.tipStrong}>Save as PDF</Text> on Android.
             </Text>
+
+            {/* Fix 1b — Mark as Verified CTA */}
+            {rows.length > 0 ? (
+              <TouchableOpacity
+                style={[styles.verifyBtn, verifying && { opacity: 0.6 }]}
+                onPress={markAllVerified}
+                disabled={verifying}
+                activeOpacity={0.8}
+              >
+                {verifying ? (
+                  <ActivityIndicator color={colors.brand} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="shield-checkmark-outline"
+                      size={16}
+                      color={colors.brand}
+                    />
+                    <Text style={styles.verifyBtnText}>
+                      Mark as Verified · till today
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : null}
           </>
         ) : null}
       </ScrollView>
@@ -479,6 +559,40 @@ const styles = StyleSheet.create({
   },
   tableRowBorder: { borderBottomWidth: 1, borderBottomColor: colors.divider },
   tdDate: { color: colors.textMuted, fontSize: 10, fontWeight: "600" },
+  tdDateWrap: { flexDirection: "row", alignItems: "center" },
+
+  // Fix 1b — verified banner + mark button
+  verifiedBanner: {
+    marginTop: spacing.md,
+    padding: spacing.sm,
+    paddingHorizontal: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.brandSoft,
+    borderColor: colors.brandBorder,
+    borderWidth: 1,
+    borderRadius: radii.md,
+  },
+  verifiedText: { color: colors.brand, fontSize: 12, fontWeight: "700" },
+  verifyBtn: {
+    marginTop: spacing.md,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    backgroundColor: colors.brandSoft,
+  },
+  verifyBtnText: {
+    color: colors.brand,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
   tdDesc: { color: colors.text, fontSize: 11, lineHeight: 15 },
   tdRef: { color: colors.textDim, fontSize: 9, marginTop: 2, textTransform: "uppercase", letterSpacing: 0.4 },
   tdVal: { fontSize: 11, fontWeight: "700" },

@@ -15,16 +15,20 @@ import { Stack, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Modal,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiGet } from "@/src/lib/api";
+import { apiGet, apiPost } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { fmtCurrency, shortDate, titleCase } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -71,6 +75,32 @@ type BullionRates = {
   updated_at?: string;
 };
 
+// Fix 2 · vault summary shape returned by GET /api/bullion/vault
+type VaultSummary = {
+  total_gold_baht: number;
+  total_inr: number;
+  total_thb: number;
+  open_txn_count: number;
+};
+
+// Fix 2 · generic trip shape (from /api/trips)
+type GenericTrip = {
+  id: string;
+  carrier_id?: string;
+  flight_number?: string;
+  airline?: string;
+  departure_date?: string;
+  origin?: string;
+  destination?: string;
+  capacity_kg?: number;
+  gold_baht?: number;
+  currency_amount?: number;
+  carry_charge?: number;
+  status?: string;
+};
+
+type Party = { id: string; name: string; role?: string };
+
 const STATUS: Record<string, { tint: string; soft: string }> = {
   planned: { tint: colors.warn, soft: colors.warnSoft },
   in_transit: { tint: colors.info, soft: colors.infoSoft },
@@ -82,23 +112,38 @@ export default function BullionScreen() {
   const { token } = useAuth();
   const router = useRouter();
   const [trips, setTrips] = useState<BullionTrip[] | null>(null);
+  const [genericTrips, setGenericTrips] = useState<GenericTrip[] | null>(null);
+  const [carriers, setCarriers] = useState<Party[]>([]);
   const [txns, setTxns] = useState<BullionTxn[] | null>(null);
   const [rates, setRates] = useState<BullionRates | null>(null);
+  const [vaultLive, setVaultLive] = useState<VaultSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [savingTrip, setSavingTrip] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [t, x, r] = await Promise.all([
+      const [t, gt, x, r, v, ps] = await Promise.all([
         apiGet<BullionTrip[]>("/api/bullion/trips"),
+        apiGet<GenericTrip[]>("/api/trips").catch(() => [] as GenericTrip[]),
         apiGet<BullionTxn[]>("/api/bullion/transactions"),
         apiGet<BullionRates>("/api/bullion/rates").catch(() => null as BullionRates | null),
+        apiGet<VaultSummary>("/api/bullion/vault").catch(() => null as VaultSummary | null),
+        apiGet<Party[]>("/api/parties").catch(() => [] as Party[]),
       ]);
       setTrips(Array.isArray(t) ? t : []);
+      setGenericTrips(Array.isArray(gt) ? gt : []);
       setTxns(Array.isArray(x) ? x : []);
       setRates(r);
+      setVaultLive(v);
+      setCarriers(
+        (Array.isArray(ps) ? ps : []).filter(
+          (p) => (p.role || "").toLowerCase() === "carrier",
+        ),
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -139,10 +184,29 @@ export default function BullionScreen() {
   }, [rates, vault.goldBaht]);
 
   const sortedTrips = useMemo(() => {
-    return (trips || [])
+    // Merge legacy bullion trips + generic /api/trips into one list.
+    const adapted: BullionTrip[] = (genericTrips || []).map((g) => {
+      const carrier = carriers.find((c) => c.id === g.carrier_id);
+      return {
+        id: `gt-${g.id}`,
+        date: g.departure_date || "",
+        origin: g.origin,
+        destination: g.destination,
+        carrier_name: carrier?.name || g.carrier_id || undefined,
+        carrier_party_id: g.carrier_id,
+        airline: g.airline,
+        flight_number: g.flight_number,
+        status: g.status,
+        available_weight_kg: g.capacity_kg,
+        gold_baht: g.gold_baht,
+        currency_amount: g.currency_amount,
+        carry_charge_inr: g.carry_charge,
+      };
+    });
+    return [...(trips || []), ...adapted]
       .slice()
       .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [trips]);
+  }, [trips, genericTrips, carriers]);
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
@@ -195,7 +259,7 @@ export default function BullionScreen() {
                     <Text style={styles.vaultLabel}>Gold on hand</Text>
                   </View>
                   <Text style={styles.vaultValueGold}>
-                    {vault.goldBaht.toFixed(2)}
+                    {(vaultLive?.total_gold_baht ?? vault.goldBaht).toFixed(2)}
                     <Text style={styles.vaultUnit}> baht</Text>
                   </Text>
                   {goldValueInr ? (
@@ -208,17 +272,18 @@ export default function BullionScreen() {
                     <Ionicons name="wallet" size={14} color={colors.info} />
                     <Text style={styles.vaultLabel}>Currency</Text>
                   </View>
-                  {vault.currencyInr ? (
+                  {(vaultLive?.total_inr ?? vault.currencyInr) ? (
                     <Text style={styles.vaultValueCash}>
-                      {fmtCurrency(vault.currencyInr, "INR")}
+                      {fmtCurrency(vaultLive?.total_inr ?? vault.currencyInr, "INR")}
                     </Text>
                   ) : null}
-                  {vault.currencyThb ? (
+                  {(vaultLive?.total_thb ?? vault.currencyThb) ? (
                     <Text style={styles.vaultValueCashSm}>
-                      {fmtCurrency(vault.currencyThb, "THB")}
+                      {fmtCurrency(vaultLive?.total_thb ?? vault.currencyThb, "THB")}
                     </Text>
                   ) : null}
-                  {!vault.currencyInr && !vault.currencyThb ? (
+                  {!(vaultLive?.total_inr ?? vault.currencyInr) &&
+                  !(vaultLive?.total_thb ?? vault.currencyThb) ? (
                     <Text style={styles.vaultValueCash}>—</Text>
                   ) : null}
                 </View>
@@ -226,7 +291,8 @@ export default function BullionScreen() {
               <View style={styles.vaultFooter}>
                 <Ionicons name="lock-closed" size={12} color={colors.textDim} />
                 <Text style={styles.dim}>
-                  {vault.openTxns} open transaction{vault.openTxns === 1 ? "" : "s"}
+                  {vaultLive?.open_txn_count ?? vault.openTxns} open transaction
+                  {(vaultLive?.open_txn_count ?? vault.openTxns) === 1 ? "" : "s"}
                 </Text>
               </View>
             </GlassCard>
@@ -265,8 +331,18 @@ export default function BullionScreen() {
 
         {/* Trips list */}
         <View style={styles.tripsHeader}>
-          <Text style={styles.section}>Carrier flights</Text>
-          <Text style={styles.dim}>{sortedTrips.length} total</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.section}>Carrier flights</Text>
+            <Text style={styles.dim}>{sortedTrips.length} total</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.addTripBtn}
+            onPress={() => setModalOpen(true)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="add" size={16} color={colors.bgSolid} />
+            <Text style={styles.addTripBtnText}>Add Trip</Text>
+          </TouchableOpacity>
         </View>
 
         {sortedTrips.length === 0 && !loading ? (
@@ -275,8 +351,16 @@ export default function BullionScreen() {
               <Ionicons name="airplane-outline" size={32} color={colors.textDim} />
               <Text style={styles.emptyTitle}>No bullion trips yet</Text>
               <Text style={styles.emptyBodyText}>
-                Trips scheduled from the desktop console will appear here.
+                Tap &quot;+ Add Trip&quot; to schedule your first carrier flight.
               </Text>
+              <TouchableOpacity
+                style={[styles.addTripBtn, { marginTop: spacing.md }]}
+                onPress={() => setModalOpen(true)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="add" size={16} color={colors.bgSolid} />
+                <Text style={styles.addTripBtnText}>Add Trip</Text>
+              </TouchableOpacity>
             </View>
           </GlassCard>
         ) : null}
@@ -285,6 +369,26 @@ export default function BullionScreen() {
           <TripRow key={trip.id} trip={trip} />
         ))}
       </ScrollView>
+
+      {modalOpen ? (
+        <AddTripModal
+          carriers={carriers}
+          saving={savingTrip}
+          onClose={() => setModalOpen(false)}
+          onSubmit={async (payload) => {
+            setSavingTrip(true);
+            try {
+              await apiPost("/api/trips", payload);
+              setModalOpen(false);
+              await load();
+            } catch (e) {
+              Alert.alert("Add trip failed", (e as Error).message || "Try again.");
+            } finally {
+              setSavingTrip(false);
+            }
+          }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -363,7 +467,384 @@ function TripRow({ trip }: { trip: BullionTrip }) {
   );
 }
 
+// ─── Add Trip modal (Fix 2) ─────────────────────────────────────────
+type AddTripPayload = {
+  carrier_id?: string;
+  flight_number?: string;
+  airline?: string;
+  departure_date?: string;
+  origin?: string;
+  destination?: string;
+  capacity_kg?: number;
+  gold_baht?: number;
+  currency_amount?: number;
+  carry_charge?: number;
+  status?: string;
+};
+
+function AddTripModal({
+  carriers,
+  saving,
+  onClose,
+  onSubmit,
+}: {
+  carriers: Party[];
+  saving: boolean;
+  onClose: () => void;
+  onSubmit: (payload: AddTripPayload) => void | Promise<void>;
+}) {
+  const [carrierId, setCarrierId] = useState<string | null>(null);
+  const [flightNumber, setFlightNumber] = useState("");
+  const [airline, setAirline] = useState("");
+  const [departureDate, setDepartureDate] = useState(
+    new Date().toISOString().slice(0, 10),
+  );
+  const [direction, setDirection] = useState<"IN_TO_TH" | "TH_TO_IN">("IN_TO_TH");
+  const [capacityKg, setCapacityKg] = useState("");
+  const [gold, setGold] = useState("");
+  const [currency, setCurrency] = useState("");
+  const [carry, setCarry] = useState("");
+
+  const canSubmit = !!carrierId && !!departureDate;
+
+  const handleSave = () => {
+    if (!canSubmit) return;
+    const origin = direction === "IN_TO_TH" ? "India" : "Thailand";
+    const destination = direction === "IN_TO_TH" ? "Thailand" : "India";
+    onSubmit({
+      carrier_id: carrierId!,
+      flight_number: flightNumber.trim() || undefined,
+      airline: airline.trim() || undefined,
+      departure_date: departureDate,
+      origin,
+      destination,
+      capacity_kg: parseFloat(capacityKg) || undefined,
+      gold_baht: parseFloat(gold) || undefined,
+      currency_amount: parseFloat(currency) || undefined,
+      carry_charge: parseFloat(carry) || undefined,
+      status: "scheduled",
+    });
+  };
+
+  return (
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Schedule a Trip</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={10}>
+              <Ionicons name="close" size={22} color={colors.textDim} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={{ maxHeight: 540 }} showsVerticalScrollIndicator={false}>
+            {/* Carrier */}
+            <Text style={styles.modalLabel}>Carrier</Text>
+            {carriers.length === 0 ? (
+              <Text style={styles.dim}>
+                No carrier parties yet. Add one from the desktop console first.
+              </Text>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 8, paddingBottom: 4 }}
+              >
+                {carriers.map((c) => {
+                  const active = carrierId === c.id;
+                  return (
+                    <TouchableOpacity
+                      key={c.id}
+                      style={[styles.mChip, active && styles.mChipActive]}
+                      onPress={() => setCarrierId(c.id)}
+                      activeOpacity={0.75}
+                    >
+                      <Text
+                        style={[
+                          styles.mChipText,
+                          { color: active ? colors.brand : colors.textMuted },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {c.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            {/* Direction */}
+            <Text style={styles.modalLabel}>Direction</Text>
+            <View style={styles.segment}>
+              {(["IN_TO_TH", "TH_TO_IN"] as const).map((d) => (
+                <TouchableOpacity
+                  key={d}
+                  style={[
+                    styles.segmentBtn,
+                    direction === d && {
+                      backgroundColor: colors.brandSoft,
+                      borderColor: colors.brand,
+                    },
+                  ]}
+                  onPress={() => setDirection(d)}
+                  activeOpacity={0.75}
+                >
+                  <Text
+                    style={[
+                      styles.segmentText,
+                      { color: direction === d ? colors.brand : colors.textDim },
+                    ]}
+                  >
+                    {d === "IN_TO_TH" ? "India → Thailand" : "Thailand → India"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Flight + Airline row */}
+            <View style={styles.modalRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>Flight number</Text>
+                <TextInput
+                  style={styles.input}
+                  value={flightNumber}
+                  onChangeText={setFlightNumber}
+                  placeholder="TG 315"
+                  placeholderTextColor={colors.textDim}
+                  autoCapitalize="characters"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>Airline</Text>
+                <TextInput
+                  style={styles.input}
+                  value={airline}
+                  onChangeText={setAirline}
+                  placeholder="Thai Airways"
+                  placeholderTextColor={colors.textDim}
+                />
+              </View>
+            </View>
+
+            {/* Departure date */}
+            <Text style={styles.modalLabel}>Departure date (YYYY-MM-DD)</Text>
+            <TextInput
+              style={styles.input}
+              value={departureDate}
+              onChangeText={setDepartureDate}
+              placeholder="2026-08-20"
+              placeholderTextColor={colors.textDim}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            {/* Amounts row */}
+            <View style={styles.modalRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>Capacity (kg)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={capacityKg}
+                  onChangeText={setCapacityKg}
+                  keyboardType="decimal-pad"
+                  placeholder="30"
+                  placeholderTextColor={colors.textDim}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>Saman (baht)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={gold}
+                  onChangeText={setGold}
+                  keyboardType="decimal-pad"
+                  placeholder="10"
+                  placeholderTextColor={colors.textDim}
+                />
+              </View>
+            </View>
+            <View style={styles.modalRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>Currency amount</Text>
+                <TextInput
+                  style={styles.input}
+                  value={currency}
+                  onChangeText={setCurrency}
+                  keyboardType="decimal-pad"
+                  placeholder="50000"
+                  placeholderTextColor={colors.textDim}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>Carry charge (INR)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={carry}
+                  onChangeText={setCarry}
+                  keyboardType="decimal-pad"
+                  placeholder="8000"
+                  placeholderTextColor={colors.textDim}
+                />
+              </View>
+            </View>
+          </ScrollView>
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[styles.modalBtn, styles.modalBtnGhost]}
+              onPress={onClose}
+              disabled={saving}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.modalBtnGhostText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.modalBtn,
+                styles.modalBtnPrimary,
+                (!canSubmit || saving) && { opacity: 0.5 },
+              ]}
+              onPress={handleSave}
+              disabled={!canSubmit || saving}
+              activeOpacity={0.85}
+            >
+              {saving ? (
+                <ActivityIndicator color={colors.bgSolid} size="small" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={16} color={colors.bgSolid} />
+                  <Text style={styles.modalBtnPrimaryText}>Save Trip</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
+  // Fix 2 · Add Trip button + modal
+  addTripBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.brand,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    shadowColor: colors.brand,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  addTripBtnText: {
+    color: colors.bgSolid,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "flex-end",
+    ...(Platform.OS === "web" ? { alignItems: "center" } : {}),
+  },
+  modalSheet: {
+    backgroundColor: colors.bgSolid,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderLeftColor: colors.cardBorder,
+    borderRightColor: colors.cardBorder,
+    padding: spacing.lg,
+    paddingBottom: Platform.OS === "web" ? spacing.lg : 32,
+    ...(Platform.OS === "web"
+      ? { width: 500, maxWidth: "92%", borderRadius: 20, borderWidth: 1, marginBottom: 32 }
+      : {}),
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.md,
+  },
+  modalTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
+  modalLabel: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginTop: spacing.md,
+    marginBottom: 6,
+  },
+  modalRow: { flexDirection: "row", gap: spacing.md, alignItems: "flex-start" },
+  input: {
+    backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: colors.text,
+    fontSize: 14,
+  },
+  segment: { flexDirection: "row", gap: 8 },
+  segmentBtn: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+  },
+  segmentText: { fontSize: 12, fontWeight: "700", letterSpacing: 0.3 },
+  mChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+    maxWidth: 180,
+  },
+  mChipActive: { borderColor: colors.brandBorder, backgroundColor: colors.brandSoft },
+  mChipText: { fontSize: 12, fontWeight: "700" },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+  },
+  modalBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 999,
+  },
+  modalBtnGhost: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  modalBtnGhostText: { color: colors.textMuted, fontSize: 13, fontWeight: "700" },
+  modalBtnPrimary: { backgroundColor: colors.brand },
+  modalBtnPrimaryText: { color: colors.bgSolid, fontSize: 13, fontWeight: "800" },
+
   safe: { flex: 1, backgroundColor: colors.bg },
   headerBar: {
     flexDirection: "row",

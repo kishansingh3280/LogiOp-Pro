@@ -2793,3 +2793,113 @@ frontend:
               greeting. asyncio was already imported.
           Verified: OPSI panel opens showing "aapka logistics assistant"
           and Now Brief loads full generated text on the dashboard.
+
+##====================================================================================================
+## PHASE 10 · 3-FIX BATCH v4 (2026-08-12)
+##====================================================================================================
+
+frontend:
+  - task: "Fix 1 — Party statements + Verified system"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/ledger.tsx, /app/frontend/app/party/[id]/statement.tsx, /app/frontend/src/lib/api.ts, /app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          1a — ledger.tsx now routes party rows in TOP RECEIVABLES /
+          TOP PAYABLES to /party/{id}/statement via router.push.
+          Chevron icon added; Recent entries rows show a small grey
+          checkmark-circle when verified.
+          1b — Backend gained a local overlay collection because the
+          remote proxy doesn't accept PATCH on /api/ledger/entries:
+            • PATCH /api/ledger/entries/{id}  {verified: true}
+              → upserts into db.verified_ledger_entries with
+              {entry_id, verified, verified_at, verified_by}
+            • GET   /api/ledger/verified?party_id=... 
+              → { entry_ids: [...], last_verified_at }
+          statement.tsx now:
+            • Fetches the verified overlay in parallel
+            • Shows a "Verified till <date>" banner (brand-soft card)
+              when any entry is verified
+            • Displays a grey ✓ next to each verified row
+            • "Mark as Verified · till today" button PATCHes each
+              unverified entry, then reloads + shows confirmation Alert
+          Added `apiPatch` helper in api.ts.
+
+  - task: "Fix 2 — Bullion/Trips: real vault data + Add Trip modal"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/bullion.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          • Vault snapshot now prefers live values from GET /api/bullion/vault
+            (added in previous batch). Verified live payload rendered:
+              GOLD ON HAND 35.00 baht ≈ ₹9,45,00,000
+              CURRENCY ₹53,95,833.33 + ฿1,942,500
+              43 open transactions
+          • Fetches /api/parties, filters carriers client-side (role=='carrier')
+            to populate the trip-creation carrier chip picker.
+          • CARRIER FLIGHTS section header gains a green "+ Add Trip"
+            pill button (also in the empty state).
+          • AddTripModal fields: Carrier (chips) · Direction (IN→TH / TH→IN
+            segment) · Flight Number · Airline · Departure Date · Capacity kg
+            · Saman baht · Currency amount · Carry charge INR.
+          • On save: apiPost("/api/trips", payload) → creates trip via
+            new backend endpoint; on success the modal closes and load()
+            re-fetches everything. Generic /api/trips docs are merged
+            into the trip list and adapted to the existing TripRow shape.
+          • Verified: sample trip {"Thai Airways · TG315", scheduled}
+            now visible in the list.
+
+  - task: "Fix 3 — Sidebar Shipment Stats real counts"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/global-sidebar.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Root cause: /api/dashboard/stats returns a NESTED shape
+          `{ shipments: { total, pending, in_transit, ... }, ... }`,
+          but SidebarShipmentStats was reading flat fields (stats?.total)
+          → always 0. Fixed by unwrapping the `shipments` sub-object
+          (also handles a future flat shape defensively).
+          Auth header is already attached automatically by api.ts —
+          the Bearer token is always sent.
+          Verified live sidebar values from the dashboard:
+            Total 5 · Pending 1 (orange) · In Transit 2 (blue) · Delivered 2 (green).
+
+backend:
+  - task: "Fix 1 support — Ledger verified overlay endpoints"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Added local (MongoDB) overlay for verified ledger entries
+          because the remote proxy returns 405 on PATCH/PUT to
+          /api/ledger/entries. New endpoints in server.py:
+            • PATCH /api/ledger/entries/{id} → upsert into
+              db.verified_ledger_entries {entry_id, verified: bool,
+              verified_at, verified_by}. Verified test: PATCH → 200
+              {"ok": true, "entry_id": "...", "verified": true, "verified_at": ...}
+            • GET /api/ledger/verified?party_id=... → returns
+              { entry_ids: [...], last_verified_at }.
+              Verified test: GET → 200 with entry ids and timestamp.

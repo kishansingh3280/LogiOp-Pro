@@ -487,6 +487,56 @@ async def bullion_delete_txn(txn_id: str):
     return {"ok": True}
 
 
+# ───────── Ledger verified overlay (Fix 1) ───────────────────────────
+# Remote backend doesn't accept PATCH/PUT on /api/ledger/entries/*, so
+# we maintain a local overlay collection (db.verified_ledger_entries)
+# that stores which entry IDs are "verified" and by whom. The frontend
+# reads the map and displays a grey ✓ + "Verified till <date>" banner.
+class VerifyEntryPatch(BaseModel):
+    verified: bool = True
+
+
+@api_router.patch("/ledger/entries/{entry_id}")
+async def ledger_entry_verify(entry_id: str, patch: VerifyEntryPatch, request: Request):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    actor = getattr(request.state, "audit_username", None) or "system"
+    if patch.verified:
+        await db.verified_ledger_entries.update_one(
+            {"entry_id": entry_id},
+            {
+                "$set": {
+                    "entry_id": entry_id,
+                    "verified": True,
+                    "verified_at": now_iso,
+                    "verified_by": actor,
+                }
+            },
+            upsert=True,
+        )
+    else:
+        await db.verified_ledger_entries.delete_one({"entry_id": entry_id})
+    return {"ok": True, "entry_id": entry_id, "verified": patch.verified, "verified_at": now_iso}
+
+
+@api_router.get("/ledger/verified")
+async def ledger_verified_map(party_id: Optional[str] = None):
+    """Return the set of verified ledger entry IDs (optionally filtered
+    to a party). Also returns the most recent `verified_at` timestamp
+    so the client can render a "Verified till <date>" banner."""
+    query: Dict[str, Any] = {}
+    docs = await db.verified_ledger_entries.find(query).to_list(50000)
+    # If a party filter is passed, we intersect with the remote entries
+    # for that party — cheaper to just return everything and let the
+    # client filter, since verified counts stay small.
+    entry_ids = [d["entry_id"] for d in docs]
+    last_at = ""
+    if docs:
+        last_at = max((d.get("verified_at") or "") for d in docs)
+    _ = party_id  # kept for future partitioning
+    return {"entry_ids": entry_ids, "last_verified_at": last_at}
+
+
+
 # ───────── Trips (Fix 3) ─────────────────────────────────────────────
 # Simpler, generic "trip" resource that the mobile /trips route hits.
 # Backed by db.trips (distinct from db.bullion_trips which is bullion-

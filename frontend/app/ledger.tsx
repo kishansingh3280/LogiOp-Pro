@@ -40,6 +40,7 @@ type LedgerEntry = {
   currency: "INR" | "THB";
   debit: number;
   credit: number;
+  verified?: boolean;
 };
 
 type Party = { id: string; name: string };
@@ -69,13 +70,17 @@ export default function LedgerScreen() {
     setLoading(true);
     setError(null);
     try {
-      const [s, e, p] = await Promise.all([
+      const [s, e, p, v] = await Promise.all([
         apiGet<LedgerSummary>("/api/dashboard/ledger-summary"),
         apiGet<LedgerEntry[]>("/api/ledger/entries"),
         apiGet<Party[]>("/api/parties"),
+        apiGet<{ entry_ids: string[] }>("/api/ledger/verified").catch(() => ({ entry_ids: [] })),
       ]);
       setSummary(s);
-      setEntries(Array.isArray(e) ? e : []);
+      const vSet = new Set(v?.entry_ids || []);
+      const list = Array.isArray(e) ? e : [];
+      // Fold verified overlay into entries so the UI can render a ✓
+      setEntries(list.map((en) => ({ ...en, verified: vSet.has(en.id) })));
       setParties(Array.isArray(p) ? p : []);
     } catch (err) {
       setError((err as Error).message);
@@ -187,8 +192,10 @@ export default function LedgerScreen() {
             <Text style={styles.section}>Top receivables</Text>
             <GlassCard>
               {(summary?.top_get ?? []).slice(0, 6).map((p, idx, arr) => (
-                <View
+                <TouchableOpacity
                   key={p.id}
+                  activeOpacity={0.75}
+                  onPress={() => router.push(`/party/${p.id}/statement` as any)}
                   style={[styles.partyRow, idx < arr.length - 1 && styles.partyRowBorder]}
                 >
                   <Text style={styles.partyName} numberOfLines={1}>
@@ -206,7 +213,8 @@ export default function LedgerScreen() {
                       </Text>
                     ) : null}
                   </View>
-                </View>
+                  <Ionicons name="chevron-forward" size={14} color={colors.textDim} />
+                </TouchableOpacity>
               ))}
             </GlassCard>
           </>
@@ -218,8 +226,10 @@ export default function LedgerScreen() {
             <Text style={styles.section}>Top payables</Text>
             <GlassCard>
               {(summary?.top_pay ?? []).slice(0, 6).map((p, idx, arr) => (
-                <View
+                <TouchableOpacity
                   key={p.id}
+                  activeOpacity={0.75}
+                  onPress={() => router.push(`/party/${p.id}/statement` as any)}
                   style={[styles.partyRow, idx < arr.length - 1 && styles.partyRowBorder]}
                 >
                   <Text style={styles.partyName} numberOfLines={1}>
@@ -237,7 +247,8 @@ export default function LedgerScreen() {
                       </Text>
                     ) : null}
                   </View>
-                </View>
+                  <Ionicons name="chevron-forward" size={14} color={colors.textDim} />
+                </TouchableOpacity>
               ))}
             </GlassCard>
           </>
@@ -286,9 +297,19 @@ export default function LedgerScreen() {
                       style={[styles.entryRow, idx < arr.length - 1 && styles.entryRowBorder]}
                     >
                       <View style={styles.entryLeft}>
-                        <Text style={styles.entryDesc} numberOfLines={1}>
-                          {e.description}
-                        </Text>
+                        <View style={styles.entryDescRow}>
+                          {e.verified ? (
+                            <Ionicons
+                              name="checkmark-circle"
+                              size={13}
+                              color={colors.textDim}
+                              style={{ marginRight: 4 }}
+                            />
+                          ) : null}
+                          <Text style={styles.entryDesc} numberOfLines={1}>
+                            {e.description}
+                          </Text>
+                        </View>
                         <Text style={styles.entrySub}>
                           {partyMap[e.party_id] || "—"} · {shortDate(e.date)}
                         </Text>
@@ -690,6 +711,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.lg,
   },
   emptyFilteredText: { color: colors.textMuted, fontSize: 12 },
+  entryDescRow: { flexDirection: "row", alignItems: "center" },
   fab: {
     position: "absolute",
     right: spacing.lg,

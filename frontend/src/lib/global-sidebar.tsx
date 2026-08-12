@@ -324,20 +324,32 @@ function FloatingParticle(p: Particle) {
 }
 
 // ─── Sidebar shipment stats (bottom-of-nav block) ──────────────────
+// Fix 3 · API returns { shipments: { total, pending, in_transit, ... } }
+// (not flat) — unwrap the nested object.
+type ShipmentStats = {
+  total?: number;
+  pending?: number;
+  in_transit?: number;
+  warehouse_arrived?: number;
+  delivered?: number;
+};
+
 function SidebarShipmentStats() {
   const { token } = useAuth();
-  const [stats, setStats] = useState<{
-    total?: number;
-    pending?: number;
-    in_transit?: number;
-    warehouse_arrived?: number;
-    delivered?: number;
-  } | null>(null);
+  const [stats, setStats] = useState<ShipmentStats | null>(null);
 
   useEffect(() => {
     if (!token) return;
-    apiGet<typeof stats>("/api/dashboard/stats" as string)
-      .then((s) => setStats(s))
+    apiGet<{ shipments?: ShipmentStats } | ShipmentStats>("/api/dashboard/stats")
+      .then((raw) => {
+        // Accept either { shipments: {...} } (current backend shape) or a
+        // flat { total, pending, ... } shape for future-proofing.
+        const s: ShipmentStats =
+          raw && typeof raw === "object" && "shipments" in raw && raw.shipments
+            ? (raw as { shipments: ShipmentStats }).shipments
+            : (raw as ShipmentStats);
+        setStats(s || null);
+      })
       .catch(() => setStats(null));
   }, [token]);
 
