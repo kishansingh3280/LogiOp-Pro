@@ -1,10 +1,10 @@
 /**
- * Phase-2 Parties list.
+ * Parties list — Phase 3.
  *
- * Fetches `/api/parties` and renders them in a FlatList grouped by
- * role (Customer / Supplier / Carrier / Other). Simple search box
- * at the top for quick filtering.
+ * JARVIS dark theme. Tapping a row → /party/[id].
  */
+import { Ionicons } from "@expo/vector-icons";
+import { Link } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,7 +20,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { titleCase } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
+import { Pill } from "@/src/lib/ui";
 
 type Party = {
   id: string;
@@ -31,26 +33,15 @@ type Party = {
   phone?: string | null;
   email?: string | null;
   city?: string | null;
-  opening_balance_inr?: number;
-  opening_balance_thb?: number;
 };
 
-const ROLE_TINT: Record<string, string> = {
-  customer: colors.info,
-  supplier: colors.warn,
-  carrier: colors.brand,
-  end_customer: colors.info,
-  vendor: colors.warn,
-  other: colors.textMuted,
-};
-
-const ROLE_SOFT: Record<string, string> = {
-  customer: colors.infoSoft,
-  supplier: colors.warnSoft,
-  carrier: colors.brandSoft,
-  end_customer: colors.infoSoft,
-  vendor: colors.warnSoft,
-  other: colors.divider,
+const ROLE: Record<string, { tint: string; soft: string }> = {
+  customer: { tint: colors.info, soft: colors.infoSoft },
+  end_customer: { tint: colors.info, soft: colors.infoSoft },
+  supplier: { tint: colors.warn, soft: colors.warnSoft },
+  vendor: { tint: colors.warn, soft: colors.warnSoft },
+  carrier: { tint: colors.brand, soft: colors.brandSoft },
+  other: { tint: colors.textMuted, soft: colors.divider },
 };
 
 export default function PartiesScreen() {
@@ -98,16 +89,24 @@ export default function PartiesScreen() {
           {items?.length ?? 0} total · Customers, Suppliers, Carriers
         </Text>
 
-        <TextInput
-          style={styles.search}
-          placeholder="Search by name, phone, city…"
-          placeholderTextColor={colors.textDim}
-          value={query}
-          onChangeText={setQuery}
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="search"
-        />
+        <View style={styles.searchWrap}>
+          <Ionicons
+            name="search"
+            size={16}
+            color={colors.textDim}
+            style={styles.searchIcon}
+          />
+          <TextInput
+            style={styles.search}
+            placeholder="Search by name, phone, city…"
+            placeholderTextColor={colors.textDim}
+            value={query}
+            onChangeText={setQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+        </View>
       </View>
 
       {items === null && loading ? (
@@ -117,6 +116,7 @@ export default function PartiesScreen() {
         </View>
       ) : error ? (
         <View style={styles.center}>
+          <Ionicons name="alert-circle" size={24} color={colors.danger} />
           <Text style={styles.errorTitle}>Couldn&apos;t load parties</Text>
           <Text style={styles.errorBody} numberOfLines={3}>
             {error}
@@ -137,6 +137,7 @@ export default function PartiesScreen() {
           }
           ListEmptyComponent={
             <View style={styles.center}>
+              <Ionicons name="people-outline" size={32} color={colors.textDim} />
               <Text style={styles.emptyTitle}>
                 {query ? "No matching parties" : "No parties yet"}
               </Text>
@@ -155,29 +156,27 @@ export default function PartiesScreen() {
 
 function PartyRow({ party }: { party: Party }) {
   const roleKey = (party.role || "other").toLowerCase();
-  const tint = ROLE_TINT[roleKey] ?? colors.textMuted;
-  const soft = ROLE_SOFT[roleKey] ?? colors.divider;
+  const r = ROLE[roleKey] ?? ROLE.other;
   const initial = (party.name || "?").slice(0, 1).toUpperCase();
 
   return (
-    <View style={styles.row}>
-      <View style={[styles.avatar, { backgroundColor: soft, borderColor: tint }]}>
-        <Text style={[styles.avatarText, { color: tint }]}>{initial}</Text>
-      </View>
-      <View style={styles.rowLeft}>
-        <Text style={styles.name} numberOfLines={1}>
-          {party.name}
-        </Text>
-        <Text style={styles.rowSub} numberOfLines={1}>
-          {party.phone || party.email || party.city || party.country || "—"}
-        </Text>
-      </View>
-      <View style={[styles.chip, { backgroundColor: soft, borderColor: tint }]}>
-        <Text style={[styles.chipText, { color: tint }]}>
-          {(party.role || "other").replace("_", " ")}
-        </Text>
-      </View>
-    </View>
+    <Link href={`/party/${party.id}` as any} asChild>
+      <TouchableOpacity activeOpacity={0.75} style={styles.row}>
+        <View style={[styles.avatar, { backgroundColor: r.soft, borderColor: r.tint }]}>
+          <Text style={[styles.avatarText, { color: r.tint }]}>{initial}</Text>
+        </View>
+        <View style={styles.rowLeft}>
+          <Text style={styles.name} numberOfLines={1}>
+            {party.name}
+          </Text>
+          <Text style={styles.rowSub} numberOfLines={1}>
+            {party.phone || party.email || party.city || party.country || "—"}
+          </Text>
+        </View>
+        <Pill label={titleCase(party.role || "other")} tint={r.tint} soft={r.soft} size="sm" />
+        <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+      </TouchableOpacity>
+    </Link>
   );
 }
 
@@ -186,13 +185,19 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm },
   title: { color: colors.text, fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
   subtitle: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
-  search: {
+  searchWrap: {
     marginTop: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: colors.card,
     borderColor: colors.cardBorder,
     borderWidth: 1,
     borderRadius: radii.md,
     paddingHorizontal: spacing.md,
+  },
+  searchIcon: { marginRight: spacing.sm },
+  search: {
+    flex: 1,
     paddingVertical: 10,
     color: colors.text,
     fontSize: 14,
@@ -200,9 +205,9 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: spacing.lg, paddingBottom: 80, paddingTop: spacing.sm },
   row: {
     backgroundColor: colors.card,
-    borderRadius: radii.md,
-    borderWidth: 1,
     borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: radii.md,
     flexDirection: "row",
     alignItems: "center",
     padding: spacing.md,
@@ -220,13 +225,6 @@ const styles = StyleSheet.create({
   rowLeft: { flex: 1 },
   name: { color: colors.text, fontSize: 15, fontWeight: "700" },
   rowSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
-  chip: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-  },
-  chipText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.4, textTransform: "uppercase" },
   dim: { color: colors.textDim, fontSize: 12 },
   sep: { height: spacing.sm },
   center: {
@@ -246,5 +244,5 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: radii.pill,
   },
-  retryText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
+  retryText: { color: colors.bg, fontSize: 12, fontWeight: "800" },
 });

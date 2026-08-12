@@ -1,19 +1,12 @@
 /**
- * Phase-2 More tab.
+ * More tab — Phase 3.
  *
- * Landing spot for secondary functionality that will be restored in
- * later phases:
- *   • Invoices
- *   • Ledger
- *   • Reports
- *   • Bullion trips
- *   • Assistant / OPSI
- *   • Settings
- *
- * For now, tapping a row toggles an "coming soon" message so the user
- * can see the roadmap. Real navigation will be wired up in Phase 3+.
+ * Now provides real navigation to the Ledger screen. Other rows
+ * (Reports, Bullion, OPSI, Settings) still show a Coming Soon toast
+ * until their phases arrive.
  */
-import { useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import {
   Alert,
   ScrollView,
@@ -26,44 +19,77 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/lib/auth-context";
 import { colors, radii, spacing } from "@/src/lib/theme";
+import { GlassCard, Pill } from "@/src/lib/ui";
 
 type MenuItem = {
   key: string;
   title: string;
   subtitle: string;
-  phase: "3" | "4" | "5";
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  route?: string;
+  phase?: "3" | "4" | "5";
 };
 
 const MENU: MenuItem[] = [
-  { key: "invoices", title: "Invoices", subtitle: "Bills, GST, PDF exports", phase: "3" },
-  { key: "ledger", title: "Ledger", subtitle: "Party statements, receivables", phase: "3" },
-  { key: "reports", title: "Reports", subtitle: "PDF exports, insights", phase: "4" },
-  { key: "bullion", title: "Bullion trips", subtitle: "Carrier flights, vault snapshot", phase: "4" },
-  { key: "opsi", title: "OPSI assistant", subtitle: "Voice AI, glowing orb", phase: "5" },
-  { key: "settings", title: "Settings", subtitle: "Preferences, sign-out", phase: "3" },
+  {
+    key: "ledger",
+    title: "Ledger",
+    subtitle: "Party statements, receivables, verified rows",
+    icon: "book",
+    route: "/ledger",
+  },
+  {
+    key: "reports",
+    title: "Reports",
+    subtitle: "PDF exports, insights",
+    icon: "bar-chart",
+    phase: "4",
+  },
+  {
+    key: "bullion",
+    title: "Bullion trips",
+    subtitle: "Carrier flights, vault snapshot",
+    icon: "diamond",
+    phase: "4",
+  },
+  {
+    key: "opsi",
+    title: "OPSI assistant",
+    subtitle: "Voice AI, glowing orb",
+    icon: "sparkles",
+    phase: "5",
+  },
+  {
+    key: "settings",
+    title: "Settings",
+    subtitle: "Preferences, sign-out",
+    icon: "settings",
+    phase: "5",
+  },
 ];
 
 export default function MoreScreen() {
   const { user, authError } = useAuth();
-  const [tapped, setTapped] = useState<string | null>(null);
+  const router = useRouter();
 
   const handleTap = (item: MenuItem) => {
-    setTapped(item.key);
-    Alert.alert(
-      item.title,
-      `${item.subtitle}\n\nComing in Phase ${item.phase}.`,
-      [{ text: "OK", style: "default" }],
-    );
+    if (item.route) {
+      router.push(item.route as any);
+      return;
+    }
+    Alert.alert(item.title, `${item.subtitle}\n\nComing in Phase ${item.phase}.`, [
+      { text: "OK" },
+    ]);
   };
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>More</Text>
-        <Text style={styles.subtitle}>Roadmap of features being restored</Text>
+        <Text style={styles.subtitle}>Utilities & modules</Text>
 
-        {/* User card */}
-        <View style={styles.userCard}>
+        {/* Identity card */}
+        <GlassCard glow style={styles.userCard}>
           <View style={styles.userAvatar}>
             <Text style={styles.userAvatarText}>
               {(user?.display_name || "?").slice(0, 1).toUpperCase()}
@@ -73,37 +99,45 @@ export default function MoreScreen() {
             <Text style={styles.userName}>
               {user ? `${user.display_name} ${user.honorific}` : "Signed out"}
             </Text>
-            <Text style={styles.userSub}>{user?.role} · {user?.username}</Text>
-          </View>
-          <View style={[styles.pill, authError ? styles.pillWarn : styles.pillOk]}>
-            <Text style={[styles.pillText, authError ? styles.pillTextWarn : styles.pillTextOk]}>
-              {authError ? "OFFLINE" : "LIVE"}
+            <Text style={styles.userSub}>
+              {user?.role} · {user?.username}
             </Text>
           </View>
-        </View>
+          <Pill
+            label={authError ? "OFFLINE" : "LIVE"}
+            tint={authError ? colors.warn : colors.brand}
+            soft={authError ? colors.warnSoft : colors.brandSoft}
+            size="sm"
+          />
+        </GlassCard>
 
         {/* Menu */}
-        <Text style={styles.section}>Coming up</Text>
+        <Text style={styles.section}>Modules</Text>
         {MENU.map((item) => (
           <TouchableOpacity
             key={item.key}
             style={styles.row}
             onPress={() => handleTap(item)}
-            activeOpacity={0.7}
+            activeOpacity={0.75}
           >
+            <View style={styles.rowIcon}>
+              <Ionicons name={item.icon} size={18} color={colors.brand} />
+            </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>{item.title}</Text>
               <Text style={styles.rowSub}>{item.subtitle}</Text>
             </View>
-            <View style={styles.phaseBadge}>
-              <Text style={styles.phaseText}>P{item.phase}</Text>
-            </View>
+            {item.route ? (
+              <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+            ) : (
+              <View style={styles.phaseBadge}>
+                <Text style={styles.phaseText}>P{item.phase}</Text>
+              </View>
+            )}
           </TouchableOpacity>
         ))}
 
-        <Text style={styles.footNote}>
-          Phase 2 · {tapped ? `Last tapped: ${tapped}` : "Restore in progress"}
-        </Text>
+        <Text style={styles.footNote}>Aura · Phase 3 online</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -115,10 +149,6 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
   subtitle: { color: colors.textMuted, fontSize: 12, marginTop: 2, marginBottom: spacing.lg },
   userCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.cardBorder,
-    borderWidth: 1,
-    borderRadius: radii.lg,
     padding: spacing.md,
     flexDirection: "row",
     alignItems: "center",
@@ -130,7 +160,7 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 22,
     backgroundColor: colors.brandSoft,
-    borderColor: colors.brand,
+    borderColor: colors.brandBorder,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -138,17 +168,6 @@ const styles = StyleSheet.create({
   userAvatarText: { color: colors.brand, fontSize: 18, fontWeight: "800" },
   userName: { color: colors.text, fontSize: 15, fontWeight: "700" },
   userSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
-  pill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-  },
-  pillOk: { borderColor: colors.ok, backgroundColor: colors.okSoft },
-  pillWarn: { borderColor: colors.warn, backgroundColor: colors.warnSoft },
-  pillText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.6 },
-  pillTextOk: { color: colors.ok },
-  pillTextWarn: { color: colors.warn },
   section: {
     color: colors.text,
     fontSize: 13,
@@ -165,8 +184,18 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+    gap: spacing.md,
     marginBottom: spacing.sm,
+  },
+  rowIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.brandSoft,
+    borderColor: colors.brandBorder,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   rowTitle: { color: colors.text, fontSize: 15, fontWeight: "700" },
   rowSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
@@ -175,6 +204,8 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: radii.pill,
     backgroundColor: colors.divider,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
   },
   phaseText: {
     color: colors.textMuted,

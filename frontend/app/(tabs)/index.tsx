@@ -1,16 +1,18 @@
 /**
- * Phase-1 Home / Dashboard.
+ * Overview / Dashboard — Phase 3.
  *
- * Purpose: prove the reconstructed core works on Android APK.
- * Renders:
- *   • Greeting from the AuthProvider (auto-logged-in as Kishan)
- *   • Auth status pill (Live JWT vs stub)
- *   • Live dashboard stats fetched from /api/dashboard/stats
- *   • Pull-to-refresh
- *   • A "View shipments" placeholder link → /shipments (Phase 3+)
+ * Dark JARVIS Aura. Layout:
+ *   • Header bar with brand + LIVE pill
+ *   • Greeting card
+ *   • Shipment KPIs (2×2 glass grid)
+ *   • Ledger summary (Receivable neon-green, Payable coral-red)
+ *   • Diagnostics
  *
- * NO ionicons, NO svg, NO gradients — just RN core + text.
+ * All numbers are rendered white; only the KPI's meaning-colour dot
+ * carries the semantic tint. Money values in the ledger row use
+ * credit-green / debit-red per the design brief.
  */
+import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -25,7 +27,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { fmtCurrency } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
+import { GlassCard, LabelValueRow, Pill } from "@/src/lib/ui";
 
 type DashboardStats = {
   total?: number;
@@ -36,35 +40,43 @@ type DashboardStats = {
   cancelled?: number;
 };
 
+type LedgerSummary = {
+  receivable?: { inr?: number; thb?: number };
+  payable?: { inr?: number; thb?: number };
+};
+
 export default function HomeScreen() {
   const { user, token, authError, refresh } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [ledger, setLedger] = useState<LedgerSummary | null>(null);
   const [loading, setLoading] = useState(false);
-  const [statsError, setStatsError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchStats = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
-    setStatsError(null);
+    setError(null);
     try {
-      const data = await apiGet<DashboardStats>("/api/dashboard/stats");
-      setStats(data);
+      const [s, l] = await Promise.all([
+        apiGet<DashboardStats>("/api/dashboard/stats"),
+        apiGet<LedgerSummary>("/api/dashboard/ledger-summary"),
+      ]);
+      setStats(s);
+      setLedger(l);
     } catch (e) {
-      setStatsError((e as Error).message);
+      setError((e as Error).message);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Fetch once a real token is in place (or immediately on first mount
-  // if we already have one from the persisted cache).
   useEffect(() => {
-    if (token) fetchStats();
-  }, [token, fetchStats]);
+    if (token) loadAll();
+  }, [token, loadAll]);
 
   const onRefresh = useCallback(async () => {
     await refresh();
-    await fetchStats();
-  }, [refresh, fetchStats]);
+    await loadAll();
+  }, [refresh, loadAll]);
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
@@ -77,26 +89,19 @@ export default function HomeScreen() {
       >
         {/* ── Header ────────────────────────────────────────────── */}
         <View style={styles.header}>
-          <Text style={styles.brand}>LogiOp Pro</Text>
-          <View
-            style={[
-              styles.pill,
-              token ? styles.pillOk : authError ? styles.pillDanger : styles.pillWarn,
-            ]}
-          >
-            <Text
-              style={[
-                styles.pillText,
-                token ? styles.pillTextOk : authError ? styles.pillTextDanger : styles.pillTextWarn,
-              ]}
-            >
-              {token ? "LIVE" : authError ? "OFFLINE" : "SYNCING"}
-            </Text>
+          <View style={styles.brandWrap}>
+            <View style={styles.brandDot} />
+            <Text style={styles.brand}>LogiOp Pro</Text>
           </View>
+          <Pill
+            label={token ? "LIVE" : authError ? "OFFLINE" : "SYNCING"}
+            tint={token ? colors.brand : authError ? colors.danger : colors.warn}
+            soft={token ? colors.brandSoft : authError ? colors.dangerSoft : colors.warnSoft}
+          />
         </View>
 
         {/* ── Greeting ──────────────────────────────────────────── */}
-        <View style={styles.greetCard}>
+        <GlassCard glow style={styles.greetCard}>
           <Text style={styles.eyebrow}>Welcome back</Text>
           <Text style={styles.greet}>
             {user ? `${user.display_name} ${user.honorific}` : "Sir"}
@@ -104,119 +109,174 @@ export default function HomeScreen() {
           <Text style={styles.greetSub}>
             {user?.role} · {user?.username}
           </Text>
-        </View>
+        </GlassCard>
 
-        {/* ── Stats grid ────────────────────────────────────────── */}
+        {/* ── Shipment KPIs ─────────────────────────────────────── */}
         <Text style={styles.sectionTitle}>Shipment overview</Text>
         {stats ? (
           <View style={styles.grid}>
-            <StatBox label="Total" value={stats.total ?? 0} tint={colors.text} />
-            <StatBox label="Delivered" value={stats.delivered ?? 0} tint={colors.ok} />
+            <StatBox label="Total" value={stats.total ?? 0} tint={colors.text} icon="cube" />
+            <StatBox
+              label="Delivered"
+              value={stats.delivered ?? 0}
+              tint={colors.brand}
+              icon="checkmark-done"
+            />
             <StatBox
               label="In transit"
               value={(stats.in_transit ?? 0) + (stats.warehouse_arrived ?? 0)}
               tint={colors.info}
+              icon="airplane"
             />
-            <StatBox label="Pending" value={stats.pending ?? 0} tint={colors.warn} />
+            <StatBox
+              label="Pending"
+              value={stats.pending ?? 0}
+              tint={colors.warn}
+              icon="hourglass"
+            />
           </View>
         ) : loading ? (
           <View style={styles.loading}>
             <ActivityIndicator color={colors.brand} />
-            <Text style={styles.loadingText}>Loading stats…</Text>
+            <Text style={styles.dim}>Loading…</Text>
           </View>
-        ) : statsError ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Couldn&apos;t load stats</Text>
-            <Text style={styles.errorBody} numberOfLines={3}>
-              {statsError}
-            </Text>
-            <TouchableOpacity style={styles.retryBtn} onPress={fetchStats}>
-              <Text style={styles.retryText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.loading}>
-            <Text style={styles.loadingText}>Pull down to refresh</Text>
-          </View>
-        )}
+        ) : error ? (
+          <ErrorBox message={error} onRetry={loadAll} />
+        ) : null}
+
+        {/* ── Ledger summary ────────────────────────────────────── */}
+        <Text style={styles.sectionTitle}>Ledger summary</Text>
+        <GlassCard>
+          <LedgerRow
+            label="Receivable · INR"
+            value={fmtCurrency(ledger?.receivable?.inr ?? 0, "INR")}
+            tint={colors.credit}
+          />
+          <LedgerRow
+            label="Receivable · THB"
+            value={fmtCurrency(ledger?.receivable?.thb ?? 0, "THB")}
+            tint={colors.credit}
+          />
+          <LedgerRow
+            label="Payable · INR"
+            value={fmtCurrency(ledger?.payable?.inr ?? 0, "INR")}
+            tint={colors.debit}
+          />
+          <LedgerRow
+            label="Payable · THB"
+            value={fmtCurrency(ledger?.payable?.thb ?? 0, "THB")}
+            tint={colors.debit}
+          />
+        </GlassCard>
 
         {/* ── Diagnostics ───────────────────────────────────────── */}
         <Text style={styles.sectionTitle}>Diagnostics</Text>
-        <View style={styles.diagCard}>
-          <DiagRow label="Backend" value="Reachable" ok />
-          <DiagRow label="Auth token" value={token ? "Present" : "Pending / offline"} ok={!!token} />
-          <DiagRow label="User" value={user?.display_name || "—"} ok={!!user} />
-          <DiagRow label="Auth error" value={authError || "None"} ok={!authError} />
-        </View>
+        <GlassCard>
+          <LabelValueRow
+            label="Backend"
+            value="Reachable"
+            valueColor={colors.credit}
+          />
+          <LabelValueRow
+            label="Auth token"
+            value={token ? "Present" : "Pending / offline"}
+            valueColor={token ? colors.credit : colors.warn}
+          />
+          <LabelValueRow
+            label="User"
+            value={user?.display_name || "—"}
+          />
+          <LabelValueRow
+            label="Auth error"
+            value={authError || "None"}
+            valueColor={authError ? colors.debit : colors.credit}
+          />
+        </GlassCard>
 
-        <Text style={styles.footNote}>
-          Phase 1 minimal shell. Screens will be restored progressively.
-        </Text>
+        <Text style={styles.footNote}>Aura · Phase 3 online</Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 // ── Sub-components ─────────────────────────────────────────────────
-function StatBox({ label, value, tint }: { label: string; value: number; tint: string }) {
+function StatBox({
+  label,
+  value,
+  tint,
+  icon,
+}: {
+  label: string;
+  value: number;
+  tint: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+}) {
   return (
     <View style={styles.stat}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={[styles.statValue, { color: tint }]}>{value}</Text>
+      <View style={styles.statHeader}>
+        <View style={[styles.statDot, { backgroundColor: tint }]} />
+        <Text style={styles.statLabel}>{label}</Text>
+        <Ionicons name={icon} size={14} color={colors.textDim} />
+      </View>
+      <Text style={styles.statValue}>{value}</Text>
     </View>
   );
 }
 
-function DiagRow({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+function LedgerRow({ label, value, tint }: { label: string; value: string; tint: string }) {
   return (
-    <View style={styles.diagRow}>
-      <Text style={styles.diagLabel}>{label}</Text>
-      <View style={styles.diagValueWrap}>
-        <View
-          style={[
-            styles.dot,
-            { backgroundColor: ok ? colors.ok : colors.warn },
-          ]}
-        />
-        <Text style={styles.diagValue} numberOfLines={1}>
-          {value}
-        </Text>
+    <View style={styles.ledgerRow}>
+      <View style={styles.ledgerRowLeft}>
+        <View style={[styles.dot, { backgroundColor: tint }]} />
+        <Text style={styles.ledgerLabel}>{label}</Text>
       </View>
+      <Text style={[styles.ledgerValue, { color: tint }]}>{value}</Text>
+    </View>
+  );
+}
+
+function ErrorBox({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <View style={styles.errorBox}>
+      <Ionicons name="alert-circle" size={20} color={colors.danger} />
+      <Text style={styles.errorText} numberOfLines={2}>
+        {message}
+      </Text>
+      <TouchableOpacity style={styles.retry} onPress={onRetry}>
+        <Text style={styles.retryText}>Retry</Text>
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
-  scroll: { padding: spacing.lg, paddingBottom: 60 },
+  scroll: { padding: spacing.lg, paddingBottom: 80 },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: spacing.lg,
   },
-  brand: { color: colors.text, fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
-  pill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: radii.pill,
-    borderWidth: 1,
+  brandWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  brandDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.brand,
+    shadowColor: colors.brand,
+    shadowOpacity: 0.9,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 6,
+    elevation: 4,
   },
-  pillOk: { borderColor: colors.ok, backgroundColor: colors.okSoft },
-  pillWarn: { borderColor: colors.warn, backgroundColor: colors.warnSoft },
-  pillDanger: { borderColor: colors.danger, backgroundColor: colors.dangerSoft },
-  pillText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.6 },
-  pillTextOk: { color: colors.ok },
-  pillTextWarn: { color: colors.warn },
-  pillTextDanger: { color: colors.danger },
-  greetCard: {
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    marginBottom: spacing.lg,
+  brand: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: -0.5,
   },
+  greetCard: { marginBottom: spacing.lg, padding: spacing.lg },
   eyebrow: {
     color: colors.textDim,
     fontSize: 11,
@@ -233,32 +293,51 @@ const styles = StyleSheet.create({
   greetSub: { color: colors.textMuted, fontSize: 13, marginTop: 4 },
   sectionTitle: {
     color: colors.text,
-    fontSize: 15,
-    fontWeight: "700",
+    fontSize: 14,
+    fontWeight: "800",
     marginTop: spacing.md,
     marginBottom: spacing.sm,
+    letterSpacing: 0.3,
   },
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm,
-  },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   stat: {
     flexBasis: "47%",
     flexGrow: 1,
     backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
     borderRadius: radii.md,
     padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
   },
+  statHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  statDot: { width: 6, height: 6, borderRadius: 3 },
   statLabel: {
     color: colors.textDim,
-    fontSize: 11,
+    fontSize: 10,
+    letterSpacing: 0.7,
     textTransform: "uppercase",
-    letterSpacing: 0.6,
+    flex: 1,
   },
-  statValue: { fontSize: 28, fontWeight: "800", marginTop: 4 },
+  statValue: {
+    color: colors.text,
+    fontSize: 28,
+    fontWeight: "800",
+    marginTop: 6,
+  },
+  ledgerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  ledgerRowLeft: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
+  ledgerLabel: { color: colors.textMuted, fontSize: 12 },
+  ledgerValue: { fontSize: 15, fontWeight: "800", letterSpacing: 0.2 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
   loading: {
     flexDirection: "row",
     gap: spacing.sm,
@@ -266,46 +345,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: spacing.lg,
   },
-  loadingText: { color: colors.textMuted, fontSize: 13 },
-  errorCard: {
+  dim: { color: colors.textMuted, fontSize: 12 },
+  errorBox: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    padding: spacing.md,
     backgroundColor: colors.dangerSoft,
     borderColor: colors.danger,
     borderWidth: 1,
     borderRadius: radii.md,
-    padding: spacing.md,
+    alignItems: "center",
   },
-  errorTitle: {
-    color: colors.danger,
-    fontSize: 13,
-    fontWeight: "800",
-    marginBottom: 4,
-  },
-  errorBody: { color: colors.textMuted, fontSize: 12, marginBottom: spacing.sm },
-  retryBtn: {
-    alignSelf: "flex-start",
+  errorText: { flex: 1, color: colors.text, fontSize: 12 },
+  retry: {
+    backgroundColor: colors.danger,
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
-    backgroundColor: colors.danger,
     borderRadius: radii.pill,
   },
-  retryText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
-  diagCard: {
-    backgroundColor: colors.card,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-  },
-  diagRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 6,
-  },
-  diagLabel: { color: colors.textMuted, fontSize: 12 },
-  diagValueWrap: { flexDirection: "row", alignItems: "center", gap: 6, maxWidth: "60%" },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  diagValue: { color: colors.text, fontSize: 12, fontWeight: "600" },
+  retryText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
   footNote: {
     color: colors.textDim,
     fontSize: 11,

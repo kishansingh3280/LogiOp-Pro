@@ -1,19 +1,21 @@
 /**
- * Phase-1 Root Layout — brings back the essentials but nothing risky:
- *   • SafeAreaProvider (already installed)
- *   • GestureHandlerRootView (already installed, required for expo-router)
- *   • AuthProvider (auto-logs in as Kishan via /api/auth/auto-login)
- *   • ErrorBoundary (top-level guard)
- *   • expo-router Stack (file-based routing)
+ * Root Layout — Phase 3.
  *
- * DELIBERATELY OMITTED (will restore progressively in later phases):
- *   • Sidebar / VoiceOrb / AmbientBackground (need expo-linear-gradient, expo-audio)
- *   • Company / FY / Screen contexts (not needed until multi-screen)
- *   • Icon font loading (may crash on cold start on some devices)
+ * Additions vs Phase 2:
+ *   • Preloads Ionicons font via expo-font ⇒ tab bar icons no longer
+ *     race the first frame. This is the safe pattern for using
+ *     @expo/vector-icons on Android: block the initial render until
+ *     the font is ready so no missing-glyph crash can happen.
+ *   • Splash screen kept visible until fonts are loaded.
+ *   • Dark JARVIS Aura theme applied everywhere.
  */
+import { Ionicons } from "@expo/vector-icons";
+import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { StyleSheet } from "react-native";
+import { useEffect } from "react";
+import { StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -21,13 +23,43 @@ import { AuthProvider } from "@/src/lib/auth-context";
 import { ErrorBoundary } from "@/src/lib/error-boundary";
 import { colors } from "@/src/lib/theme";
 
+// Keep the native splash up until we've loaded assets. Wrapped in a
+// try/catch so that even if the module isn't yet available on the
+// device (rare cold-start race), we don't crash.
+try {
+  SplashScreen.preventAutoHideAsync();
+} catch {
+  /* no-op */
+}
+
 export default function RootLayout() {
+  const [fontsLoaded, fontsError] = useFonts({
+    ...Ionicons.font,
+  });
+
+  // Hide native splash once fonts are ready OR loading definitively
+  // errored out (fall-through so we never leave the user staring at
+  // a blank splash forever).
+  useEffect(() => {
+    if (fontsLoaded || fontsError) {
+      SplashScreen.hideAsync().catch(() => {
+        /* no-op */
+      });
+    }
+  }, [fontsLoaded, fontsError]);
+
+  if (!fontsLoaded && !fontsError) {
+    // Return a blank dark view instead of null so the splash pixel
+    // matches our theme (no white flash).
+    return <View style={styles.splashFallback} />;
+  }
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
         <ErrorBoundary label="root">
           <AuthProvider>
-            <StatusBar style="dark" />
+            <StatusBar style="light" />
             <Stack
               screenOptions={{
                 headerShown: false,
@@ -43,8 +75,6 @@ export default function RootLayout() {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
+  root: { flex: 1, backgroundColor: colors.bg },
+  splashFallback: { flex: 1, backgroundColor: colors.bg },
 });

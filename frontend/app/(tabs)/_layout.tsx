@@ -1,20 +1,30 @@
 /**
- * Phase-2 Tabs layout.
+ * Tabs layout — Phase 3.
  *
- * Bottom-tab navigation for the primary app sections:
- *   • Overview  (dashboard)
- *   • Shipments (list)
- *   • Parties   (list)
- *   • More      (settings, ledger, invoices — placeholders for now)
+ * 5 primary tabs with proper Ionicons:
+ *   • Overview   (grid dashboard)
+ *   • Shipments  (aircraft / logistics)
+ *   • Parties    (people)
+ *   • Invoices   (receipt)
+ *   • More       (menu)
  *
- * Text-only labels are used intentionally. Icon fonts (Ionicons /
- * @expo/vector-icons) will be introduced in Phase 3 once we're sure
- * the APK is stable with tab navigation.
+ * Dark JARVIS Aura tab bar with a neon-green active tint.
  */
+import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet } from "react-native";
 
 import { colors, spacing } from "@/src/lib/theme";
+
+type IconName = React.ComponentProps<typeof Ionicons>["name"];
+
+function makeIcon(active: IconName, inactive: IconName) {
+  const IconRenderer = ({ color, focused, size }: { color: string; focused: boolean; size: number }) => (
+    <Ionicons name={focused ? active : inactive} size={size} color={color} />
+  );
+  IconRenderer.displayName = `TabIcon(${active}/${inactive})`;
+  return IconRenderer;
+}
 
 export default function TabsLayout() {
   return (
@@ -26,78 +36,54 @@ export default function TabsLayout() {
         tabBarStyle: styles.tabBar,
         tabBarLabelStyle: styles.tabLabel,
         tabBarItemStyle: styles.tabItem,
+        sceneStyle: { backgroundColor: colors.bg },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: "Overview",
-          tabBarIcon: ({ color, focused }) => (
-            <TabDot color={color} focused={focused} label="◉" />
-          ),
+          tabBarIcon: makeIcon("grid", "grid-outline"),
         }}
       />
       <Tabs.Screen
         name="shipments"
         options={{
           title: "Shipments",
-          tabBarIcon: ({ color, focused }) => (
-            <TabDot color={color} focused={focused} label="⇄" />
-          ),
+          tabBarIcon: makeIcon("airplane", "airplane-outline"),
         }}
       />
       <Tabs.Screen
         name="parties"
         options={{
           title: "Parties",
-          tabBarIcon: ({ color, focused }) => (
-            <TabDot color={color} focused={focused} label="♟" />
-          ),
+          tabBarIcon: makeIcon("people", "people-outline"),
+        }}
+      />
+      <Tabs.Screen
+        name="invoices"
+        options={{
+          title: "Invoices",
+          tabBarIcon: makeIcon("receipt", "receipt-outline"),
         }}
       />
       <Tabs.Screen
         name="more"
         options={{
           title: "More",
-          tabBarIcon: ({ color, focused }) => (
-            <TabDot color={color} focused={focused} label="≡" />
-          ),
+          tabBarIcon: makeIcon("menu", "menu-outline"),
         }}
       />
     </Tabs>
   );
 }
 
-// ── Simple unicode-symbol tab marker (avoids icon-font native load). ──
-function TabDot({
-  color,
-  focused,
-  label,
-}: {
-  color: string;
-  focused: boolean;
-  label: string;
-}) {
-  return (
-    <View style={styles.tabDotWrap}>
-      <Text
-        style={[
-          styles.tabDot,
-          { color, opacity: focused ? 1 : 0.6, fontSize: focused ? 20 : 18 },
-        ]}
-      >
-        {label}
-      </Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.bgDeep,
     borderTopColor: colors.cardBorder,
     borderTopWidth: 1,
-    height: 62,
+    height: 64,
     paddingBottom: 8,
     paddingTop: 6,
   },
@@ -105,19 +91,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   tabLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "700",
-    letterSpacing: 0.3,
-    marginTop: 0,
-  },
-  tabDotWrap: {
-    alignItems: "center",
-    justifyContent: "center",
-    height: 22,
+    letterSpacing: 0.4,
     marginTop: spacing.xs,
-  },
-  tabDot: {
-    fontWeight: "800",
-    lineHeight: 22,
   },
 });

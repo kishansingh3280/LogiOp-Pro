@@ -1,13 +1,10 @@
 /**
- * Phase-2 Shipments list.
+ * Shipments list — Phase 3.
  *
- * Fetches `/api/shipments` and renders them in a FlatList. Each row
- * shows consignment no, direction, mode, status, weight, and creation
- * date. Pull-to-refresh included.
- *
- * Detail navigation is deferred to a later phase — tapping a row is a
- * no-op for now.
+ * JARVIS dark theme. Tapping a row → /shipment/[id].
  */
+import { Ionicons } from "@expo/vector-icons";
+import { Link } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -22,7 +19,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { shortDate, titleCase } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
+import { Pill } from "@/src/lib/ui";
 
 type Shipment = {
   id: string;
@@ -38,20 +37,12 @@ type Shipment = {
   party_id?: string;
 };
 
-const STATUS_TINT: Record<string, string> = {
-  pending: colors.warn,
-  in_transit: colors.info,
-  warehouse_arrived: colors.info,
-  delivered: colors.ok,
-  cancelled: colors.textDim,
-};
-
-const STATUS_SOFT: Record<string, string> = {
-  pending: colors.warnSoft,
-  in_transit: colors.infoSoft,
-  warehouse_arrived: colors.infoSoft,
-  delivered: colors.okSoft,
-  cancelled: colors.divider,
+const STATUS: Record<string, { tint: string; soft: string }> = {
+  pending: { tint: colors.warn, soft: colors.warnSoft },
+  in_transit: { tint: colors.info, soft: colors.infoSoft },
+  warehouse_arrived: { tint: colors.info, soft: colors.infoSoft },
+  delivered: { tint: colors.brand, soft: colors.brandSoft },
+  cancelled: { tint: colors.textDim, soft: colors.divider },
 };
 
 export default function ShipmentsScreen() {
@@ -81,7 +72,9 @@ export default function ShipmentsScreen() {
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
       <View style={styles.header}>
         <Text style={styles.title}>Shipments</Text>
-        <Text style={styles.subtitle}>{items?.length ?? 0} total · India ⇄ Thailand</Text>
+        <Text style={styles.subtitle}>
+          {items?.length ?? 0} total · India ⇄ Thailand
+        </Text>
       </View>
 
       {items === null && loading ? (
@@ -91,6 +84,7 @@ export default function ShipmentsScreen() {
         </View>
       ) : error ? (
         <View style={styles.center}>
+          <Ionicons name="alert-circle" size={24} color={colors.danger} />
           <Text style={styles.errorTitle}>Couldn&apos;t load shipments</Text>
           <Text style={styles.errorBody} numberOfLines={3}>
             {error}
@@ -111,6 +105,7 @@ export default function ShipmentsScreen() {
           }
           ListEmptyComponent={
             <View style={styles.center}>
+              <Ionicons name="airplane-outline" size={32} color={colors.textDim} />
               <Text style={styles.emptyTitle}>No shipments yet</Text>
               <Text style={styles.emptyBody}>
                 Shipments created in the desktop console will appear here.
@@ -124,45 +119,41 @@ export default function ShipmentsScreen() {
 }
 
 function ShipmentRow({ shipment }: { shipment: Shipment }) {
-  const tint = STATUS_TINT[shipment.status] ?? colors.textMuted;
-  const soft = STATUS_SOFT[shipment.status] ?? colors.divider;
+  const s = STATUS[shipment.status] ?? { tint: colors.textMuted, soft: colors.divider };
   const dirLabel = shipment.direction === "IN_TO_TH" ? "IN → TH" : "TH → IN";
 
   return (
-    <View style={styles.row}>
-      <View style={styles.rowLeft}>
-        <Text style={styles.consignment} numberOfLines={1}>
-          {shipment.consignment_no}
-        </Text>
-        <Text style={styles.rowSub} numberOfLines={1}>
-          {dirLabel} · {shipment.mode?.replace("_", " ") || "—"}
-        </Text>
-        <View style={styles.rowMetaWrap}>
-          <View style={[styles.chip, { backgroundColor: soft, borderColor: tint }]}>
-            <Text style={[styles.chipText, { color: tint }]}>
-              {shipment.status.replace("_", " ")}
-            </Text>
-          </View>
-          <Text style={styles.dim}>{shortDate(shipment.created_at)}</Text>
+    <Link href={`/shipment/${shipment.id}` as any} asChild>
+      <TouchableOpacity activeOpacity={0.75} style={styles.row}>
+        <View style={styles.rowIcon}>
+          <Ionicons
+            name={shipment.direction === "IN_TO_TH" ? "arrow-forward" : "arrow-back"}
+            size={16}
+            color={colors.brand}
+          />
         </View>
-      </View>
-      <View style={styles.rowRight}>
-        <Text style={styles.weight}>{shipment.weight_kg} kg</Text>
-        <Text style={styles.dim}>{shipment.bag_count} bag{shipment.bag_count !== 1 ? "s" : ""}</Text>
-      </View>
-    </View>
+        <View style={styles.rowLeft}>
+          <Text style={styles.consignment} numberOfLines={1}>
+            {shipment.consignment_no}
+          </Text>
+          <Text style={styles.rowSub} numberOfLines={1}>
+            {dirLabel} · {titleCase(shipment.mode)}
+          </Text>
+          <View style={styles.rowMetaWrap}>
+            <Pill label={titleCase(shipment.status)} tint={s.tint} soft={s.soft} size="sm" />
+            <Text style={styles.dim}>{shortDate(shipment.created_at)}</Text>
+          </View>
+        </View>
+        <View style={styles.rowRight}>
+          <Text style={styles.weight}>{shipment.weight_kg} kg</Text>
+          <Text style={styles.dim}>
+            {shipment.bag_count} bag{shipment.bag_count !== 1 ? "s" : ""}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+      </TouchableOpacity>
+    </Link>
   );
-}
-
-function shortDate(iso?: string) {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso.slice(0, 10);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return iso.slice(0, 10);
-  }
 }
 
 const styles = StyleSheet.create({
@@ -173,24 +164,29 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: spacing.lg, paddingBottom: 80 },
   row: {
     backgroundColor: colors.card,
-    borderRadius: radii.md,
-    borderWidth: 1,
     borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: radii.md,
     flexDirection: "row",
+    alignItems: "center",
     padding: spacing.md,
+    gap: spacing.md,
+  },
+  rowIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.brandSoft,
+    borderColor: colors.brandBorder,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   rowLeft: { flex: 1 },
   rowRight: { alignItems: "flex-end", justifyContent: "center" },
   consignment: { color: colors.text, fontSize: 15, fontWeight: "700" },
   rowSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
   rowMetaWrap: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: 8 },
-  chip: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-  },
-  chipText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.4, textTransform: "uppercase" },
   weight: { color: colors.text, fontSize: 15, fontWeight: "800" },
   dim: { color: colors.textDim, fontSize: 11 },
   sep: { height: spacing.sm },
@@ -211,5 +207,5 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: radii.pill,
   },
-  retryText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
+  retryText: { color: colors.bg, fontSize: 12, fontWeight: "800" },
 });
