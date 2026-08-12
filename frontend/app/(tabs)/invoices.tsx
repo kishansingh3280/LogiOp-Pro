@@ -1,15 +1,19 @@
 /**
- * Invoices — Phase 3.
+ * Invoices — Phase 10 Turn 2.
  *
- * Dark JARVIS theme. Lists invoices with status filter chips and a
- * search box. Each row shows: number, party name, amount (white),
- * status pill, date.
+ * Mobile: list-only. Tap row → /invoice/[id]
+ * Tablet (width ≥ 900): master-detail split layout
+ *   • LEFT: list, +New button, search box, filter chips
+ *   • RIGHT: selected invoice detail (via <InvoiceDetailView />)
+ *
+ * Filters: All / Draft / Sent / Paid / Cancelled
  */
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   RefreshControl,
   ScrollView,
@@ -21,17 +25,15 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { fmtCurrency, shortDate, titleCase } from "@/src/lib/format";
+import { InvoiceDetailView } from "@/src/lib/invoice-detail-view";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { Pill } from "@/src/lib/ui";
 
-type InvoiceItem = {
-  description?: string;
-  quantity?: number;
-  rate?: number;
-};
+type InvoiceItem = { description?: string; quantity?: number; rate?: number };
 type Invoice = {
   id: string;
   number: string;
@@ -61,7 +63,7 @@ type FilterKey = (typeof FILTERS)[number];
 
 function subtotal(inv: Invoice): number {
   return (inv.items || []).reduce(
-    (sum, it) => sum + (Number(it.rate ?? 0) * Number(it.quantity ?? 0)),
+    (sum, it) => sum + Number(it.rate ?? 0) * Number(it.quantity ?? 0),
     0,
   );
 }
@@ -71,15 +73,25 @@ function grandTotal(inv: Invoice): number {
   return sub + tax;
 }
 
+function handleNewInvoice() {
+  Alert.alert(
+    "New Invoice",
+    "Create invoices from the desktop console. Mobile create flow is coming soon.",
+    [{ text: "OK" }],
+  );
+}
+
 export default function InvoicesScreen() {
   const { token } = useAuth();
   const router = useRouter();
+  const isTablet = useIsTablet();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [parties, setParties] = useState<Party[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -122,13 +134,36 @@ export default function InvoicesScreen() {
     return list;
   }, [invoices, filter, query, partyMap]);
 
-  return (
-    <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
+  useEffect(() => {
+    if (!isTablet) return;
+    if (!filtered.length) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !filtered.find((i) => i.id === selectedId)) {
+      setSelectedId(filtered[0].id);
+    }
+  }, [isTablet, filtered, selectedId]);
+
+  const listPanel = (
+    <View style={isTablet ? styles.leftPane : styles.mobilePane}>
       <View style={styles.header}>
-        <Text style={styles.title}>Invoices</Text>
-        <Text style={styles.subtitle}>
-          {invoices?.length ?? 0} total · GST, freight, PDF ready
-        </Text>
+        <View style={styles.titleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title}>Invoices</Text>
+            <Text style={styles.subtitle}>
+              {filtered.length} shown · {invoices?.length ?? 0} total
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.newBtn}
+            onPress={handleNewInvoice}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="add" size={18} color={colors.bgSolid} />
+            <Text style={styles.newBtnText}>New</Text>
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.searchWrap}>
           <Ionicons name="search" size={16} color={colors.textDim} style={styles.searchIcon} />
@@ -142,6 +177,11 @@ export default function InvoicesScreen() {
             autoCorrect={false}
             returnKeyType="search"
           />
+          {query ? (
+            <TouchableOpacity onPress={() => setQuery("")} hitSlop={8}>
+              <Ionicons name="close-circle" size={16} color={colors.textDim} />
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         <ScrollView
@@ -191,7 +231,10 @@ export default function InvoicesScreen() {
             <InvoiceRow
               invoice={item}
               partyName={partyMap[item.party_id]}
-              onPress={() => router.push(`/invoice/${item.id}` as any)}
+              selected={isTablet && item.id === selectedId}
+              onPress={() =>
+                isTablet ? setSelectedId(item.id) : router.push(`/invoice/${item.id}` as any)
+              }
             />
           )}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
@@ -212,6 +255,35 @@ export default function InvoicesScreen() {
           }
         />
       )}
+    </View>
+  );
+
+  if (isTablet) {
+    return (
+      <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
+        <View style={styles.splitRow}>
+          {listPanel}
+          <View style={styles.rightPane}>
+            {selectedId ? (
+              <InvoiceDetailView id={selectedId} />
+            ) : (
+              <View style={styles.emptyDetail}>
+                <Ionicons name="receipt-outline" size={40} color={colors.textDim} />
+                <Text style={styles.emptyDetailTitle}>No invoice selected</Text>
+                <Text style={styles.emptyDetailBody}>
+                  Pick an invoice from the list to view items, totals, and share as PDF.
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
+      {listPanel}
     </SafeAreaView>
   );
 }
@@ -219,17 +291,23 @@ export default function InvoicesScreen() {
 function InvoiceRow({
   invoice,
   partyName,
+  selected,
   onPress,
 }: {
   invoice: Invoice;
   partyName?: string;
+  selected?: boolean;
   onPress: () => void;
 }) {
   const s = STATUS[(invoice.status || "draft").toLowerCase()] ?? STATUS.draft;
   const total = grandTotal(invoice);
 
   return (
-    <TouchableOpacity activeOpacity={0.75} style={styles.row} onPress={onPress}>
+    <TouchableOpacity
+      activeOpacity={0.75}
+      style={[styles.row, selected && styles.rowSelected]}
+      onPress={onPress}
+    >
       <View style={styles.rowIcon}>
         <Ionicons name="receipt" size={16} color={colors.brand} />
       </View>
@@ -262,9 +340,33 @@ function InvoiceRow({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
+  splitRow: { flex: 1, flexDirection: "row" },
+  leftPane: {
+    width: 380,
+    borderRightWidth: 1,
+    borderRightColor: colors.divider,
+  },
+  rightPane: { flex: 1 },
+  mobilePane: { flex: 1 },
   header: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm },
+  titleRow: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm },
   title: { color: colors.text, fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
   subtitle: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  newBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.brand,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    shadowColor: colors.brand,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  newBtnText: { color: colors.bgSolid, fontSize: 12, fontWeight: "800", letterSpacing: 0.3 },
   searchWrap: {
     marginTop: spacing.md,
     flexDirection: "row",
@@ -276,18 +378,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   searchIcon: { marginRight: spacing.sm },
-  search: {
-    flex: 1,
-    paddingVertical: 10,
-    color: colors.text,
-    fontSize: 14,
-  },
-  filterRow: {
-    flexDirection: "row",
-    gap: 8,
-    paddingTop: spacing.sm,
-    paddingBottom: 2,
-  },
+  search: { flex: 1, paddingVertical: 10, color: colors.text, fontSize: 14 },
+  filterRow: { flexDirection: "row", gap: 8, paddingTop: spacing.sm, paddingBottom: 2 },
   filterChip: {
     paddingHorizontal: 14,
     paddingVertical: 6,
@@ -296,10 +388,7 @@ const styles = StyleSheet.create({
     borderColor: colors.cardBorder,
     backgroundColor: colors.card,
   },
-  filterChipActive: {
-    backgroundColor: colors.brandSoft,
-    borderColor: colors.brandBorder,
-  },
+  filterChipActive: { backgroundColor: colors.brandSoft, borderColor: colors.brandBorder },
   filterText: {
     color: colors.textMuted,
     fontSize: 11,
@@ -318,6 +407,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: spacing.md,
   },
+  rowSelected: { borderColor: colors.brand, backgroundColor: colors.brandSoft },
   rowIcon: {
     width: 32,
     height: 32,
@@ -336,12 +426,7 @@ const styles = StyleSheet.create({
   amount: { color: colors.text, fontSize: 15, fontWeight: "800", letterSpacing: 0.3 },
   dim: { color: colors.textDim, fontSize: 11 },
   sep: { height: spacing.sm },
-  center: {
-    padding: spacing.xl,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
+  center: { padding: spacing.xl, alignItems: "center", justifyContent: "center", gap: 8 },
   emptyTitle: { color: colors.text, fontSize: 15, fontWeight: "700" },
   emptyBody: { color: colors.textMuted, fontSize: 12, textAlign: "center" },
   errorTitle: { color: colors.danger, fontSize: 14, fontWeight: "800" },
@@ -354,4 +439,19 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   retryText: { color: colors.bg, fontSize: 12, fontWeight: "800" },
+  emptyDetail: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    padding: spacing.xxl,
+  },
+  emptyDetailTitle: { color: colors.text, fontSize: 16, fontWeight: "800" },
+  emptyDetailBody: {
+    color: colors.textMuted,
+    fontSize: 13,
+    textAlign: "center",
+    maxWidth: 320,
+    lineHeight: 18,
+  },
 });

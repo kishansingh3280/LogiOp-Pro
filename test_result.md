@@ -2327,3 +2327,88 @@ agent_communication:
             badgeText:  "5"        (red pill on orb — 5 unread items)
             orbPresent: True       (bottom-right, tri-color gradient)
             No bell:    confirmed (visual + grep both clean)
+
+
+##====================================================================================================
+## PHASE 10 · TURN 2 — TABLET MASTER-DETAIL SPLIT LAYOUTS (2026-08-12)
+##====================================================================================================
+
+frontend:
+  - task: "Shipments tablet master-detail split layout"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/shipments.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Phase 10 Turn 2 — Shipments screen:
+            • Mobile (< 900px): existing list-only unchanged, tap row → /shipment/[id]
+            • Tablet (≥ 900px): NEW split layout via useIsTablet()
+                - LEFT (380px): title + subtitle counter, "+ New" pill button
+                  (Alert placeholder for now), search box (consignment / origin /
+                  destination), horizontal filter chips [All, Pending, In Transit,
+                  Warehouse, Delivered] with green active state
+                - RIGHT (flex 1): renders shared <ShipmentDetailView id={selectedId} />
+                  which is the EXTRACTED body from /shipment/[id].tsx — parties,
+                  financials, timeline, per-bag multi-carrier list, linked invoice
+            • Auto-selects first item in filtered list on tablet; keeps selection
+              stable if item still visible after filter/search changes
+            • Selected row highlighted with brand-green border + brandSoft bg
+            • "+ New" button — fixed color bug where colors.bg (transparent) made
+              icon+text invisible; now uses colors.bgSolid for contrast on green
+          Ready for frontend testing at 1024x768 tablet + 390x844 mobile viewports.
+
+  - task: "Invoices tablet master-detail split layout"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/invoices.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Phase 10 Turn 2 — Invoices screen:
+            • Mobile: list-only (existing search + filters retained), row →
+              router.push('/invoice/[id]')
+            • Tablet (≥ 900px): NEW split layout
+                - LEFT (380px): title, "+ New" button (Alert placeholder), search,
+                  filter chips [All, Draft, Sent, Paid, Cancelled]
+                - RIGHT: <InvoiceDetailView id={selectedId} /> — extracted body
+                  with Bill To, items table (Description/Qty/Rate/Amount),
+                  Subtotal, Tax, Grand Total in neon-green, Linked Shipment,
+                  Notes, Meta, and "Share invoice · Save as PDF" button (uses
+                  Share.share → Android Print → Save as PDF, no native module)
+            • Auto-select first item; selected row highlighted
+          Verified via screenshot: PAID invoice INV-AURA-PEN-001 shown with
+          Bill To (Lalit), items, ₹9,500 grand total.
+
+  - task: "Shared detail body components"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/shipment-detail-view.tsx, /app/frontend/src/lib/invoice-detail-view.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Extracted the ScrollView bodies from /app/shipment/[id].tsx and
+          /app/invoice/[id].tsx into reusable components. The [id].tsx routes
+          now render just the header/back button and delegate the body. Same
+          code path is used by the tablet split view. Both files pass ESLint.
+        -working: true
+        -agent: "testing"
+        -comment: |
+          Verified by testing agent (iteration 75): both /shipment/[id] and
+          /invoice/[id] direct routes render correctly using the extracted
+          components; no regression on the deep-linked screens. Tablet split
+          view also renders via the same components. Zero bugs found across
+          14 scenarios. Minor non-blocking RN deprecation warnings (shadow*
+          props, pointerEvents attr) noted; pointerEvents removed post-test.
