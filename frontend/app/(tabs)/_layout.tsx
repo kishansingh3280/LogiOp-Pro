@@ -23,6 +23,7 @@ import {
 
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { useUiVoice } from "@/src/lib/papa-mode";
+import { FyPicker, NotificationsButton, TripsLinkRow } from "@/src/lib/dashboard-widgets";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -167,6 +168,11 @@ function SideBar({
         </TouchableOpacity>
       </View>
 
+      {/* FY selector — added under the brand header */}
+      <View style={{ paddingHorizontal: spacing.md, marginBottom: 4 }}>
+        <FyPicker collapsed={collapsed} />
+      </View>
+
       <View style={styles.sidebarNav}>
         {state.routes.map((route, idx) => {
           const focused = state.index === idx;
@@ -185,39 +191,47 @@ function SideBar({
           };
 
           return (
-            <TouchableOpacity
-              key={route.key}
-              onPress={onPress}
-              activeOpacity={0.75}
-              style={[styles.sidebarItem, focused && styles.sidebarItemActive]}
-              accessibilityRole="button"
-              accessibilityLabel={String(title)}
-              accessibilityState={focused ? { selected: true } : {}}
-            >
-              {focused ? <View style={styles.sidebarActiveRail} /> : null}
-              <Ionicons
-                name={focused ? icons.active : icons.inactive}
-                size={20}
-                color={focused ? colors.brand : colors.textDim}
-                style={styles.sidebarIcon}
-              />
-              {!collapsed ? (
-                <Text
-                  style={[
-                    styles.sidebarLabel,
-                    { color: focused ? colors.brand : colors.textMuted },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {String(title)}
-                </Text>
+            <View key={route.key}>
+              <TouchableOpacity
+                onPress={onPress}
+                activeOpacity={0.75}
+                style={[styles.sidebarItem, focused && styles.sidebarItemActive]}
+                accessibilityRole="button"
+                accessibilityLabel={String(title)}
+                accessibilityState={focused ? { selected: true } : {}}
+              >
+                {focused ? <View style={styles.sidebarActiveRail} /> : null}
+                <Ionicons
+                  name={focused ? icons.active : icons.inactive}
+                  size={20}
+                  color={focused ? colors.brand : colors.textDim}
+                  style={styles.sidebarIcon}
+                />
+                {!collapsed ? (
+                  <Text
+                    style={[
+                      styles.sidebarLabel,
+                      { color: focused ? colors.brand : colors.textMuted },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {String(title)}
+                  </Text>
+                ) : null}
+              </TouchableOpacity>
+
+              {/* Insert extra "Trips" link between Invoices and More */}
+              {route.name === "invoices" ? (
+                <TripsLinkRow collapsed={collapsed} />
               ) : null}
-            </TouchableOpacity>
+            </View>
           );
         })}
       </View>
 
       <View style={styles.sidebarFooter}>
+        {/* Notifications bell right above the JARVIS AURA badge */}
+        <NotificationsButton collapsed={collapsed} />
         {!collapsed ? (
           <Text style={styles.sidebarFooterText}>JARVIS AURA</Text>
         ) : (

@@ -37,6 +37,7 @@ import { fmtCurrency, shortDate } from "@/src/lib/format";
 import { useUiVoice } from "@/src/lib/papa-mode";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard, LabelValueRow, Pill } from "@/src/lib/ui";
+import { NowBriefCard, CurrencyRatesRow } from "@/src/lib/dashboard-widgets";
 
 // ── API shapes ─────────────────────────────────────────────────────
 type DashboardStats = {
@@ -236,6 +237,9 @@ export default function HomeScreen() {
           />
         </View>
 
+        {/* Now Brief — OPSI-generated situational greeting */}
+        <NowBriefCard />
+
         {/* Greeting */}
         <GlassCard glow style={styles.greetCard}>
           <Text style={styles.eyebrow}>{voice.greet}</Text>
@@ -307,6 +311,9 @@ export default function HomeScreen() {
         </TouchableOpacity>
 
         {/* Row 3 — Sliding widget carousel */}
+        <Text style={styles.sectionTitle}>Currency rates</Text>
+        <CurrencyRatesRow />
+
         <Text style={styles.sectionTitle}>Shipment status</Text>
         <View>
           <ScrollView
