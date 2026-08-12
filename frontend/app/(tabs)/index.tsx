@@ -36,7 +36,7 @@ import { useAuth } from "@/src/lib/auth-context";
 import { fmtCurrency, shortDate } from "@/src/lib/format";
 import { useUiVoice } from "@/src/lib/papa-mode";
 import { colors, radii, spacing } from "@/src/lib/theme";
-import { GlassCard, LabelValueRow, Pill } from "@/src/lib/ui";
+import { GlassCard, Pill } from "@/src/lib/ui";
 import { NowBriefCard, CurrencyRatesRow } from "@/src/lib/dashboard-widgets";
 
 // ── API shapes ─────────────────────────────────────────────────────
@@ -97,11 +97,9 @@ export default function HomeScreen() {
   const [shipments, setShipments] = useState<Shipment[] | null>(null);
   const [parties, setParties] = useState<Party[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
       const [s, l, w, sh, ps] = await Promise.all([
         apiGet<DashboardStats>("/api/dashboard/stats"),
@@ -115,8 +113,8 @@ export default function HomeScreen() {
       setWarehouse(w);
       setShipments(Array.isArray(sh) ? sh : []);
       setParties(Array.isArray(ps) ? ps : []);
-    } catch (e) {
-      setError((e as Error).message);
+    } catch {
+      /* swallowed — individual widgets show their own error state */
     } finally {
       setLoading(false);
     }
@@ -236,6 +234,12 @@ export default function HomeScreen() {
             soft={token ? colors.brandSoft : authError ? colors.dangerSoft : colors.warnSoft}
           />
         </View>
+
+        {/* Route heading */}
+        <Text style={styles.routeHeading}>India ⇄ Thailand</Text>
+        <Text style={styles.routeSub}>
+          Live view of shipments, ledger and warehouse
+        </Text>
 
         {/* Now Brief — OPSI-generated situational greeting */}
         <NowBriefCard />
@@ -397,26 +401,8 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Diagnostics */}
-        <Text style={styles.sectionTitle}>Diagnostics</Text>
-        <GlassCard>
-          <LabelValueRow
-            label="Backend"
-            value={error ? "Error" : "Reachable"}
-            valueColor={error ? colors.debit : colors.credit}
-          />
-          <LabelValueRow
-            label="Auth token"
-            value={token ? "Present" : "Pending / offline"}
-            valueColor={token ? colors.credit : colors.warn}
-          />
-          <LabelValueRow label="User" value={user?.display_name || "—"} />
-          <LabelValueRow
-            label="Mode"
-            value={voice.isPapa ? "Papa · Simplified Hindi" : "Standard"}
-            valueColor={voice.isPapa ? colors.brand : colors.text}
-          />
-        </GlassCard>
+        {/* Diagnostics removed per Phase-10 spec — Now Brief + Currency
+            Rates already surface auth / backend health implicitly. */}
 
         {stats === null && loading ? (
           <View style={styles.loadingBar}>
@@ -512,6 +498,18 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "800",
     letterSpacing: -0.5,
+  },
+  routeHeading: {
+    color: colors.text,
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+    marginTop: 4,
+  },
+  routeSub: {
+    color: colors.textMuted,
+    fontSize: 13,
+    marginBottom: spacing.lg,
   },
   greetCard: { padding: spacing.lg, marginBottom: spacing.md },
   eyebrow: {

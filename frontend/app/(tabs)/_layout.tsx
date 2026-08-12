@@ -11,8 +11,8 @@
  */
 import { Ionicons } from "@expo/vector-icons";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { Tabs } from "expo-router";
-import { useCallback, useState } from "react";
+import { Tabs, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import {
   StyleSheet,
   Text,
@@ -24,6 +24,8 @@ import {
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { useUiVoice } from "@/src/lib/papa-mode";
 import { FyPicker, NotificationsButton, TripsLinkRow } from "@/src/lib/dashboard-widgets";
+import { apiGet } from "@/src/lib/api";
+import { useAuth } from "@/src/lib/auth-context";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -175,6 +177,12 @@ function SideBar({
 
       <View style={styles.sidebarNav}>
         {state.routes.map((route, idx) => {
+          // Hide the "Parties" tab from the sidebar per Phase-10 spec.
+          // It stays reachable from the mobile bottom bar and via the
+          // party links in Ledger / Shipment detail — this only
+          // changes the tablet sidebar chrome.
+          if (route.name === "parties") return null;
+
           const focused = state.index === idx;
           const icons = TAB_ICONS[route.name] || TAB_ICONS.index;
           const title = descriptors[route.key]?.options.title ?? route.name;
@@ -220,13 +228,24 @@ function SideBar({
                 ) : null}
               </TouchableOpacity>
 
-              {/* Insert extra "Trips" link between Invoices and More */}
+              {/* Insert Ledger + Trips static links between Invoices and More */}
               {route.name === "invoices" ? (
-                <TripsLinkRow collapsed={collapsed} />
+                <>
+                  <SideStaticLink
+                    icon="book-outline"
+                    label="Ledger"
+                    href="/ledger"
+                    collapsed={collapsed}
+                  />
+                  <TripsLinkRow collapsed={collapsed} />
+                </>
               ) : null}
             </View>
           );
         })}
+
+        {/* ── Shipment stats block (below nav items) ─────────── */}
+        {!collapsed ? <SidebarShipmentStats /> : null}
       </View>
 
       <View style={styles.sidebarFooter}>
@@ -241,6 +260,124 @@ function SideBar({
     </View>
   );
 }
+
+// ────────────────────────────────────────────────────────────────
+// Static sidebar link (Ledger row — behaves like Trips)
+// ────────────────────────────────────────────────────────────────
+function SideStaticLink({
+  icon,
+  label,
+  href,
+  collapsed,
+}: {
+  icon: IconName;
+  label: string;
+  href: string;
+  collapsed: boolean;
+}) {
+  const router = useRouter();
+  return (
+    <TouchableOpacity
+      onPress={() => router.push(href as never)}
+      activeOpacity={0.75}
+      style={[styles.sidebarItem, collapsed && { justifyContent: "center" }]}
+      accessibilityLabel={label}
+    >
+      <Ionicons
+        name={icon}
+        size={20}
+        color={colors.textDim}
+        style={styles.sidebarIcon}
+      />
+      {!collapsed ? (
+        <Text
+          style={[styles.sidebarLabel, { color: colors.textMuted }]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────
+// Sidebar shipment stats — 4 mini rows below the nav
+// ────────────────────────────────────────────────────────────────
+function SidebarShipmentStats() {
+  const { token } = useAuth();
+  const [stats, setStats] = useState<{
+    total?: number;
+    pending?: number;
+    in_transit?: number;
+    warehouse_arrived?: number;
+    delivered?: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    apiGet<typeof stats>("/api/dashboard/stats" as string)
+      .then((s) => setStats(s))
+      .catch(() => setStats(null));
+  }, [token]);
+
+  const rows: { label: string; value: number; tint: string }[] = [
+    { label: "Total", value: stats?.total ?? 0, tint: colors.text },
+    { label: "Pending", value: stats?.pending ?? 0, tint: colors.warn },
+    {
+      label: "In Transit",
+      value: (stats?.in_transit ?? 0) + (stats?.warehouse_arrived ?? 0),
+      tint: colors.info,
+    },
+    { label: "Delivered", value: stats?.delivered ?? 0, tint: colors.brand },
+  ];
+
+  return (
+    <View
+      style={{
+        marginTop: 16,
+        marginHorizontal: 8,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: colors.divider,
+      }}
+    >
+      <Text
+        style={{
+          color: colors.textDim,
+          fontSize: 9,
+          fontWeight: "800",
+          letterSpacing: 0.8,
+          textTransform: "uppercase",
+          paddingHorizontal: 4,
+          marginBottom: 6,
+        }}
+      >
+        Shipment Stats
+      </Text>
+      {rows.map((r) => (
+        <View
+          key={r.label}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingVertical: 5,
+            paddingHorizontal: 4,
+          }}
+        >
+          <Text style={{ color: colors.textMuted, fontSize: 11, fontWeight: "600" }}>
+            {r.label}
+          </Text>
+          <Text style={{ color: r.tint, fontSize: 13, fontWeight: "800" }}>
+            {r.value}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 
 const styles = StyleSheet.create({
   // ─── Bottom bar (mobile) ────────────────────────────────────────
