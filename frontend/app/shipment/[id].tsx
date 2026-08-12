@@ -78,6 +78,7 @@ export default function ShipmentDetail() {
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [party, setParty] = useState<Party | null>(null);
   const [carrier, setCarrier] = useState<Party | null>(null);
+  const [invoiceId, setInvoiceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,6 +109,14 @@ export default function ShipmentDetail() {
       const [p1, p2] = await Promise.all(partyRequests);
       setParty(p1);
       setCarrier(p2);
+
+      // Look up related invoice (best-effort — the list endpoint is small)
+      apiGet<{ id: string; shipment_id?: string | null }[]>("/api/invoices")
+        .then((invs) => {
+          const match = invs.find((iv) => iv.shipment_id === id);
+          setInvoiceId(match?.id || null);
+        })
+        .catch(() => setInvoiceId(null));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -281,6 +290,21 @@ export default function ShipmentDetail() {
               ) : null}
             </GlassCard>
 
+            {invoiceId ? (
+              <TouchableOpacity
+                style={styles.linkCard}
+                onPress={() => router.push(`/invoice/${invoiceId}` as any)}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="receipt" size={18} color={colors.brand} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.linkTitle}>Linked invoice</Text>
+                  <Text style={styles.linkSub}>Tap to view invoice details & PDF</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+              </TouchableOpacity>
+            ) : null}
+
             {shipment.notes ? (
               <>
                 <Text style={styles.section}>Notes</Text>
@@ -358,6 +382,19 @@ const styles = StyleSheet.create({
   timelineLabel: { fontSize: 13, fontWeight: "700" },
   timelineDate: { color: colors.textDim, fontSize: 11, marginTop: 2 },
   notes: { color: colors.textMuted, fontSize: 13, lineHeight: 20 },
+  linkCard: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.brandSoft,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  linkTitle: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  linkSub: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   loading: {
     flexDirection: "row",
     gap: spacing.sm,

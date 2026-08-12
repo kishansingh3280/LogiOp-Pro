@@ -6,6 +6,7 @@
  * status pill, date.
  */
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -72,6 +73,7 @@ function grandTotal(inv: Invoice): number {
 
 export default function InvoicesScreen() {
   const { token } = useAuth();
+  const router = useRouter();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [parties, setParties] = useState<Party[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -186,7 +188,11 @@ export default function InvoicesScreen() {
           data={filtered}
           keyExtractor={(inv) => inv.id}
           renderItem={({ item }) => (
-            <InvoiceRow invoice={item} partyName={partyMap[item.party_id]} />
+            <InvoiceRow
+              invoice={item}
+              partyName={partyMap[item.party_id]}
+              onPress={() => router.push(`/invoice/${item.id}` as any)}
+            />
           )}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           contentContainerStyle={styles.list}
@@ -213,15 +219,17 @@ export default function InvoicesScreen() {
 function InvoiceRow({
   invoice,
   partyName,
+  onPress,
 }: {
   invoice: Invoice;
   partyName?: string;
+  onPress: () => void;
 }) {
   const s = STATUS[(invoice.status || "draft").toLowerCase()] ?? STATUS.draft;
   const total = grandTotal(invoice);
 
   return (
-    <TouchableOpacity activeOpacity={0.75} style={styles.row}>
+    <TouchableOpacity activeOpacity={0.75} style={styles.row} onPress={onPress}>
       <View style={styles.rowIcon}>
         <Ionicons name="receipt" size={16} color={colors.brand} />
       </View>

@@ -217,6 +217,22 @@ export default function PartyDetail() {
               <BalanceBox amount={balance.thb} currency="THB" />
             </View>
 
+            {/* View Statement CTA */}
+            <TouchableOpacity
+              style={styles.statementBtn}
+              onPress={() => router.push(`/party/${id}/statement` as any)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="document-text" size={18} color={colors.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.statementTitle}>View full statement</Text>
+                <Text style={styles.statementSub}>
+                  Running balance · Debit / Credit · Share as PDF
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+            </TouchableOpacity>
+
             {/* Contact / meta */}
             <Text style={styles.section}>Details</Text>
             <GlassCard>
@@ -467,6 +483,19 @@ const styles = StyleSheet.create({
   entryDesc: { color: colors.text, fontSize: 13, fontWeight: "600" },
   entrySub: { color: colors.textDim, fontSize: 11, marginTop: 2 },
   entryAmt: { fontSize: 13, fontWeight: "800" },
+  statementBtn: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.brandSoft,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  statementTitle: { color: colors.text, fontSize: 14, fontWeight: "800" },
+  statementSub: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   loading: {
     flexDirection: "row",
     gap: spacing.sm,
