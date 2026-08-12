@@ -22,6 +22,7 @@ import {
 } from "react-native";
 
 import { colors, radii, spacing } from "@/src/lib/theme";
+import { useUiVoice } from "@/src/lib/papa-mode";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -42,6 +43,7 @@ export default function TabsLayout() {
   const isTablet = width >= TABLET_BREAKPOINT;
   const [collapsed, setCollapsed] = useState(false);
   const sidebarWidth = collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
+  const voice = useUiVoice();
 
   return (
     <Tabs
@@ -65,11 +67,11 @@ export default function TabsLayout() {
         )
       }
     >
-      <Tabs.Screen name="index" options={{ title: "Overview" }} />
-      <Tabs.Screen name="shipments" options={{ title: "Shipments" }} />
-      <Tabs.Screen name="parties" options={{ title: "Parties" }} />
-      <Tabs.Screen name="invoices" options={{ title: "Invoices" }} />
-      <Tabs.Screen name="more" options={{ title: "More" }} />
+      <Tabs.Screen name="index" options={{ title: voice.overview }} />
+      <Tabs.Screen name="shipments" options={{ title: voice.shipments }} />
+      <Tabs.Screen name="parties" options={{ title: voice.parties }} />
+      <Tabs.Screen name="invoices" options={{ title: voice.invoices }} />
+      <Tabs.Screen name="more" options={{ title: voice.more }} />
     </Tabs>
   );
 }

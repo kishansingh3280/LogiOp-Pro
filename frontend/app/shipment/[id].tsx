@@ -43,6 +43,13 @@ type Shipment = {
   carrier_party_id?: string;
   carrier_charge?: number;
   carrier_currency?: "INR" | "THB";
+  bags?: {
+    id: string;
+    weight_kg?: number;
+    status?: string;
+    carrier_party_id?: string | null;
+    contents?: string | null;
+  }[];
   party_id: string;
   dispatch_date?: string;
   dispatched_at?: string;
@@ -78,6 +85,7 @@ export default function ShipmentDetail() {
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [party, setParty] = useState<Party | null>(null);
   const [carrier, setCarrier] = useState<Party | null>(null);
+  const [allParties, setAllParties] = useState<Party[]>([]);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +125,11 @@ export default function ShipmentDetail() {
           setInvoiceId(match?.id || null);
         })
         .catch(() => setInvoiceId(null));
+
+      // Full party list for per-bag carrier name resolution.
+      apiGet<Party[]>("/api/parties")
+        .then((ps) => setAllParties(Array.isArray(ps) ? ps : []))
+        .catch(() => setAllParties([]));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -290,6 +303,64 @@ export default function ShipmentDetail() {
               ) : null}
             </GlassCard>
 
+            {/* Per-bag multi-carrier */}
+            {shipment.bags && shipment.bags.length > 0 ? (
+              <>
+                <View style={styles.bagsHeader}>
+                  <Text style={styles.section}>Bags · per-carrier</Text>
+                  <Text style={styles.dim}>{shipment.bags.length} bags</Text>
+                </View>
+                <GlassCard padded={false}>
+                  {shipment.bags.map((b, idx, arr) => {
+                    const carrierName =
+                      (b.carrier_party_id
+                        ? allParties.find((p) => p.id === b.carrier_party_id)?.name
+                        : null) || (carrier?.name || null);
+                    const isShared = !b.carrier_party_id;
+                    return (
+                      <View
+                        key={b.id}
+                        style={[
+                          styles.bagRow,
+                          idx < arr.length - 1 && styles.bagRowBorder,
+                        ]}
+                      >
+                        <View style={styles.bagIcon}>
+                          <Ionicons name="cube" size={14} color={colors.brand} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.bagId}>
+                            Bag {(b.id || "").slice(0, 8) || `#${idx + 1}`}
+                          </Text>
+                          <Text style={styles.bagSub} numberOfLines={1}>
+                            {carrierName ? (
+                              <>
+                                Carrier:{" "}
+                                <Text style={{ color: isShared ? colors.textMuted : colors.brand, fontWeight: "800" }}>
+                                  {carrierName}
+                                </Text>
+                                {isShared ? " (default)" : null}
+                              </>
+                            ) : (
+                              <Text style={{ color: colors.warn }}>No carrier assigned</Text>
+                            )}
+                          </Text>
+                          {b.contents ? (
+                            <Text style={styles.bagSub} numberOfLines={1}>
+                              {b.contents}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <Text style={styles.bagWeight}>
+                          {Number(b.weight_kg ?? 0)} kg
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </GlassCard>
+              </>
+            ) : null}
+
             {invoiceId ? (
               <TouchableOpacity
                 style={styles.linkCard}
@@ -395,6 +466,37 @@ const styles = StyleSheet.create({
   },
   linkTitle: { color: colors.text, fontSize: 14, fontWeight: "700" },
   linkSub: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+  // ─ Per-bag rows
+  bagsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginRight: spacing.sm,
+  },
+  bagRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  bagRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  bagIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.brandSoft,
+    borderColor: colors.brandBorder,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bagId: { color: colors.text, fontSize: 13, fontWeight: "800" },
+  bagSub: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+  bagWeight: { color: colors.text, fontSize: 13, fontWeight: "800" },
   loading: {
     flexDirection: "row",
     gap: spacing.sm,

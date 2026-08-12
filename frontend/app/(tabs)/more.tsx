@@ -27,7 +27,8 @@ type MenuItem = {
   subtitle: string;
   icon: React.ComponentProps<typeof Ionicons>["name"];
   route?: string;
-  phase?: "3" | "4" | "5";
+  phase?: "3" | "4" | "5" | "8" | "9";
+  adminOnly?: boolean;
 };
 
 const MENU: MenuItem[] = [
@@ -46,31 +47,55 @@ const MENU: MenuItem[] = [
     route: "/bullion",
   },
   {
+    key: "bags",
+    title: "Bags",
+    subtitle: "Every bag across every shipment, per-carrier",
+    icon: "cube",
+    route: "/bags",
+  },
+  {
+    key: "items",
+    title: "Catalog",
+    subtitle: "Products, buying / selling price, margin",
+    icon: "pricetags",
+    route: "/items",
+  },
+  {
+    key: "admin",
+    title: "Admin Console",
+    subtitle: "Users, audit log, system health",
+    icon: "shield-checkmark",
+    route: "/admin",
+    adminOnly: true,
+  },
+  {
     key: "reports",
     title: "Reports",
     subtitle: "PDF exports, insights",
     icon: "bar-chart",
-    phase: "4",
+    phase: "8",
   },
   {
     key: "opsi",
     title: "OPSI assistant",
     subtitle: "Voice AI, glowing orb",
     icon: "sparkles",
-    phase: "5",
+    phase: "9",
   },
   {
     key: "settings",
     title: "Settings",
     subtitle: "Preferences, sign-out",
     icon: "settings",
-    phase: "5",
+    phase: "9",
   },
 ];
 
 export default function MoreScreen() {
   const { user, authError } = useAuth();
   const router = useRouter();
+
+  const visible = MENU.filter((m) => !m.adminOnly || user?.role === "Admin");
 
   const handleTap = (item: MenuItem) => {
     if (item.route) {
@@ -113,7 +138,7 @@ export default function MoreScreen() {
 
         {/* Menu */}
         <Text style={styles.section}>Modules</Text>
-        {MENU.map((item) => (
+        {visible.map((item) => (
           <TouchableOpacity
             key={item.key}
             style={styles.row}

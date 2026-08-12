@@ -1,36 +1,44 @@
 /**
- * Overview / Dashboard — Phase 3.
+ * Overview / Dashboard — Phase 7.
  *
- * Dark JARVIS Aura. Layout:
- *   • Header bar with brand + LIVE pill
- *   • Greeting card
- *   • Shipment KPIs (2×2 glass grid)
- *   • Ledger summary (Receivable neon-green, Payable coral-red)
- *   • Diagnostics
+ * Restored quarantined widget layout (JARVIS Aura):
+ *   Row 1  — Two side-by-side hero cards:
+ *              • Customer will pay  (green, tap → /ledger)
+ *              • You pay carrier    (red,  tap → /ledger)
+ *            In Papa mode these switch to "Aapko Milega" / "Aapko Dena Hai".
+ *   Row 2  — Bangkok Warehouse (full-width): current kg, bags, capacity %.
+ *   Row 3  — Sliding shipment widgets carousel with page-dot indicator:
+ *              • Delivered · In-transit · Pending — each shows count + a
+ *              mini list of the last 4 consignments.
+ *   Row 4  — Diagnostics (live sanity chips)
  *
- * All numbers are rendered white; only the KPI's meaning-colour dot
- * carries the semantic tint. Money values in the ledger row use
- * credit-green / debit-red per the design brief.
+ * NO layout / navigation logic changed elsewhere — this file alone.
  */
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
-import { fmtCurrency } from "@/src/lib/format";
+import { fmtCurrency, shortDate } from "@/src/lib/format";
+import { useUiVoice } from "@/src/lib/papa-mode";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard, LabelValueRow, Pill } from "@/src/lib/ui";
 
+// ── API shapes ─────────────────────────────────────────────────────
 type DashboardStats = {
   total?: number;
   pending?: number;
@@ -43,12 +51,50 @@ type DashboardStats = {
 type LedgerSummary = {
   receivable?: { inr?: number; thb?: number };
   payable?: { inr?: number; thb?: number };
+  top_get?: { id: string; name: string; inr?: number; thb?: number }[];
+  top_give?: { id: string; name: string; inr?: number; thb?: number }[];
 };
 
+type Warehouse = {
+  current_kg?: number;
+  capacity_kg?: number;
+  current_bags?: number;
+  undelivered_bags?: number;
+  booked_deliveries?: number;
+  pending_deliveries?: number;
+  pct?: number;
+  by_end_customer?: { name: string; bags: number; kg: number }[];
+};
+
+type Shipment = {
+  id: string;
+  consignment_no: string;
+  direction: "IN_TO_TH" | "TH_TO_IN";
+  status: string;
+  weight_kg: number;
+  bag_count: number;
+  party_id?: string;
+  carrier_party_id?: string;
+  created_at: string;
+  delivered_at?: string | null;
+  in_transit_at?: string | null;
+  dispatch_date?: string | null;
+};
+
+type Party = { id: string; name: string };
+
+// ── Screen ─────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const { user, token, authError, refresh } = useAuth();
+  const voice = useUiVoice();
+  const router = useRouter();
+  const { width } = useWindowDimensions();
+
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [ledger, setLedger] = useState<LedgerSummary | null>(null);
+  const [warehouse, setWarehouse] = useState<Warehouse | null>(null);
+  const [shipments, setShipments] = useState<Shipment[] | null>(null);
+  const [parties, setParties] = useState<Party[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,12 +102,18 @@ export default function HomeScreen() {
     setLoading(true);
     setError(null);
     try {
-      const [s, l] = await Promise.all([
+      const [s, l, w, sh, ps] = await Promise.all([
         apiGet<DashboardStats>("/api/dashboard/stats"),
         apiGet<LedgerSummary>("/api/dashboard/ledger-summary"),
+        apiGet<Warehouse>("/api/dashboard/warehouse").catch(() => null),
+        apiGet<Shipment[]>("/api/shipments").catch(() => []),
+        apiGet<Party[]>("/api/parties").catch(() => []),
       ]);
       setStats(s);
       setLedger(l);
+      setWarehouse(w);
+      setShipments(Array.isArray(sh) ? sh : []);
+      setParties(Array.isArray(ps) ? ps : []);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -78,6 +130,90 @@ export default function HomeScreen() {
     await loadAll();
   }, [refresh, loadAll]);
 
+  // ── Party name resolver ─────────────────────────────────────────
+  const partyName = useCallback(
+    (id?: string | null) =>
+      (id && (parties || []).find((p) => p.id === id)?.name) || "—",
+    [parties],
+  );
+
+  // ── Sorted shipment sub-lists (top 4 each) ──────────────────────
+  const buckets = useMemo(() => {
+    const src = shipments || [];
+    const byNewest = (a: Shipment, b: Shipment) =>
+      (b.created_at || "").localeCompare(a.created_at || "");
+    return {
+      delivered: src
+        .filter((s) => s.status === "delivered")
+        .sort(byNewest)
+        .slice(0, 4),
+      in_transit: src
+        .filter((s) => s.status === "in_transit" || s.status === "warehouse_arrived")
+        .sort(byNewest)
+        .slice(0, 4),
+      pending: src.filter((s) => s.status === "pending").sort(byNewest).slice(0, 4),
+    };
+  }, [shipments]);
+
+  // ── Sliding widgets carousel ────────────────────────────────────
+  const scrollRef = useRef<ScrollView | null>(null);
+  const [widgetPage, setWidgetPage] = useState(0);
+  const WIDGET_W = width - spacing.lg * 2; // full-width inside padding
+  const WIDGETS: {
+    key: "delivered" | "in_transit" | "pending";
+    label: string;
+    count: number;
+    tint: string;
+    soft: string;
+    icon: React.ComponentProps<typeof Ionicons>["name"];
+    list: Shipment[];
+  }[] = useMemo(
+    () => [
+      {
+        key: "delivered",
+        label: voice.delivered,
+        count: stats?.delivered ?? 0,
+        tint: colors.brand,
+        soft: colors.brandSoft,
+        icon: "checkmark-done",
+        list: buckets.delivered,
+      },
+      {
+        key: "in_transit",
+        label: voice.inTransit,
+        count: (stats?.in_transit ?? 0) + (stats?.warehouse_arrived ?? 0),
+        tint: colors.info,
+        soft: colors.infoSoft,
+        icon: "airplane",
+        list: buckets.in_transit,
+      },
+      {
+        key: "pending",
+        label: voice.pending,
+        count: stats?.pending ?? 0,
+        tint: colors.warn,
+        soft: colors.warnSoft,
+        icon: "hourglass",
+        list: buckets.pending,
+      },
+    ],
+    [buckets, stats, voice],
+  );
+
+  const onWidgetScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const x = e.nativeEvent.contentOffset.x;
+      const page = Math.round(x / WIDGET_W);
+      if (page !== widgetPage) setWidgetPage(page);
+    },
+    [WIDGET_W, widgetPage],
+  );
+
+  const capacityPct = Math.min(
+    100,
+    Math.round(warehouse?.pct ?? 0),
+  );
+
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
       <ScrollView
@@ -87,7 +223,7 @@ export default function HomeScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Header ────────────────────────────────────────────── */}
+        {/* Header */}
         <View style={styles.header}>
           <View style={styles.brandWrap}>
             <View style={styles.brandDot} />
@@ -100,9 +236,9 @@ export default function HomeScreen() {
           />
         </View>
 
-        {/* ── Greeting ──────────────────────────────────────────── */}
+        {/* Greeting */}
         <GlassCard glow style={styles.greetCard}>
-          <Text style={styles.eyebrow}>Welcome back</Text>
+          <Text style={styles.eyebrow}>{voice.greet}</Text>
           <Text style={styles.greet}>
             {user ? `${user.display_name} ${user.honorific}` : "Sir"}
           </Text>
@@ -111,147 +247,241 @@ export default function HomeScreen() {
           </Text>
         </GlassCard>
 
-        {/* ── Shipment KPIs ─────────────────────────────────────── */}
-        <Text style={styles.sectionTitle}>Shipment overview</Text>
-        {stats ? (
-          <View style={styles.grid}>
-            <StatBox label="Total" value={stats.total ?? 0} tint={colors.text} icon="cube" />
-            <StatBox
-              label="Delivered"
-              value={stats.delivered ?? 0}
-              tint={colors.brand}
-              icon="checkmark-done"
-            />
-            <StatBox
-              label="In transit"
-              value={(stats.in_transit ?? 0) + (stats.warehouse_arrived ?? 0)}
-              tint={colors.info}
-              icon="airplane"
-            />
-            <StatBox
-              label="Pending"
-              value={stats.pending ?? 0}
-              tint={colors.warn}
-              icon="hourglass"
-            />
-          </View>
-        ) : loading ? (
-          <View style={styles.loading}>
-            <ActivityIndicator color={colors.brand} />
-            <Text style={styles.dim}>Loading…</Text>
-          </View>
-        ) : error ? (
-          <ErrorBox message={error} onRetry={loadAll} />
-        ) : null}
-
-        {/* ── Ledger summary ────────────────────────────────────── */}
-        <Text style={styles.sectionTitle}>Ledger summary</Text>
-        <GlassCard>
-          <LedgerRow
-            label="Receivable · INR"
-            value={fmtCurrency(ledger?.receivable?.inr ?? 0, "INR")}
+        {/* Row 1 — Two hero cards side by side */}
+        <View style={styles.heroRow}>
+          <HeroCard
+            title={voice.customerWillPay}
+            valueInr={ledger?.receivable?.inr ?? 0}
+            valueThb={ledger?.receivable?.thb ?? 0}
+            top={ledger?.top_get?.[0]?.name || ""}
             tint={colors.credit}
+            soft="rgba(0,255,136,0.14)"
+            border="rgba(0,255,136,0.55)"
+            onPress={() => router.push("/ledger" as any)}
           />
-          <LedgerRow
-            label="Receivable · THB"
-            value={fmtCurrency(ledger?.receivable?.thb ?? 0, "THB")}
-            tint={colors.credit}
-          />
-          <LedgerRow
-            label="Payable · INR"
-            value={fmtCurrency(ledger?.payable?.inr ?? 0, "INR")}
+          <HeroCard
+            title={voice.youPayCarrier}
+            valueInr={ledger?.payable?.inr ?? 0}
+            valueThb={ledger?.payable?.thb ?? 0}
+            top={ledger?.top_give?.[0]?.name || ""}
             tint={colors.debit}
+            soft="rgba(255,68,68,0.14)"
+            border="rgba(255,68,68,0.55)"
+            onPress={() => router.push("/ledger" as any)}
           />
-          <LedgerRow
-            label="Payable · THB"
-            value={fmtCurrency(ledger?.payable?.thb ?? 0, "THB")}
-            tint={colors.debit}
-          />
-        </GlassCard>
+        </View>
 
-        {/* ── Diagnostics ───────────────────────────────────────── */}
+        {/* Row 2 — Bangkok Warehouse */}
+        <Text style={styles.sectionTitle}>{voice.bangkokWarehouse}</Text>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => router.push("/(tabs)/shipments" as any)}
+        >
+          <GlassCard style={styles.warehouseCard}>
+            <View style={styles.warehouseTop}>
+              <View style={styles.warehouseHeader}>
+                <Ionicons name="cube" size={16} color={colors.brand} />
+                <Text style={styles.warehouseLabel}>Bangkok</Text>
+              </View>
+              <Text style={styles.dim}>{warehouse?.undelivered_bags ?? 0} undelivered</Text>
+            </View>
+            <View style={styles.warehouseMain}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.warehouseValue}>
+                  {(warehouse?.current_kg ?? 0).toFixed(0)}
+                  <Text style={styles.warehouseUnit}> kg</Text>
+                </Text>
+                <Text style={styles.warehouseSub}>
+                  {warehouse?.current_bags ?? 0} bags · capacity{" "}
+                  {warehouse?.capacity_kg ?? 0} kg
+                </Text>
+              </View>
+              <View style={styles.pctBadge}>
+                <Text style={styles.pctText}>{capacityPct}%</Text>
+              </View>
+            </View>
+            <View style={styles.progressWrap}>
+              <View style={[styles.progressFill, { width: `${capacityPct}%` }]} />
+            </View>
+          </GlassCard>
+        </TouchableOpacity>
+
+        {/* Row 3 — Sliding widget carousel */}
+        <Text style={styles.sectionTitle}>Shipment status</Text>
+        <View>
+          <ScrollView
+            ref={scrollRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onScroll={onWidgetScroll}
+            scrollEventThrottle={16}
+            snapToInterval={WIDGET_W}
+            decelerationRate="fast"
+            style={styles.widgetScroller}
+          >
+            {WIDGETS.map((w) => (
+              <View key={w.key} style={[styles.widgetPage, { width: WIDGET_W }]}>
+                <GlassCard style={styles.widgetCard}>
+                  <View style={styles.widgetTop}>
+                    <View
+                      style={[
+                        styles.widgetIcon,
+                        { backgroundColor: w.soft, borderColor: w.tint },
+                      ]}
+                    >
+                      <Ionicons name={w.icon} size={16} color={w.tint} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.widgetLabel}>{w.label}</Text>
+                      <Text style={[styles.widgetCount, { color: w.tint }]}>{w.count}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
+                  </View>
+                  {w.list.length ? (
+                    <View style={styles.widgetList}>
+                      {w.list.map((sh, idx) => (
+                        <TouchableOpacity
+                          key={sh.id}
+                          onPress={() => router.push(`/shipment/${sh.id}` as any)}
+                          activeOpacity={0.75}
+                          style={[
+                            styles.widgetItem,
+                            idx < w.list.length - 1 && styles.widgetItemBorder,
+                          ]}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.widgetItemTitle} numberOfLines={1}>
+                              {sh.consignment_no}
+                            </Text>
+                            <Text style={styles.widgetItemSub} numberOfLines={1}>
+                              {w.key === "delivered"
+                                ? `${shortDate(sh.delivered_at || sh.dispatch_date || sh.created_at)} · ${partyName(sh.party_id)}`
+                                : w.key === "in_transit"
+                                  ? `${sh.direction === "IN_TO_TH" ? "IN→TH" : "TH→IN"} · ${partyName(sh.carrier_party_id)}`
+                                  : `${shortDate(sh.created_at)} · ${sh.weight_kg} kg`}
+                            </Text>
+                          </View>
+                          <Ionicons name="chevron-forward" size={14} color={colors.textDim} />
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ) : (
+                    <View style={styles.widgetEmpty}>
+                      <Text style={styles.dim}>No {w.label.toLowerCase()} shipments</Text>
+                    </View>
+                  )}
+                </GlassCard>
+              </View>
+            ))}
+          </ScrollView>
+
+          {/* Widget page dots */}
+          <View style={styles.dots}>
+            {WIDGETS.map((_, idx) => (
+              <View
+                key={idx}
+                style={[
+                  styles.dot,
+                  idx === widgetPage ? styles.dotActive : styles.dotInactive,
+                ]}
+              />
+            ))}
+          </View>
+        </View>
+
+        {/* Diagnostics */}
         <Text style={styles.sectionTitle}>Diagnostics</Text>
         <GlassCard>
           <LabelValueRow
             label="Backend"
-            value="Reachable"
-            valueColor={colors.credit}
+            value={error ? "Error" : "Reachable"}
+            valueColor={error ? colors.debit : colors.credit}
           />
           <LabelValueRow
             label="Auth token"
             value={token ? "Present" : "Pending / offline"}
             valueColor={token ? colors.credit : colors.warn}
           />
+          <LabelValueRow label="User" value={user?.display_name || "—"} />
           <LabelValueRow
-            label="User"
-            value={user?.display_name || "—"}
-          />
-          <LabelValueRow
-            label="Auth error"
-            value={authError || "None"}
-            valueColor={authError ? colors.debit : colors.credit}
+            label="Mode"
+            value={voice.isPapa ? "Papa · Simplified Hindi" : "Standard"}
+            valueColor={voice.isPapa ? colors.brand : colors.text}
           />
         </GlassCard>
 
-        <Text style={styles.footNote}>Aura · Phase 3 online</Text>
+        {stats === null && loading ? (
+          <View style={styles.loadingBar}>
+            <ActivityIndicator color={colors.brand} />
+            <Text style={styles.dim}>Loading…</Text>
+          </View>
+        ) : null}
+
+        <Text style={styles.footNote}>
+          Aura · Phase 7 online{voice.isPapa ? " · Papa Mode" : ""}
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-// ── Sub-components ─────────────────────────────────────────────────
-function StatBox({
-  label,
-  value,
+// ── HeroCard ────────────────────────────────────────────────────────
+function HeroCard({
+  title,
+  valueInr,
+  valueThb,
+  top,
   tint,
-  icon,
+  soft,
+  border,
+  onPress,
 }: {
-  label: string;
-  value: number;
+  title: string;
+  valueInr: number;
+  valueThb: number;
+  top: string;
   tint: string;
-  icon: React.ComponentProps<typeof Ionicons>["name"];
+  soft: string;
+  border: string;
+  onPress: () => void;
 }) {
   return (
-    <View style={styles.stat}>
-      <View style={styles.statHeader}>
-        <View style={[styles.statDot, { backgroundColor: tint }]} />
-        <Text style={styles.statLabel}>{label}</Text>
-        <Ionicons name={icon} size={14} color={colors.textDim} />
+    <TouchableOpacity activeOpacity={0.85} onPress={onPress} style={styles.heroWrap}>
+      <View style={[styles.hero, { backgroundColor: soft, borderColor: border }]}>
+        <View style={styles.heroHeader}>
+          <View style={[styles.heroDot, { backgroundColor: tint }]} />
+          <Text style={[styles.heroLabel, { color: tint }]} numberOfLines={1}>
+            {title}
+          </Text>
+        </View>
+        <Text
+          style={[styles.heroValue, { color: tint }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
+          {fmtCurrency(valueInr, "INR")}
+        </Text>
+        <Text
+          style={[styles.heroAlt, { color: tint }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
+          {fmtCurrency(valueThb, "THB")}
+        </Text>
+        {top ? (
+          <Text style={styles.heroTop} numberOfLines={1}>
+            Top: {top}
+          </Text>
+        ) : null}
       </View>
-      <Text style={styles.statValue}>{value}</Text>
-    </View>
-  );
-}
-
-function LedgerRow({ label, value, tint }: { label: string; value: string; tint: string }) {
-  return (
-    <View style={styles.ledgerRow}>
-      <View style={styles.ledgerRowLeft}>
-        <View style={[styles.dot, { backgroundColor: tint }]} />
-        <Text style={styles.ledgerLabel}>{label}</Text>
-      </View>
-      <Text style={[styles.ledgerValue, { color: tint }]}>{value}</Text>
-    </View>
-  );
-}
-
-function ErrorBox({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <View style={styles.errorBox}>
-      <Ionicons name="alert-circle" size={20} color={colors.danger} />
-      <Text style={styles.errorText} numberOfLines={2}>
-        {message}
-      </Text>
-      <TouchableOpacity style={styles.retry} onPress={onRetry}>
-        <Text style={styles.retryText}>Retry</Text>
-      </TouchableOpacity>
-    </View>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
-  scroll: { padding: spacing.lg, paddingBottom: 80 },
+  scroll: { padding: spacing.lg, paddingBottom: 100 },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -276,7 +506,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: -0.5,
   },
-  greetCard: { marginBottom: spacing.lg, padding: spacing.lg },
+  greetCard: { padding: spacing.lg, marginBottom: spacing.md },
   eyebrow: {
     color: colors.textDim,
     fontSize: 11,
@@ -291,79 +521,156 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   greetSub: { color: colors.textMuted, fontSize: 13, marginTop: 4 },
+
+  // ─ Hero row
+  heroRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  heroWrap: { flex: 1 },
+  hero: {
+    borderWidth: 1,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    minHeight: 130,
+    justifyContent: "space-between",
+  },
+  heroHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  heroDot: { width: 8, height: 8, borderRadius: 4 },
+  heroLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    flex: 1,
+  },
+  heroValue: { fontSize: 24, fontWeight: "800", letterSpacing: -0.4, marginTop: 6 },
+  heroAlt: { fontSize: 14, fontWeight: "700", opacity: 0.85, marginTop: 2 },
+  heroTop: { color: colors.textMuted, fontSize: 10, marginTop: 8 },
+
+  // ─ Section title
   sectionTitle: {
     color: colors.text,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "800",
     marginTop: spacing.md,
     marginBottom: spacing.sm,
-    letterSpacing: 0.3,
-  },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  stat: {
-    flexBasis: "47%",
-    flexGrow: 1,
-    backgroundColor: colors.card,
-    borderColor: colors.cardBorder,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.md,
-  },
-  statHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  statDot: { width: 6, height: 6, borderRadius: 3 },
-  statLabel: {
-    color: colors.textDim,
-    fontSize: 10,
-    letterSpacing: 0.7,
     textTransform: "uppercase",
-    flex: 1,
+    letterSpacing: 0.5,
   },
-  statValue: {
-    color: colors.text,
-    fontSize: 28,
-    fontWeight: "800",
-    marginTop: 6,
-  },
-  ledgerRow: {
+
+  // ─ Warehouse
+  warehouseCard: { padding: spacing.md },
+  warehouseTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 10,
+    marginBottom: spacing.sm,
   },
-  ledgerRowLeft: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
-  ledgerLabel: { color: colors.textMuted, fontSize: 12 },
-  ledgerValue: { fontSize: 15, fontWeight: "800", letterSpacing: 0.2 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  loading: {
+  warehouseHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
+  warehouseLabel: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
+  },
+  warehouseMain: { flexDirection: "row", alignItems: "flex-end", gap: spacing.md },
+  warehouseValue: {
+    color: colors.text,
+    fontSize: 30,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+  },
+  warehouseUnit: { fontSize: 14, color: colors.textMuted, fontWeight: "700" },
+  warehouseSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  pctBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: colors.brandSoft,
+    borderColor: colors.brandBorder,
+    borderWidth: 1,
+    borderRadius: radii.pill,
+  },
+  pctText: { color: colors.brand, fontSize: 12, fontWeight: "800" },
+  progressWrap: {
+    height: 6,
+    backgroundColor: colors.divider,
+    borderRadius: 3,
+    marginTop: spacing.sm,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: colors.brand,
+    borderRadius: 3,
+  },
+
+  // ─ Widgets carousel
+  widgetScroller: { marginHorizontal: -spacing.lg, paddingHorizontal: spacing.lg },
+  widgetPage: { paddingRight: 0 },
+  widgetCard: { padding: spacing.md, marginRight: 0 },
+  widgetTop: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  widgetIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  widgetLabel: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
+  },
+  widgetCount: {
+    fontSize: 24,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  widgetList: { marginTop: spacing.sm },
+  widgetItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    gap: spacing.sm,
+  },
+  widgetItemBorder: { borderBottomWidth: 1, borderBottomColor: colors.divider },
+  widgetItemTitle: { color: colors.text, fontSize: 13, fontWeight: "700" },
+  widgetItemSub: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+  widgetEmpty: { paddingVertical: spacing.md, alignItems: "center" },
+
+  // ─ Dots
+  dots: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: spacing.sm,
+  },
+  dot: { height: 6, borderRadius: 3 },
+  dotActive: {
+    width: 20,
+    backgroundColor: colors.brand,
+    shadowColor: colors.brand,
+    shadowOpacity: 0.6,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  dotInactive: { width: 6, backgroundColor: colors.textDim, opacity: 0.5 },
+
+  dim: { color: colors.textDim, fontSize: 11 },
+  loadingBar: {
     flexDirection: "row",
     gap: spacing.sm,
     justifyContent: "center",
     alignItems: "center",
-    padding: spacing.lg,
-  },
-  dim: { color: colors.textMuted, fontSize: 12 },
-  errorBox: {
-    flexDirection: "row",
-    gap: spacing.sm,
     padding: spacing.md,
-    backgroundColor: colors.dangerSoft,
-    borderColor: colors.danger,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    alignItems: "center",
   },
-  errorText: { flex: 1, color: colors.text, fontSize: 12 },
-  retry: {
-    backgroundColor: colors.danger,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-  },
-  retryText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
   footNote: {
     color: colors.textDim,
     fontSize: 11,

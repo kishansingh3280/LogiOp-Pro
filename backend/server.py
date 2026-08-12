@@ -4954,7 +4954,19 @@ async def wingman_chat(
         return {"answer": f"Sir, aaj ab tak {len(today_e)} ledger entries aur baaki dashboard pe live hai.", "action": action, "data": {"today_entries": len(today_e)}}
 
     # ---------- LALAMOVE ----------
-    # ---------------- UNKNOWN — fallback to OpenAI natural response ----
+    # ---------------- UNKNOWN — fallback to OpenAI GPT-4o via OPSI persona ----
+    # If none of the deterministic keyword actions above matched, we hand
+    # the turn off to OPSI/OpenAI so the assistant can still respond to
+    # open-ended chatter, greetings, follow-up clarifications, etc. This
+    # keeps the mobile chat panel from ever showing "no answer" for
+    # ordinary conversational messages like "hi", "aap kaise ho?", etc.
+    try:
+        llm_reply = await _opsi_openai_reply(message, from_phone="wingman-chat")
+    except Exception as e:
+        logging.warning("[wingman-chat] llm fallback failed: %s", e)
+        llm_reply = None
+    if llm_reply:
+        return {"answer": llm_reply, "action": "chat", "data": None}
     return {"answer": None, "action": None, "data": None}
 
 
