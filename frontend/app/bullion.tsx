@@ -1,0 +1,541 @@
+/**
+ * Bullion trips + vault snapshot — Phase 6.
+ *
+ * Two big sections:
+ *   1. Vault snapshot (computed from `/api/bullion/transactions`):
+ *        • Total gold weight (baht)
+ *        • Total currency held (INR + THB)
+ *        • Live rates from `/api/bullion/rates`
+ *   2. Trips list (chronological, from `/api/bullion/trips`):
+ *        • Date · route (IN→TH / TH→IN) · airline · flight
+ *        • Carrier name · weight capacity · status pill
+ */
+import { Ionicons } from "@expo/vector-icons";
+import { Stack, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+import { apiGet } from "@/src/lib/api";
+import { useAuth } from "@/src/lib/auth-context";
+import { fmtCurrency, shortDate, titleCase } from "@/src/lib/format";
+import { colors, radii, spacing } from "@/src/lib/theme";
+import { GlassCard, Pill } from "@/src/lib/ui";
+
+type BullionTrip = {
+  id: string;
+  date: string;
+  route?: "IN_TO_TH" | "TH_TO_IN" | string | null;
+  direction?: string | null;
+  origin?: string;
+  destination?: string;
+  available_weight_kg?: number;
+  carrier_name?: string;
+  carrier_party_id?: string;
+  airline?: string;
+  airline_code?: string;
+  flight_number?: string;
+  status?: string;
+  notes?: string;
+  currency_type?: string;
+  currency_amount?: number;
+  gold_baht?: number;
+  carry_charge_inr?: number;
+};
+
+type BullionTxn = {
+  id: string;
+  type: "gold" | "currency";
+  status?: string;
+  gold_amount?: number;
+  gold_unit?: string;
+  gold_cost_inr?: number;
+  currency?: string;
+  currency_amount?: number;
+  location?: string;
+  created_at?: string;
+};
+
+type BullionRates = {
+  currency_rate_per_1000?: number;
+  gold_rate_per_baht?: number;
+  hand_carry_rate_inr_per_kg?: number;
+  updated_at?: string;
+};
+
+const STATUS: Record<string, { tint: string; soft: string }> = {
+  planned: { tint: colors.warn, soft: colors.warnSoft },
+  in_transit: { tint: colors.info, soft: colors.infoSoft },
+  completed: { tint: colors.brand, soft: colors.brandSoft },
+  cancelled: { tint: colors.textDim, soft: colors.divider },
+};
+
+export default function BullionScreen() {
+  const { token } = useAuth();
+  const router = useRouter();
+  const [trips, setTrips] = useState<BullionTrip[] | null>(null);
+  const [txns, setTxns] = useState<BullionTxn[] | null>(null);
+  const [rates, setRates] = useState<BullionRates | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [t, x, r] = await Promise.all([
+        apiGet<BullionTrip[]>("/api/bullion/trips"),
+        apiGet<BullionTxn[]>("/api/bullion/transactions"),
+        apiGet<BullionRates>("/api/bullion/rates").catch(() => null as BullionRates | null),
+      ]);
+      setTrips(Array.isArray(t) ? t : []);
+      setTxns(Array.isArray(x) ? x : []);
+      setRates(r);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (token) load();
+  }, [token, load]);
+
+  // ── Vault snapshot — total gold in vault (open txns) and net currency
+  const vault = useMemo(() => {
+    if (!txns) return { goldBaht: 0, currencyInr: 0, currencyThb: 0, openTxns: 0 };
+    let goldBaht = 0;
+    let currencyInr = 0;
+    let currencyThb = 0;
+    let openTxns = 0;
+    for (const t of txns) {
+      if (t.status === "completed" || t.status === "cancelled") continue;
+      openTxns += 1;
+      if (t.type === "gold") {
+        if (t.gold_unit === "baht") goldBaht += Number(t.gold_amount || 0);
+        else if (t.gold_unit === "grams") goldBaht += Number(t.gold_amount || 0) / 15.244;
+      }
+      if (t.type === "currency" && t.currency_amount) {
+        if (t.currency === "THB") currencyThb += Number(t.currency_amount);
+        else currencyInr += Number(t.currency_amount);
+      }
+    }
+    return { goldBaht, currencyInr, currencyThb, openTxns };
+  }, [txns]);
+
+  const goldValueInr = useMemo(() => {
+    if (!rates || !vault.goldBaht) return 0;
+    // 1 baht (Thai gold) ≈ rates.gold_rate_per_baht ×1000 INR
+    return vault.goldBaht * (rates.gold_rate_per_baht ?? 0) * 1000;
+  }, [rates, vault.goldBaht]);
+
+  const sortedTrips = useMemo(() => {
+    return (trips || [])
+      .slice()
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }, [trips]);
+
+  return (
+    <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
+      <Stack.Screen options={{ headerShown: false }} />
+
+      {/* Header */}
+      <View style={styles.headerBar}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
+          <Ionicons name="chevron-back" size={22} color={colors.text} />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Bullion</Text>
+          <Text style={styles.subtitle}>Trips · Vault · Live rates</Text>
+        </View>
+      </View>
+
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={load} tintColor={colors.brand} />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        {trips === null && loading ? (
+          <View style={styles.loading}>
+            <ActivityIndicator color={colors.brand} />
+            <Text style={styles.dim}>Loading bullion…</Text>
+          </View>
+        ) : null}
+
+        {error ? (
+          <GlassCard style={styles.errorCard}>
+            <Ionicons name="alert-circle" size={20} color={colors.danger} />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.retry} onPress={load}>
+              <Text style={styles.retryText}>Retry</Text>
+            </TouchableOpacity>
+          </GlassCard>
+        ) : null}
+
+        {/* Vault snapshot */}
+        {txns !== null ? (
+          <>
+            <Text style={styles.section}>Vault snapshot</Text>
+            <GlassCard glow>
+              <View style={styles.vaultRow}>
+                <View style={styles.vaultCell}>
+                  <View style={styles.vaultHeader}>
+                    <Ionicons name="diamond" size={14} color={colors.brand} />
+                    <Text style={styles.vaultLabel}>Gold on hand</Text>
+                  </View>
+                  <Text style={styles.vaultValueGold}>
+                    {vault.goldBaht.toFixed(2)}
+                    <Text style={styles.vaultUnit}> baht</Text>
+                  </Text>
+                  {goldValueInr ? (
+                    <Text style={styles.vaultSub}>≈ {fmtCurrency(goldValueInr, "INR")}</Text>
+                  ) : null}
+                </View>
+                <View style={styles.vaultDivider} />
+                <View style={styles.vaultCell}>
+                  <View style={styles.vaultHeader}>
+                    <Ionicons name="wallet" size={14} color={colors.info} />
+                    <Text style={styles.vaultLabel}>Currency</Text>
+                  </View>
+                  {vault.currencyInr ? (
+                    <Text style={styles.vaultValueCash}>
+                      {fmtCurrency(vault.currencyInr, "INR")}
+                    </Text>
+                  ) : null}
+                  {vault.currencyThb ? (
+                    <Text style={styles.vaultValueCashSm}>
+                      {fmtCurrency(vault.currencyThb, "THB")}
+                    </Text>
+                  ) : null}
+                  {!vault.currencyInr && !vault.currencyThb ? (
+                    <Text style={styles.vaultValueCash}>—</Text>
+                  ) : null}
+                </View>
+              </View>
+              <View style={styles.vaultFooter}>
+                <Ionicons name="lock-closed" size={12} color={colors.textDim} />
+                <Text style={styles.dim}>
+                  {vault.openTxns} open transaction{vault.openTxns === 1 ? "" : "s"}
+                </Text>
+              </View>
+            </GlassCard>
+          </>
+        ) : null}
+
+        {/* Live rates */}
+        {rates ? (
+          <>
+            <Text style={styles.section}>Live rates</Text>
+            <GlassCard>
+              <RateRow
+                icon="diamond"
+                label="Gold · per baht"
+                value={`${fmtCurrency(rates.gold_rate_per_baht ?? 0, "INR")} k`}
+                tint={colors.brand}
+              />
+              <RateRow
+                icon="cash"
+                label="Currency · per 1,000"
+                value={fmtCurrency(rates.currency_rate_per_1000 ?? 0, "INR")}
+                tint={colors.info}
+              />
+              <RateRow
+                icon="airplane"
+                label="Hand carry · per kg"
+                value={fmtCurrency(rates.hand_carry_rate_inr_per_kg ?? 0, "INR")}
+                tint={colors.warn}
+              />
+              <Text style={styles.updatedText}>
+                Updated {shortDate(rates.updated_at)}
+              </Text>
+            </GlassCard>
+          </>
+        ) : null}
+
+        {/* Trips list */}
+        <View style={styles.tripsHeader}>
+          <Text style={styles.section}>Carrier flights</Text>
+          <Text style={styles.dim}>{sortedTrips.length} total</Text>
+        </View>
+
+        {sortedTrips.length === 0 && !loading ? (
+          <GlassCard>
+            <View style={styles.emptyBody}>
+              <Ionicons name="airplane-outline" size={32} color={colors.textDim} />
+              <Text style={styles.emptyTitle}>No bullion trips yet</Text>
+              <Text style={styles.emptyBodyText}>
+                Trips scheduled from the desktop console will appear here.
+              </Text>
+            </View>
+          </GlassCard>
+        ) : null}
+
+        {sortedTrips.map((trip) => (
+          <TripRow key={trip.id} trip={trip} />
+        ))}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function RateRow({
+  icon,
+  label,
+  value,
+  tint,
+}: {
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  label: string;
+  value: string;
+  tint: string;
+}) {
+  return (
+    <View style={styles.rateRow}>
+      <View style={[styles.rateIcon, { backgroundColor: colors.brandSoft, borderColor: tint }]}>
+        <Ionicons name={icon} size={14} color={tint} />
+      </View>
+      <Text style={styles.rateLabel}>{label}</Text>
+      <Text style={styles.rateValue}>{value}</Text>
+    </View>
+  );
+}
+
+function TripRow({ trip }: { trip: BullionTrip }) {
+  const dir = (trip.route || trip.direction || "").toString();
+  const dirLabel = dir === "IN_TO_TH" ? "IN → TH" : dir === "TH_TO_IN" ? "TH → IN" : titleCase(dir);
+  const s = STATUS[(trip.status || "planned").toLowerCase()] ?? STATUS.planned;
+
+  return (
+    <View style={styles.tripCard}>
+      <View style={styles.tripLeft}>
+        <View style={styles.tripHeader}>
+          <View style={styles.tripDirIcon}>
+            <Ionicons
+              name={dir === "IN_TO_TH" ? "arrow-forward" : "arrow-back"}
+              size={14}
+              color={colors.brand}
+            />
+          </View>
+          <Text style={styles.tripDir}>{dirLabel || "—"}</Text>
+          <Pill
+            label={titleCase(trip.status || "planned")}
+            tint={s.tint}
+            soft={s.soft}
+            size="sm"
+          />
+        </View>
+        <Text style={styles.tripFlight}>
+          {trip.airline || trip.airline_code || "—"}
+          {trip.flight_number ? ` · ${trip.flight_number}` : ""}
+        </Text>
+        <Text style={styles.tripCarrier} numberOfLines={1}>
+          Carrier: {trip.carrier_name || "—"}
+        </Text>
+        <View style={styles.tripMeta}>
+          <Text style={styles.dim}>{shortDate(trip.date)}</Text>
+          {trip.available_weight_kg ? (
+            <Text style={styles.dim}>· {trip.available_weight_kg} kg cap</Text>
+          ) : null}
+          {trip.gold_baht ? (
+            <Text style={[styles.dim, { color: colors.brand }]}>
+              · {trip.gold_baht} baht gold
+            </Text>
+          ) : null}
+          {trip.carry_charge_inr ? (
+            <Text style={[styles.dim, { color: colors.debit }]}>
+              · {fmtCurrency(trip.carry_charge_inr, "INR")} carry
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.bg },
+  headerBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+  },
+  title: { color: colors.text, fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
+  subtitle: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+  scroll: { padding: spacing.lg, paddingBottom: 100 },
+  section: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  // ─ Vault card
+  vaultRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  vaultCell: { flex: 1 },
+  vaultDivider: { width: 1, backgroundColor: colors.divider },
+  vaultHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
+  vaultLabel: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  vaultValueGold: {
+    color: colors.text,
+    fontSize: 26,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  vaultUnit: { fontSize: 12, color: colors.textMuted, fontWeight: "700" },
+  vaultSub: { color: colors.brand, fontSize: 12, marginTop: 2, fontWeight: "700" },
+  vaultValueCash: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  vaultValueCashSm: { color: colors.text, fontSize: 14, fontWeight: "700", marginTop: 2 },
+  vaultFooter: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  // ─ Rates
+  rateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    gap: spacing.md,
+  },
+  rateIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rateLabel: { flex: 1, color: colors.textMuted, fontSize: 12 },
+  rateValue: { color: colors.text, fontSize: 14, fontWeight: "800", letterSpacing: 0.2 },
+  updatedText: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontStyle: "italic",
+    marginTop: 4,
+    textAlign: "right",
+  },
+  // ─ Trips
+  tripsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  tripCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  tripLeft: { flex: 1 },
+  tripHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 6,
+  },
+  tripDirIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.brandSoft,
+    borderColor: colors.brandBorder,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tripDir: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+    flex: 1,
+  },
+  tripFlight: { color: colors.text, fontSize: 13, fontWeight: "700", marginTop: 2 },
+  tripCarrier: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  tripMeta: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 8,
+  },
+  dim: { color: colors.textDim, fontSize: 11 },
+  emptyBody: {
+    padding: spacing.lg,
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  emptyTitle: { color: colors.text, fontSize: 15, fontWeight: "700" },
+  emptyBodyText: { color: colors.textMuted, fontSize: 12, textAlign: "center" },
+  loading: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.lg,
+  },
+  errorCard: {
+    padding: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    borderColor: colors.danger,
+    marginBottom: spacing.md,
+  },
+  errorText: { flex: 1, color: colors.text, fontSize: 12 },
+  retry: {
+    backgroundColor: colors.danger,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+  },
+  retryText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
+});

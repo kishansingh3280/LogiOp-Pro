@@ -22,6 +22,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "@/src/lib/auth-context";
 import { AmbientBackground } from "@/src/lib/ambient-background";
 import { ErrorBoundary } from "@/src/lib/error-boundary";
+import { OpsiOrb } from "@/src/lib/opsi-orb";
 import { colors } from "@/src/lib/theme";
 
 // Keep the native splash up until we've loaded assets. Wrapped in a
@@ -70,6 +71,8 @@ export default function RootLayout() {
                 animation: "slide_from_right",
               }}
             />
+            {/* Floating OPSI orb — sits over every screen. */}
+            <OpsiOrb />
           </AuthProvider>
         </ErrorBoundary>
       </SafeAreaProvider>

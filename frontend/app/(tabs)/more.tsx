@@ -39,17 +39,17 @@ const MENU: MenuItem[] = [
     route: "/ledger",
   },
   {
+    key: "bullion",
+    title: "Bullion trips",
+    subtitle: "Carrier flights, vault snapshot, live rates",
+    icon: "diamond",
+    route: "/bullion",
+  },
+  {
     key: "reports",
     title: "Reports",
     subtitle: "PDF exports, insights",
     icon: "bar-chart",
-    phase: "4",
-  },
-  {
-    key: "bullion",
-    title: "Bullion trips",
-    subtitle: "Carrier flights, vault snapshot",
-    icon: "diamond",
     phase: "4",
   },
   {
