@@ -15,7 +15,7 @@
  */
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, usePathname } from "expo-router";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Easing,
@@ -32,7 +32,6 @@ import {
   NotificationsButton,
 } from "@/src/lib/dashboard-widgets";
 import { colors, radii, spacing } from "@/src/lib/theme";
-import { useState } from "react";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -146,7 +145,7 @@ export function GlobalSidebar({
       </View>
 
       {/* FY selector */}
-      <View style={{ paddingHorizontal: spacing.md, marginBottom: 4 }}>
+      <View style={{ paddingHorizontal: spacing.md, marginBottom: 4, zIndex: 1 }}>
         <FyPicker collapsed={collapsed} />
       </View>
 
@@ -200,8 +199,14 @@ export function GlobalSidebar({
   );
 }
 
-// ─── Floating gold + silver particle layer ─────────────────────────
-// Sits at zIndex -1 so it never intercepts taps on nav items.
+// ─── Floating gold + silver + rose-gold particle layer ─────────────
+// Sits at zIndex 0 (nav items are above at zIndex 1) so it never
+// intercepts taps on nav items. 14 total particles:
+//   • 5 gold  (#FFD700, 3px,   opacity 0.40)
+//   • 5 silver (#C0C0C0, 2px,   opacity 0.30)
+//   • 4 rose  (#B76E79, 2.5px, opacity 0.35)
+// Each floats upward translateY 0 → -20 with a per-particle duration
+// staggered between 4000–8000 ms, useNativeDriver: true.
 type Particle = {
   color: string;
   size: number;
@@ -214,34 +219,50 @@ type Particle = {
 
 function ParticleLayer() {
   const particles = useMemo<Particle[]>(() => {
-    // Deterministic-ish pseudo-random spread
+    // Deterministic pseudo-random spread — same layout every mount.
     const rand = (seed: number) => {
       const x = Math.sin(seed) * 10000;
       return x - Math.floor(x);
     };
     const arr: Particle[] = [];
-    // 4 gold particles (larger)
-    for (let i = 0; i < 4; i++) {
+
+    // 5 gold — largest, brightest
+    for (let i = 0; i < 5; i++) {
       arr.push({
         color: "#FFD700",
         size: 3,
-        radius: 2,
-        opacity: 0.35,
+        radius: 1.5,
+        opacity: 0.4,
         topPct: rand(i * 7.13 + 1) * 0.9 + 0.05,
-        leftPct: rand(i * 3.71 + 2) * 0.85 + 0.05,
-        duration: 4000 + Math.round(rand(i * 5.5 + 3) * 3000),
+        leftPct: rand(i * 3.71 + 2) * 0.85 + 0.075,
+        // 4000 + 0..4000 → range 4000..8000
+        duration: 4000 + Math.round(rand(i * 5.5 + 3) * 4000),
       });
     }
-    // 4 silver particles (smaller)
-    for (let i = 0; i < 4; i++) {
+
+    // 5 silver — small, subtle
+    for (let i = 0; i < 5; i++) {
       arr.push({
         color: "#C0C0C0",
         size: 2,
         radius: 1,
-        opacity: 0.25,
+        opacity: 0.3,
         topPct: rand(i * 11.7 + 40) * 0.9 + 0.05,
-        leftPct: rand(i * 4.9 + 41) * 0.85 + 0.05,
-        duration: 4500 + Math.round(rand(i * 6.7 + 42) * 2500),
+        leftPct: rand(i * 4.9 + 41) * 0.85 + 0.075,
+        duration: 4000 + Math.round(rand(i * 6.7 + 42) * 4000),
+      });
+    }
+
+    // 4 rose gold — medium warmth
+    for (let i = 0; i < 4; i++) {
+      arr.push({
+        color: "#B76E79",
+        size: 2.5,
+        radius: 1.25,
+        opacity: 0.35,
+        topPct: rand(i * 9.31 + 80) * 0.9 + 0.05,
+        leftPct: rand(i * 5.83 + 81) * 0.85 + 0.075,
+        duration: 4000 + Math.round(rand(i * 7.19 + 82) * 4000),
       });
     }
     return arr;
@@ -259,6 +280,7 @@ function ParticleLayer() {
 function FloatingParticle(p: Particle) {
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    // Loop with implicit reverse (0→1→0) — total round trip = 2×duration.
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(anim, {
@@ -281,7 +303,7 @@ function FloatingParticle(p: Particle) {
 
   const translateY = anim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, -15],
+    outputRange: [0, -20],
   });
 
   return (
@@ -376,8 +398,12 @@ const styles = StyleSheet.create({
 
   // Fix 3 · Particle layer sits BEHIND every nav item
   particleLayer: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: -1,
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    zIndex: 0,
   },
 
   sidebarHeader: {
@@ -386,6 +412,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
+    zIndex: 1,
   },
   brandDot: {
     width: 12,
@@ -415,7 +442,7 @@ const styles = StyleSheet.create({
     borderColor: colors.cardBorder,
     borderWidth: 1,
   },
-  sidebarNav: { flex: 1, gap: 4, paddingHorizontal: 8 },
+  sidebarNav: { flex: 1, gap: 4, paddingHorizontal: 8, zIndex: 1 },
   sidebarItem: {
     height: 44,
     paddingHorizontal: 8,
@@ -448,6 +475,7 @@ const styles = StyleSheet.create({
   sidebarFooter: {
     alignItems: "center",
     paddingVertical: spacing.md,
+    zIndex: 1,
   },
   sidebarFooterText: {
     color: colors.textDim,

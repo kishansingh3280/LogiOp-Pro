@@ -19,10 +19,14 @@ import { Animated, Dimensions, Easing, StyleSheet, View } from "react-native";
 // Previous orb 1 was 420, orb 2 was 380 → now 714 and 646.
 const ORB1_SIZE = Math.round(420 * 1.7);
 const ORB2_SIZE = Math.round(380 * 1.7);
+const ORB3_SIZE = ORB1_SIZE; // Fix 3b · same size as Orb 1
 
 // Colour palettes — each colour holds for 12000ms
 const ORB1_COLORS = ["#00FFFF", "#8B00FF", "#00FF88", "#FF0033"] as const;
 const ORB2_COLORS = ["#FF0033", "#00FF88", "#8B00FF", "#00FFFF"] as const;
+// Fix 3b · Orb 3 palette per spec:
+//   #00FFFF → #8B00FF → #00FF88 → #FF0033 → #00FFFF (loop)
+const ORB3_COLORS = ["#00FFFF", "#8B00FF", "#00FF88", "#FF0033"] as const;
 const COLOR_STOP_MS = 12000;
 
 // Slow breathing envelope — 10s loop, opacity 0.5→0.85→0.5, scale 0.92→1.0→0.92
@@ -30,6 +34,8 @@ const BREATHE_MS = 10000;
 
 // Orb 2 starts 6000ms later so the two orbs are always out of phase.
 const ORB2_DELAY = 6000;
+// Fix 3b · Orb 3 starts 4000ms later — third out-of-phase offset.
+const ORB3_DELAY = 4000;
 
 type OrbConfig = {
   size: number;
@@ -61,11 +67,27 @@ const ORB2: OrbConfig = {
   delay: ORB2_DELAY,
 };
 
+// Fix 3b · Third orb — top-right corner (top: '-5%', right: '-10%')
+// Translated to fromX/fromY fractions of the screen so the same
+// drift-tween logic can reuse it: right:-10% is roughly x = 1.10 − size/W
+// where W is screen width. Since size is 714 (fixed), and window widths
+// vary, we pin the orb via fromX ~ 0.70 (fixed) with mild drift.
+const ORB3: OrbConfig = {
+  size: ORB3_SIZE,
+  fromX: 0.72,
+  toX: 0.65,
+  fromY: -0.08,
+  toY: 0.02,
+  colors: ORB3_COLORS,
+  delay: ORB3_DELAY,
+};
+
 export function AmbientBackground() {
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
       <BreathingOrb {...ORB1} />
       <BreathingOrb {...ORB2} />
+      <BreathingOrb {...ORB3} />
       {/* Frosted overlay — sits ABOVE the orbs, BEHIND content */}
       <View style={styles.overlay} pointerEvents="none" />
     </View>
@@ -267,7 +289,12 @@ function BreathingOrb(orb: OrbConfig) {
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(5,3,15,0.55)",
+    // Fix 3a · frost glass — sits above the orbs, below content.
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(5,3,15,0.52)",
   },
 });

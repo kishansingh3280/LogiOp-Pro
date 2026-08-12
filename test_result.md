@@ -2525,3 +2525,118 @@ frontend:
           both tab and non-tab paths; navigation via router.push().
           Verified: /ledger, /shipments, /invoices, / all render the
           same sidebar with the correct nav item highlighted.
+
+##====================================================================================================
+## PHASE 10 · 5-FIX SURGICAL BATCH v2 (2026-08-12)
+##====================================================================================================
+
+frontend:
+  - task: "Fix 1 — Auth loading gate + 401 retry + 30s timeout"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/auth-context.tsx, /app/frontend/src/lib/api.ts, /app/frontend/src/lib/dashboard-widgets.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          AuthProvider now BLOCKS children behind a <LoadingGate/> until
+          a bearer token is confirmed present — either restored from
+          AsyncStorage (fast path, unblocks immediately then rotates in
+          background) OR minted fresh via /api/auth/auto-login. Removes
+          the race where screens fired API calls with inMemoryToken=null.
+          api.ts: on 401 → call refreshAuthTokenFromApi() and retry the
+          request ONCE with the new token; request timeout bumped from
+          20 s → 30 s. NowBriefCard reverted to apiPost() (retry works).
+          Verified: cold launch loads Now Brief, Ledger, and Invoices
+          on first attempt — no 401s, no timeouts, no refresh needed.
+
+  - task: "Fix 2 — Sidebar 14 particles (gold/silver/rose gold)"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/global-sidebar.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          14 particles at zIndex 0 (nav content zIndex 1):
+            • 5 gold  (#FFD700, 3px,   opacity 0.40)
+            • 5 silver (#C0C0C0, 2px,   opacity 0.30)
+            • 4 rose  (#B76E79, 2.5px, opacity 0.35)
+          Each floats translateY 0 → -20 with per-particle durations
+          staggered 4000–8000 ms, useNativeDriver: true.
+          Verified: click on "Shipments" nav item succeeded → URL
+          changed to /shipments, particles do NOT block taps.
+
+  - task: "Fix 3 — Ambient background frost 0.52 + 3rd top-right orb"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/ambient-background.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          3a — overlay rgba(5,3,15,0.52) (was 0.55) sits between orbs
+          and content. Pure StyleSheet, no expo-blur.
+          3b — added ORB3 top-right (fromX 0.72, fromY -0.08), same
+          size as ORB1 (714px), palette #00FFFF → #8B00FF → #00FF88 →
+          #FF0033 loop @ 12000 ms/stop, delay 4000 ms so all 3 orbs
+          are out of phase (0 / 6000 / 4000). Same breathing envelope.
+          Verified via screenshot: warm bloom in top-right corner.
+
+  - task: "Fix 4 — Bags section at top of Shipment Detail"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/shipment-detail-view.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          New BagsSection component rendered at the VERY TOP of the
+          detail panel (before Cost cards). Layout per spec:
+            • Header: "BAGS" + total count + green "+ Add Bag" pill
+              button (Alert: "Feature coming soon")
+            • Each bag as a GlassCard:
+                Line 1: "Bag #X" (bold white) + weight kg (right)
+                Line 2: pieces count (muted)
+                Line 3: Carrier: <name> in green if assigned, orange
+                        "No carrier assigned" if not
+                Line 4: "For: <customer.name>" (muted)
+                Pencil edit icon on far right → Alert "Edit coming soon"
+            • Empty state: cube-outline icon + muted "No bags added yet"
+              + centred "+ Add Bag" button
+          Parallel fetch of /api/shipments/{id}/bags on mount, falls
+          back to shipment.bags if endpoint returns empty/errors.
+          Verified: Bag #1 rendered with green carrier line, edit icon
+          visible; old bottom Bags section removed to prevent duplicate.
+
+  - task: "Fix 5 — Remove Your Margin card from shipment detail"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/shipment-detail-view.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Deleted the 3rd cost card ("Your Margin" · Profit/Loss) so
+          the cost-cards row now shows only:
+            • Customer Pays (green tint) — freight in freight currency
+            • You Pay Carrier (red tint) — carrier charge in carrier
+              currency (with · per-kg tag if applicable)
+          Verified via screenshot: exactly 2 cards side-by-side;
+          screen text scan confirmed no "MARGIN"/"PROFIT"/"LOSS" text
+          in shipment detail body.

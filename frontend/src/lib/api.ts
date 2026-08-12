@@ -1,18 +1,21 @@
 /**
- * Phase-1 minimal API client.
+ * API client — Phase 10 · Fix 1.
  *
- * A tiny fetch wrapper that:
- *   • Reads BASE from EXPO_PUBLIC_BACKEND_URL (fails-fast if unset)
- *   • Attaches the current bearer token from auth-context (if any)
- *   • Timeouts at 20s
- *   • Returns typed JSON
+ *   • Reads BASE from EXPO_PUBLIC_BACKEND_URL (fails-fast if unset).
+ *   • Attaches the current bearer token from auth-context (if any).
+ *   • Timeout: 30 000 ms  (was 20 000 ms — bumped per Fix 1).
+ *   • Returns typed JSON.
+ *   • On HTTP 401 → automatically refresh the token via
+ *     `refreshAuthTokenFromApi()` and retry the request ONCE.
  *
- * NOTE: We deliberately DO NOT depend on @react-native-community/netinfo
- * or any offline queue in Phase 1 — those native modules were flagged as
- * potential Android APK crash suspects. We'll wire them back in a later
- * phase once the base app is confirmed stable.
+ * NOTE: no @react-native-community/netinfo, no offline queue — those
+ * were flagged as APK-crash suspects; keeping surface minimal.
  */
-import { getAuthTokenSync, getAuthUserSync } from "./auth-context";
+import {
+  getAuthTokenSync,
+  getAuthUserSync,
+  refreshAuthTokenFromApi,
+} from "./auth-context";
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 if (!BASE) {
@@ -22,6 +25,7 @@ if (!BASE) {
 }
 
 export const API_BASE = BASE;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -35,11 +39,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
-  const url = `${BASE}${path}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
-
+function buildHeaders(): Record<string, string> {
   const token = getAuthTokenSync();
   const actor = getAuthUserSync();
   const headers: Record<string, string> = {
@@ -52,22 +52,63 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
     headers["X-Actor-Role"] = actor.role;
     headers["X-Actor-Id"] = actor.id;
   }
+  return headers;
+}
 
-  let res: Response;
+async function sendOnce(
+  method: Method,
+  path: string,
+  body?: unknown,
+): Promise<Response> {
+  const url = `${BASE}${path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    res = await fetch(url, {
+    return await fetch(url, {
       method,
-      headers,
+      headers: buildHeaders(),
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
     });
-  } catch (e) {
-    if ((e as Error).name === "AbortError") {
-      throw new ApiError(0, `Request timed out after 20s: ${method} ${path}`);
-    }
-    throw e;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function request<T>(
+  method: Method,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  let res: Response;
+  try {
+    res = await sendOnce(method, path, body);
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      throw new ApiError(
+        0,
+        `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path}`,
+      );
+    }
+    throw e;
+  }
+
+  // Fix 1 — on 401, attempt ONE token refresh + retry.
+  if (res.status === 401) {
+    const refreshed = await refreshAuthTokenFromApi();
+    if (refreshed) {
+      try {
+        res = await sendOnce(method, path, body);
+      } catch (e) {
+        if ((e as Error).name === "AbortError") {
+          throw new ApiError(
+            0,
+            `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path}`,
+          );
+        }
+        throw e;
+      }
+    }
   }
 
   if (!res.ok) {
@@ -81,6 +122,9 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
 }
 
 export const apiGet = <T>(path: string) => request<T>("GET", path);
-export const apiPost = <T>(path: string, body?: unknown) => request<T>("POST", path, body);
-export const apiPut = <T>(path: string, body?: unknown) => request<T>("PUT", path, body);
-export const apiDelete = <T>(path: string, body?: unknown) => request<T>("DELETE", path, body);
+export const apiPost = <T>(path: string, body?: unknown) =>
+  request<T>("POST", path, body);
+export const apiPut = <T>(path: string, body?: unknown) =>
+  request<T>("PUT", path, body);
+export const apiDelete = <T>(path: string, body?: unknown) =>
+  request<T>("DELETE", path, body);

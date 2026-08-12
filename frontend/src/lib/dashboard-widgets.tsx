@@ -28,7 +28,7 @@ import {
   View,
 } from "react-native";
 
-import { apiGet } from "./api";
+import { apiGet, apiPost } from "./api";
 import { useAuth } from "./auth-context";
 import { fmtCurrency, shortDate } from "./format";
 import { colors, radii, spacing } from "./theme";
@@ -45,25 +45,14 @@ export function NowBriefCard() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!token) return; // must have a bearer token before hitting the API
+    if (!token) return; // AuthProvider blocks until token exists, but be defensive
     setLoading(true);
     setError(null);
     try {
-      // Direct fetch with explicit Authorization header — defensive
-      // against any race where the api-client sync token lookup fires
-      // before AuthProvider publishes the token to the in-memory cache.
-      const url = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api/dashboard/now-brief`;
-      const r = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "X-Entry-Source": "manual",
-        },
-        body: JSON.stringify({}),
-      });
-      if (!r.ok) throw new Error(`now-brief ${r.status}`);
-      const res = (await r.json()) as { brief: string; generated_at?: string };
+      const res = await apiPost<{ brief: string; generated_at?: string }>(
+        "/api/dashboard/now-brief",
+        {},
+      );
       setBrief(res.brief || "");
       setAt(res.generated_at || null);
     } catch (e) {

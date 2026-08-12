@@ -14,6 +14,7 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -50,6 +51,7 @@ type Shipment = {
   bags?: {
     id: string;
     weight_kg?: number;
+    pieces?: number;
     status?: string;
     carrier_party_id?: string | null;
     contents?: string | null;
@@ -95,6 +97,7 @@ export function ShipmentDetailView({ id }: { id: string }) {
   const [carriers, setCarriers] = useState<Party[]>([]);
   const [allParties, setAllParties] = useState<Party[]>([]);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
+  const [bagsList, setBagsList] = useState<Shipment["bags"] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,6 +108,18 @@ export function ShipmentDetailView({ id }: { id: string }) {
     try {
       const s = await apiGet<Shipment>(`/api/shipments/${id}`);
       setShipment(s);
+      // Seed bags from the shipment record; may be overwritten by the
+      // dedicated fetch below if the endpoint returns richer data.
+      setBagsList(s.bags || []);
+
+      // Fix 4 — parallel fetch of bags for this shipment.
+      apiGet<Shipment["bags"]>(`/api/shipments/${id}/bags`)
+        .then((b) => {
+          if (Array.isArray(b) && b.length) setBagsList(b);
+        })
+        .catch(() => {
+          /* silent — falls back to shipment.bags */
+        });
 
       const partyRequests: Promise<Party | null>[] = [];
       partyRequests.push(
@@ -165,6 +180,7 @@ export function ShipmentDetailView({ id }: { id: string }) {
       setCarrier(null);
       setCarriers([]);
       setInvoiceId(null);
+      setBagsList(null);
       load();
     }
   }, [token, id, load]);
@@ -244,7 +260,15 @@ export function ShipmentDetailView({ id }: { id: string }) {
             </Text>
           </GlassCard>
 
-          {/* ── Cost cards row: Customer pays / You pay carrier / Your margin ── */}
+          {/* ── Bags section — at the VERY TOP of detail (Fix 4) ── */}
+          <BagsSection
+            bags={bagsList || []}
+            allParties={allParties}
+            defaultCarrier={carrier}
+            customer={party}
+          />
+
+          {/* ── Cost cards row: Customer pays / You pay carrier ── */}
           {money ? (
             <View style={styles.costRow}>
               <View style={[styles.costCard, styles.costCardOk]}>
@@ -266,20 +290,6 @@ export function ShipmentDetailView({ id }: { id: string }) {
                     ? `${carriers.length} carriers`
                     : carrier?.name || "carrier"}
                   {money.carrierType === "per_kg" ? " · per-kg" : ""}
-                </Text>
-              </View>
-              <View style={[styles.costCard, styles.costCardMargin]}>
-                <Text style={styles.costLabel}>Your Margin</Text>
-                <Text
-                  style={[
-                    styles.costValue,
-                    { color: money.margin >= 0 ? colors.text : colors.debit },
-                  ]}
-                >
-                  {fmtCurrency(money.margin, money.freightCur)}
-                </Text>
-                <Text style={styles.costSub}>
-                  {money.margin >= 0 ? "Profit" : "Loss"}
                 </Text>
               </View>
             </View>
@@ -313,80 +323,6 @@ export function ShipmentDetailView({ id }: { id: string }) {
               </View>
             ) : null}
           </GlassCard>
-
-          {/* ── Bags list with individual status per bag ── */}
-          {shipment.bags && shipment.bags.length > 0 ? (
-            <>
-              <View style={styles.bagsHeader}>
-                <Text style={styles.section}>Bags · per-carrier</Text>
-                <Text style={styles.dim}>{shipment.bags.length} bags</Text>
-              </View>
-              <GlassCard padded={false}>
-                {shipment.bags.map((b, idx, arr) => {
-                  const carrierName =
-                    (b.carrier_party_id
-                      ? allParties.find((p) => p.id === b.carrier_party_id)?.name
-                      : null) || (carrier?.name || null);
-                  const isShared = !b.carrier_party_id;
-                  const bagStatus = (b.status || shipment.status || "pending").toLowerCase();
-                  const st = STATUS[bagStatus] ?? {
-                    tint: colors.textMuted,
-                    soft: colors.divider,
-                  };
-                  return (
-                    <View
-                      key={b.id}
-                      style={[
-                        styles.bagRow,
-                        idx < arr.length - 1 && styles.bagRowBorder,
-                      ]}
-                    >
-                      <View style={styles.bagIcon}>
-                        <Ionicons name="cube" size={14} color={colors.brand} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <View style={styles.bagTopRow}>
-                          <Text style={styles.bagId}>
-                            Bag {(b.id || "").slice(0, 8) || `#${idx + 1}`}
-                          </Text>
-                          <Pill
-                            label={titleCase(bagStatus)}
-                            tint={st.tint}
-                            soft={st.soft}
-                            size="sm"
-                          />
-                        </View>
-                        <Text style={styles.bagSub} numberOfLines={1}>
-                          {carrierName ? (
-                            <>
-                              Carrier:{" "}
-                              <Text
-                                style={{
-                                  color: isShared ? colors.textMuted : colors.brand,
-                                  fontWeight: "800",
-                                }}
-                              >
-                                {carrierName}
-                              </Text>
-                              {isShared ? " (default)" : null}
-                            </>
-                          ) : (
-                            <Text style={{ color: colors.warn }}>No carrier assigned</Text>
-                          )}
-                        </Text>
-                        {b.contents ? (
-                          <Text style={styles.bagSub} numberOfLines={1}>
-                            {b.contents}
-                          </Text>
-                        ) : null}
-                      </View>
-                      <Text style={styles.bagWeight}>{Number(b.weight_kg ?? 0)} kg</Text>
-                    </View>
-                  );
-                })}
-              </GlassCard>
-            </>
-          ) : null}
 
           <Text style={styles.section}>Financials</Text>
           <GlassCard>
@@ -487,6 +423,117 @@ export function ShipmentDetailView({ id }: { id: string }) {
     </ScrollView>
   );
 }
+
+// ── Bags section (Fix 4) ─────────────────────────────────────────
+// Placed at the top of the shipment detail — shows all bags for this
+// shipment with weight, pieces, carrier assignment and an edit stub.
+function BagsSection({
+  bags,
+  allParties,
+  defaultCarrier,
+  customer,
+}: {
+  bags: NonNullable<Shipment["bags"]>;
+  allParties: Party[];
+  defaultCarrier: Party | null;
+  customer: Party | null;
+}) {
+  const onAddBag = () =>
+    Alert.alert("Add Bag", "Feature coming soon.", [{ text: "OK" }]);
+  const onEditBag = () =>
+    Alert.alert("Edit Bag", "Edit coming soon.", [{ text: "OK" }]);
+
+  return (
+    <>
+      <View style={styles.bagsSectionHeader}>
+        <View style={styles.bagsHeaderLeft}>
+          <Text style={styles.section}>Bags</Text>
+          <Text style={styles.dim}>{bags.length} total</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.addBagBtn}
+          onPress={onAddBag}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="add" size={16} color={colors.bgSolid} />
+          <Text style={styles.addBagBtnText}>Add Bag</Text>
+        </TouchableOpacity>
+      </View>
+
+      {bags.length === 0 ? (
+        <GlassCard style={styles.emptyBagsCard}>
+          <Ionicons name="cube-outline" size={24} color={colors.textDim} />
+          <Text style={styles.emptyBagsText}>No bags added yet</Text>
+          <TouchableOpacity
+            style={[styles.addBagBtn, { marginTop: 8 }]}
+            onPress={onAddBag}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="add" size={16} color={colors.bgSolid} />
+            <Text style={styles.addBagBtnText}>Add Bag</Text>
+          </TouchableOpacity>
+        </GlassCard>
+      ) : (
+        bags.map((b, idx) => {
+          const bagCarrier = b.carrier_party_id
+            ? allParties.find((p) => p.id === b.carrier_party_id) || null
+            : defaultCarrier;
+          const hasCarrier = !!bagCarrier;
+          return (
+            <GlassCard key={b.id} style={styles.bagCard}>
+              <View style={styles.bagCardRow}>
+                <View style={{ flex: 1 }}>
+                  <View style={styles.bagLine1}>
+                    <Text style={styles.bagCardId}>
+                      Bag #{idx + 1}
+                      {b.id ? (
+                        <Text style={styles.bagCardIdSub}>
+                          {"  "}
+                          {b.id.slice(0, 6)}
+                        </Text>
+                      ) : null}
+                    </Text>
+                    <Text style={styles.bagCardWeight}>
+                      {Number(b.weight_kg ?? 0)} kg
+                    </Text>
+                  </View>
+                  <Text style={styles.bagCardSub}>
+                    {b.pieces ? `${b.pieces} pcs` : "— pcs"}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.bagCardCarrier,
+                      { color: hasCarrier ? colors.brand : colors.warn },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {hasCarrier
+                      ? `Carrier: ${bagCarrier.name}`
+                      : "No carrier assigned"}
+                  </Text>
+                  {customer ? (
+                    <Text style={styles.bagCardCustomer} numberOfLines={1}>
+                      For: {customer.name}
+                    </Text>
+                  ) : null}
+                </View>
+                <TouchableOpacity
+                  onPress={onEditBag}
+                  hitSlop={10}
+                  style={styles.bagEditBtn}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="pencil" size={14} color={colors.textDim} />
+                </TouchableOpacity>
+              </View>
+            </GlassCard>
+          );
+        })
+      )}
+    </>
+  );
+}
+
 
 // ── Small party row used inside the Parties card ──
 function PartyRow({
@@ -637,6 +684,75 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 8,
+  },
+
+  // Fix 4 — new Bags section styles
+  bagsSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  bagsHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: spacing.sm,
+  },
+  addBagBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.brand,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    shadowColor: colors.brand,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  addBagBtnText: {
+    color: colors.bgSolid,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  emptyBagsCard: {
+    alignItems: "center",
+    padding: spacing.lg,
+    gap: 6,
+  },
+  emptyBagsText: { color: colors.textMuted, fontSize: 13 },
+  bagCard: { padding: spacing.md, marginBottom: spacing.sm },
+  bagCardRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  bagLine1: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginBottom: 4,
+  },
+  bagCardId: { color: colors.text, fontSize: 15, fontWeight: "800" },
+  bagCardIdSub: { color: colors.textDim, fontSize: 11, fontWeight: "600" },
+  bagCardWeight: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "800",
+    textAlign: "right",
+  },
+  bagCardSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  bagCardCarrier: { fontSize: 12, fontWeight: "700", marginTop: 4 },
+  bagCardCustomer: { color: colors.textMuted, fontSize: 12, marginTop: 4 },
+  bagEditBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
   },
   headerCardTop: {
     flexDirection: "row",
