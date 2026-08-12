@@ -14,7 +14,8 @@ import { Platform } from "react-native";
 
 export const colors = {
   // Surfaces
-  bg: "#07070F",
+  bg: "transparent", // screens are transparent so ambient orbs show through
+  bgSolid: "#07070F", // solid deep-black base painted at the root
   bgDeep: "#04040A",
   surface: "rgba(12,12,30,0.65)", // frosted glass
   surfaceSolid: "#0B0B18", // opaque fallback for Android where blur is expensive
@@ -25,8 +26,8 @@ export const colors = {
 
   // Text
   text: "#FFFFFF",
-  textMuted: "rgba(255,255,255,0.68)",
-  textDim: "rgba(255,255,255,0.42)",
+  textMuted: "rgba(255,255,255,0.60)",
+  textDim: "rgba(255,255,255,0.40)",
 
   // Brand + status
   brand: "#00FF88", // primary neon green

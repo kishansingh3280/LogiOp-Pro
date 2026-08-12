@@ -20,6 +20,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider } from "@/src/lib/auth-context";
+import { AmbientBackground } from "@/src/lib/ambient-background";
 import { ErrorBoundary } from "@/src/lib/error-boundary";
 import { colors } from "@/src/lib/theme";
 
@@ -60,10 +61,12 @@ export default function RootLayout() {
         <ErrorBoundary label="root">
           <AuthProvider>
             <StatusBar style="light" />
+            {/* Slow-breathing purple / cyan / green orbs behind the app */}
+            <AmbientBackground />
             <Stack
               screenOptions={{
                 headerShown: false,
-                contentStyle: { backgroundColor: colors.bg },
+                contentStyle: { backgroundColor: "transparent" },
                 animation: "slide_from_right",
               }}
             />
@@ -75,6 +78,6 @@ export default function RootLayout() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
-  splashFallback: { flex: 1, backgroundColor: colors.bg },
+  root: { flex: 1, backgroundColor: colors.bgSolid },
+  splashFallback: { flex: 1, backgroundColor: colors.bgSolid },
 });
