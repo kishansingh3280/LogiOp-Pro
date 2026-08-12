@@ -419,7 +419,7 @@ export default function HomeScreen() {
         ) : null}
 
         <Text style={styles.footNote}>
-          Aura · Phase 7 online{voice.isPapa ? " · Papa Mode" : ""}
+          Aura · Phase 8 online{voice.isPapa ? " · Papa Mode" : ""}
         </Text>
       </ScrollView>
     </SafeAreaView>

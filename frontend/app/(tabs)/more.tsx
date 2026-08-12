@@ -71,9 +71,9 @@ const MENU: MenuItem[] = [
   {
     key: "reports",
     title: "Reports",
-    subtitle: "PDF exports, insights",
+    subtitle: "PDF exports, ledger, statements, invoices, manifests",
     icon: "bar-chart",
-    phase: "8",
+    route: "/reports",
   },
   {
     key: "opsi",
@@ -162,7 +162,7 @@ export default function MoreScreen() {
           </TouchableOpacity>
         ))}
 
-        <Text style={styles.footNote}>Aura · Phase 3 online</Text>
+        <Text style={styles.footNote}>Aura · Phase 8 online</Text>
       </ScrollView>
     </SafeAreaView>
   );
