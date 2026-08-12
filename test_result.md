@@ -2412,3 +2412,116 @@ frontend:
           view also renders via the same components. Zero bugs found across
           14 scenarios. Minor non-blocking RN deprecation warnings (shadow*
           props, pointerEvents attr) noted; pointerEvents removed post-test.
+
+##====================================================================================================
+## PHASE 10 · SURGICAL FIXES BATCH (2026-08-12)
+##====================================================================================================
+
+frontend:
+  - task: "Fix 1 — Now Brief 401"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/dashboard-widgets.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Switched NowBriefCard.load() from apiPost() to a direct fetch
+          with explicit Authorization: Bearer ${token} header sourced
+          from useAuth(). Also guards load() to no-op if token is null,
+          eliminating the race where apiPost's sync getAuthTokenSync()
+          could fire before AuthProvider published the token.
+          Verified: dashboard renders the full brief text on load.
+
+  - task: "Fix 2 — Ambient Background 1.7x orbs + color cycle + breathing + overlay"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/ambient-background.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Reduced 3 orbs → 2. Sizes 714 and 646 (previous 420×1.7 and
+          380×1.7). Cross-fading colour cycles per orb:
+            Orb 1: cyan → purple → neon-green → red, 12000ms per stop
+            Orb 2: red → neon-green → purple → cyan, 12000ms per stop,
+                    starts 6000ms later so phases don't line up.
+          Breathing envelope: opacity 0.5↔0.85, scale 0.92↔1.0, 10000ms.
+          Added semi-transparent overlay rgba(5,3,15,0.55) above orbs.
+          Zero native modules — pure Animated + rgba layers.
+
+  - task: "Fix 3 — Sidebar frosted glass + gold/silver particles + left glow"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/global-sidebar.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          New GlobalSidebar component:
+            • Container bg rgba(5,3,15,0.80) (frosted glass)
+            • 2px left-edge #00FF88 glow rail (opacity 0.6)
+            • 8 floating particles at zIndex -1 (4 gold #FFD700 3px,
+              4 silver #C0C0C0 2px), translateY 0→-15 loop with
+              varied durations 4000-7000ms, useNativeDriver: true.
+              Particles do NOT block nav item taps.
+          Nav items, FY selector, stats block, notifications, JARVIS
+          AURA footer preserved — no tap-handler logic changed.
+
+  - task: "Fix 4 — Shipment Detail right panel: Cost cards + Parties + Bags"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/shipment-detail-view.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Reordered sections to: Status header → Cost cards →
+          Parties → Bags → Financials → Timeline (+ Linked invoice /
+          Notes as before).
+          Cost cards row:
+            - Customer Pays (green tint) - freight × freight_currency
+            - You Pay Carrier (red tint) - carrier_charge (flat or per_kg)
+            - Your Margin (neutral) - freight - carrier_pay_in_freight
+              with currency conversion via forex_rate
+          Parties section supports multiple carriers — derives unique
+          carrier ids from top-level carrier_party_id +
+          carrier_party_ids[] + per-bag carrier_party_id, then renders
+          "Carrier 1", "Carrier 2", ... rows with individual chevrons
+          that route to /party/[id].
+          Bags section adds per-bag status pill next to bag id.
+
+  - task: "Fix 5 — Sidebar persists on ALL routes (not just tabs)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/_layout.tsx, /app/frontend/app/(tabs)/_layout.tsx, /app/frontend/src/lib/global-sidebar.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Moved sidebar out of Tabs.tabBar into the ROOT layout so it
+          renders for every Stack screen: /, /shipments, /invoices,
+          /ledger, /bullion, /reports, /bags, /items, /admin/*, etc.
+          Root layout owns collapsed state + width; Stack contentStyle
+          uses marginLeft: sidebarWidth on tablet only. (tabs)/_layout
+          now returns null from tabBar on tablet (no duplicate sidebar)
+          and FloatingBottomBar on mobile.
+          GlobalSidebar uses usePathname() to detect active route across
+          both tab and non-tab paths; navigation via router.push().
+          Verified: /ledger, /shipments, /invoices, / all render the
+          same sidebar with the correct nav item highlighted.

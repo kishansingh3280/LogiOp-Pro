@@ -1,120 +1,164 @@
 /**
  * Ambient background — JARVIS Aura.
  *
- * Three large, softly-glowing orbs (purple, cyan, neon-green) that
- * slowly breathe (scale + opacity + translate) behind the entire app.
+ * Two large, out-of-phase colour-cycling orbs that live behind the
+ * whole app. Each orb slowly breathes (opacity + scale) AND rotates
+ * through a 4-colour palette on a 12-second-per-stop loop.
  *
- * ZERO native modules — pure React Native `Animated` API + layered
- * transparent circles for a fake-glow effect that reads well against
- * the #07070F background.
+ * ZERO native modules — pure React Native `Animated`.
+ *   • Orb 1 palette: cyan → purple → neon-green → red (loop)
+ *   • Orb 2 palette: red → neon-green → purple → cyan (loop, 6s phase offset)
  *
- * The orbs run on the JS thread (not `useNativeDriver`) for the
- * simplest possible fallback across every device. The animation is
- * slow (12s cycle) so the JS load is negligible.
+ * A semi-transparent overlay rgba(5,3,15,0.55) sits above the orbs to
+ * keep foreground contrast readable. No expo-blur used (pure style).
  */
 import { useEffect, useMemo, useRef } from "react";
 import { Animated, Dimensions, Easing, StyleSheet, View } from "react-native";
 
-// Orb config — hue, base opacity, size, initial pos as fraction of
-// screen dimensions.
-type Orb = {
-  color: string;
+// ─── Orb sizing (previous base × 1.7) ──────────────────────────────
+// Previous orb 1 was 420, orb 2 was 380 → now 714 and 646.
+const ORB1_SIZE = Math.round(420 * 1.7);
+const ORB2_SIZE = Math.round(380 * 1.7);
+
+// Colour palettes — each colour holds for 12000ms
+const ORB1_COLORS = ["#00FFFF", "#8B00FF", "#00FF88", "#FF0033"] as const;
+const ORB2_COLORS = ["#FF0033", "#00FF88", "#8B00FF", "#00FFFF"] as const;
+const COLOR_STOP_MS = 12000;
+
+// Slow breathing envelope — 10s loop, opacity 0.5→0.85→0.5, scale 0.92→1.0→0.92
+const BREATHE_MS = 10000;
+
+// Orb 2 starts 6000ms later so the two orbs are always out of phase.
+const ORB2_DELAY = 6000;
+
+type OrbConfig = {
   size: number;
-  opacityFrom: number;
-  opacityTo: number;
-  fromX: number; // fraction 0..1 of screen width
+  fromX: number; // fraction of screen width
   toX: number;
   fromY: number;
   toY: number;
-  duration: number; // ms
+  colors: readonly string[];
   delay: number;
 };
 
-const ORBS: Orb[] = [
-  {
-    color: "#7A3BFF", // purple
-    size: 420,
-    opacityFrom: 0.18,
-    opacityTo: 0.32,
-    fromX: -0.25,
-    toX: -0.08,
-    fromY: -0.05,
-    toY: 0.08,
-    duration: 12000,
-    delay: 0,
-  },
-  {
-    color: "#00E0FF", // cyan
-    size: 380,
-    opacityFrom: 0.15,
-    opacityTo: 0.28,
-    fromX: 0.55,
-    toX: 0.4,
-    fromY: 0.6,
-    toY: 0.75,
-    duration: 14000,
-    delay: 2000,
-  },
-  {
-    color: "#00FF88", // neon green (brand)
-    size: 340,
-    opacityFrom: 0.10,
-    opacityTo: 0.22,
-    fromX: 0.2,
-    toX: 0.35,
-    fromY: 0.28,
-    toY: 0.18,
-    duration: 16000,
-    delay: 4000,
-  },
-];
+const ORB1: OrbConfig = {
+  size: ORB1_SIZE,
+  fromX: -0.25,
+  toX: -0.08,
+  fromY: -0.05,
+  toY: 0.08,
+  colors: ORB1_COLORS,
+  delay: 0,
+};
+
+const ORB2: OrbConfig = {
+  size: ORB2_SIZE,
+  fromX: 0.55,
+  toX: 0.4,
+  fromY: 0.6,
+  toY: 0.75,
+  colors: ORB2_COLORS,
+  delay: ORB2_DELAY,
+};
 
 export function AmbientBackground() {
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      {ORBS.map((orb, i) => (
-        <BreathingOrb key={i} {...orb} />
-      ))}
-      {/* Soft vignette overlay so orbs don't overpower the app */}
-      <View style={styles.vignette} pointerEvents="none" />
+      <BreathingOrb {...ORB1} />
+      <BreathingOrb {...ORB2} />
+      {/* Frosted overlay — sits ABOVE the orbs, BEHIND content */}
+      <View style={styles.overlay} pointerEvents="none" />
     </View>
   );
 }
 
-function BreathingOrb(orb: Orb) {
+function BreathingOrb(orb: OrbConfig) {
+  // t drives the slow horizontal drift (mirrors old behaviour)
   const t = useRef(new Animated.Value(0)).current;
+  // breathe drives opacity + scale
+  const breathe = useRef(new Animated.Value(0)).current;
+  // colorIdx tracks which colour we're currently displaying (0..N-1)
+  const colorIdx = useRef(0);
+  // colorAnim ramps 0→1 as we cross-fade between palette stops
+  const colorAnim = useRef(new Animated.Value(0)).current;
   const win = Dimensions.get("window");
 
   useEffect(() => {
-    // Kick off a ping-pong loop after the initial delay.
-    const seq = Animated.loop(
+    // Drift (position + slight scale variance) — kept from old orbs
+    const drift = Animated.loop(
       Animated.sequence([
         Animated.timing(t, {
           toValue: 1,
-          duration: orb.duration,
+          duration: 12000,
           easing: Easing.inOut(Easing.quad),
           useNativeDriver: false,
         }),
         Animated.timing(t, {
           toValue: 0,
-          duration: orb.duration,
+          duration: 12000,
           easing: Easing.inOut(Easing.quad),
           useNativeDriver: false,
         }),
       ]),
     );
-    const timer = setTimeout(() => seq.start(), orb.delay);
-    return () => {
-      clearTimeout(timer);
-      seq.stop();
-    };
-  }, [t, orb.duration, orb.delay]);
 
-  // Interpolations
-  const opacity = t.interpolate({
-    inputRange: [0, 1],
-    outputRange: [orb.opacityFrom, orb.opacityTo],
-  });
+    // Breathing — 10s loop, opacity 0.5→0.85→0.5, scale 0.92→1.0→0.92
+    const breatheLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(breathe, {
+          toValue: 1,
+          duration: BREATHE_MS / 2,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: false,
+        }),
+        Animated.timing(breathe, {
+          toValue: 0,
+          duration: BREATHE_MS / 2,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: false,
+        }),
+      ]),
+    );
+
+    const driftTimer = setTimeout(() => drift.start(), orb.delay);
+    const breatheTimer = setTimeout(() => breatheLoop.start(), orb.delay);
+    return () => {
+      clearTimeout(driftTimer);
+      clearTimeout(breatheTimer);
+      drift.stop();
+      breatheLoop.stop();
+    };
+  }, [t, breathe, orb.delay]);
+
+  // Manual colour rotation — every COLOR_STOP_MS ms advance idx and
+  // ease colorAnim 0→1. We render TWO stacked orbs (current + next)
+  // and cross-fade between them for a smooth transition.
+  useEffect(() => {
+    let alive = true;
+    let stopTimer: ReturnType<typeof setTimeout>;
+    const step = () => {
+      if (!alive) return;
+      colorAnim.setValue(0);
+      Animated.timing(colorAnim, {
+        toValue: 1,
+        duration: COLOR_STOP_MS,
+        easing: Easing.inOut(Easing.linear),
+        useNativeDriver: false,
+      }).start(({ finished }) => {
+        if (!alive || !finished) return;
+        colorIdx.current = (colorIdx.current + 1) % orb.colors.length;
+        stopTimer = setTimeout(step, 0);
+      });
+    };
+    const initial = setTimeout(step, orb.delay);
+    return () => {
+      alive = false;
+      clearTimeout(initial);
+      clearTimeout(stopTimer!);
+    };
+  }, [colorAnim, orb.colors.length, orb.delay]);
+
+  // Position drift interpolations
   const translateX = t.interpolate({
     inputRange: [0, 1],
     outputRange: [orb.fromX * win.width, orb.toX * win.width],
@@ -123,14 +167,18 @@ function BreathingOrb(orb: Orb) {
     inputRange: [0, 1],
     outputRange: [orb.fromY * win.height, orb.toY * win.height],
   });
-  const scale = t.interpolate({
+
+  // Breathing interpolations
+  const opacity = breathe.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.9, 1.05],
+    outputRange: [0.5, 0.85],
+  });
+  const scale = breathe.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.92, 1.0],
   });
 
-  // Layered "fake blur": we stack multiple concentric transparent
-  // circles with decreasing opacity + increasing size. This reads
-  // convincingly as a soft-glow orb without needing expo-blur.
+  // Layered fake-blur — concentric transparent circles for a soft glow
   const layers = useMemo(() => {
     const arr: { d: number; o: number }[] = [];
     for (let i = 0; i < 5; i++) {
@@ -142,6 +190,21 @@ function BreathingOrb(orb: Orb) {
     return arr;
   }, [orb.size]);
 
+  // Cross-fade current colour → next colour as colorAnim ramps 0→1.
+  // We render two stacked orb copies; top one fades in.
+  const currentIdx = colorIdx.current;
+  const nextIdx = (currentIdx + 1) % orb.colors.length;
+  const currentColor = orb.colors[currentIdx];
+  const nextColor = orb.colors[nextIdx];
+  const currentOp = colorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0],
+  });
+  const nextOp = colorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
+  });
+
   return (
     <Animated.View
       style={{
@@ -152,28 +215,59 @@ function BreathingOrb(orb: Orb) {
         transform: [{ translateX }, { translateY }, { scale }],
       }}
     >
-      {layers.map((l, i) => (
-        <View
-          key={i}
-          style={{
-            position: "absolute",
-            left: (orb.size - l.d) / 2,
-            top: (orb.size - l.d) / 2,
-            width: l.d,
-            height: l.d,
-            borderRadius: l.d / 2,
-            backgroundColor: orb.color,
-            opacity: l.o * 0.25,
-          }}
-        />
-      ))}
+      {/* Current colour orb */}
+      <Animated.View
+        style={{
+          ...StyleSheet.absoluteFillObject,
+          opacity: currentOp,
+        }}
+      >
+        {layers.map((l, i) => (
+          <View
+            key={`c${i}`}
+            style={{
+              position: "absolute",
+              left: (orb.size - l.d) / 2,
+              top: (orb.size - l.d) / 2,
+              width: l.d,
+              height: l.d,
+              borderRadius: l.d / 2,
+              backgroundColor: currentColor,
+              opacity: l.o * 0.25,
+            }}
+          />
+        ))}
+      </Animated.View>
+      {/* Next colour orb — fades in as we cross-fade */}
+      <Animated.View
+        style={{
+          ...StyleSheet.absoluteFillObject,
+          opacity: nextOp,
+        }}
+      >
+        {layers.map((l, i) => (
+          <View
+            key={`n${i}`}
+            style={{
+              position: "absolute",
+              left: (orb.size - l.d) / 2,
+              top: (orb.size - l.d) / 2,
+              width: l.d,
+              height: l.d,
+              borderRadius: l.d / 2,
+              backgroundColor: nextColor,
+              opacity: l.o * 0.25,
+            }}
+          />
+        ))}
+      </Animated.View>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  vignette: {
+  overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(7,7,15,0.35)", // slight over-tint to keep contrast
+    backgroundColor: "rgba(5,3,15,0.55)",
   },
 });

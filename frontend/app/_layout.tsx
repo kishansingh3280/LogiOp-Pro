@@ -1,33 +1,33 @@
 /**
- * Root Layout — Phase 3.
+ * Root Layout — Phase 10 · Fix 5.
  *
- * Additions vs Phase 2:
- *   • Preloads Ionicons font via expo-font ⇒ tab bar icons no longer
- *     race the first frame. This is the safe pattern for using
- *     @expo/vector-icons on Android: block the initial render until
- *     the font is ready so no missing-glyph crash can happen.
- *   • Splash screen kept visible until fonts are loaded.
- *   • Dark JARVIS Aura theme applied everywhere.
+ * The tablet sidebar now lives at the ROOT so it persists on every
+ * route (Ledger, Trips, Reports, Admin, etc.), not just tab screens.
+ * The Stack content is offset with matching marginLeft on tablet.
+ * Mobile viewport (< 900px) keeps the FloatingBottomBar rendered by
+ * (tabs)/_layout.tsx — no sidebar.
  */
 import { Ionicons } from "@expo/vector-icons";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
-import { StyleSheet, View } from "react-native";
+import { useEffect, useState } from "react";
+import { StyleSheet, useWindowDimensions, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { AuthProvider } from "@/src/lib/auth-context";
 import { AmbientBackground } from "@/src/lib/ambient-background";
+import { AuthProvider } from "@/src/lib/auth-context";
 import { ErrorBoundary } from "@/src/lib/error-boundary";
+import { GlobalSidebar } from "@/src/lib/global-sidebar";
 import { OpsiOrb } from "@/src/lib/opsi-orb";
 import { colors } from "@/src/lib/theme";
 
-// Keep the native splash up until we've loaded assets. Wrapped in a
-// try/catch so that even if the module isn't yet available on the
-// device (rare cold-start race), we don't crash.
+const TABLET_BREAKPOINT = 900;
+const SIDEBAR_EXPANDED = 220;
+const SIDEBAR_COLLAPSED = 64;
+
 try {
   SplashScreen.preventAutoHideAsync();
 } catch {
@@ -39,9 +39,11 @@ export default function RootLayout() {
     ...Ionicons.font,
   });
 
-  // Hide native splash once fonts are ready OR loading definitively
-  // errored out (fall-through so we never leave the user staring at
-  // a blank splash forever).
+  const { width } = useWindowDimensions();
+  const isTablet = width >= TABLET_BREAKPOINT;
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarWidth = sidebarCollapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
+
   useEffect(() => {
     if (fontsLoaded || fontsError) {
       SplashScreen.hideAsync().catch(() => {
@@ -51,8 +53,6 @@ export default function RootLayout() {
   }, [fontsLoaded, fontsError]);
 
   if (!fontsLoaded && !fontsError) {
-    // Return a blank dark view instead of null so the splash pixel
-    // matches our theme (no white flash).
     return <View style={styles.splashFallback} />;
   }
 
@@ -62,15 +62,28 @@ export default function RootLayout() {
         <ErrorBoundary label="root">
           <AuthProvider>
             <StatusBar style="light" />
-            {/* Slow-breathing purple / cyan / green orbs behind the app */}
             <AmbientBackground />
+
+            {/* Global tablet sidebar — renders on every route */}
+            {isTablet ? (
+              <GlobalSidebar
+                collapsed={sidebarCollapsed}
+                onToggle={() => setSidebarCollapsed((c) => !c)}
+                width={sidebarWidth}
+              />
+            ) : null}
+
             <Stack
               screenOptions={{
                 headerShown: false,
-                contentStyle: { backgroundColor: "transparent" },
+                contentStyle: {
+                  backgroundColor: "transparent",
+                  marginLeft: isTablet ? sidebarWidth : 0,
+                },
                 animation: "slide_from_right",
               }}
             />
+
             {/* Floating OPSI orb — sits over every screen. */}
             <OpsiOrb />
           </AuthProvider>
