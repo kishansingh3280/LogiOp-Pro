@@ -49,9 +49,56 @@ type ChatTurn = {
 };
 
 const HELLO_TEXTS = [
-  "Namaste Sir · I'm OPSI, your logistics wingman.",
+  "Namaste Sir · I'm OPSI, aapka logistics assistant.",
   "Try: \"Kanhaiya ka ledger dikhao\", \"AURA-PEN-001 kaha hai?\", \"Total receivable?\"",
 ];
+
+// ─── Voice recording — web-only, browser MediaRecorder ──────────────
+// No expo-av / expo-audio is installed, so on native we simply hide
+// the mic button (per Fix 5 spec: "If expo-av not available on device,
+// hide mic button silently, no crash"). On web, we use the native
+// MediaRecorder API.
+const VOICE_SUPPORTED =
+  Platform.OS === "web" &&
+  typeof window !== "undefined" &&
+  typeof (window as unknown as { MediaRecorder?: unknown }).MediaRecorder !==
+    "undefined" &&
+  !!navigator?.mediaDevices?.getUserMedia;
+
+async function recordAudioBlob(): Promise<{
+  start: () => void;
+  stop: () => Promise<Blob>;
+} | null> {
+  if (!VOICE_SUPPORTED) return null;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  // Prefer webm; fall back to whatever the browser gives us.
+  let mime = "audio/webm";
+  const AnyMR = (window as unknown as { MediaRecorder: typeof MediaRecorder })
+    .MediaRecorder;
+  if (typeof AnyMR.isTypeSupported === "function") {
+    if (!AnyMR.isTypeSupported(mime)) {
+      if (AnyMR.isTypeSupported("audio/mp4")) mime = "audio/mp4";
+      else if (AnyMR.isTypeSupported("audio/ogg")) mime = "audio/ogg";
+      else mime = "";
+    }
+  }
+  const recorder = new AnyMR(stream, mime ? { mimeType: mime } : undefined);
+  const chunks: BlobPart[] = [];
+  recorder.ondataavailable = (e: BlobEvent) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  };
+  return {
+    start: () => recorder.start(),
+    stop: () =>
+      new Promise<Blob>((resolve) => {
+        recorder.onstop = () => {
+          stream.getTracks().forEach((t) => t.stop());
+          resolve(new Blob(chunks, { type: mime || "audio/webm" }));
+        };
+        recorder.stop();
+      }),
+  };
+}
 
 const FALLBACK_UNKNOWN = "Sir, main iss sawal ka jawab abhi nahi de sakta. Ledger balances, party statements, shipments ke bare mein poochho.";
 
@@ -63,6 +110,13 @@ export function OpsiOrb() {
   ]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+
+  // Fix 5 — voice recording (web-only)
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const recorderRef = useRef<{ start: () => void; stop: () => Promise<Blob> } | null>(
+    null,
+  );
 
   const scrollRef = useRef<ScrollView | null>(null);
 
@@ -133,6 +187,53 @@ export function OpsiOrb() {
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60);
     }
   }, [draft, sending]);
+
+  // ── Voice recording toggle (Fix 5) ─────────────────────────────
+  const toggleRecording = useCallback(async () => {
+    if (transcribing || sending) return;
+    if (!recording) {
+      // Start
+      try {
+        const rec = await recordAudioBlob();
+        if (!rec) return; // not supported — silent no-op
+        recorderRef.current = rec;
+        rec.start();
+        setRecording(true);
+      } catch {
+        // Permission denied or no mic — silent, no crash
+      }
+      return;
+    }
+    // Stop → upload → transcribe → auto-fill
+    const rec = recorderRef.current;
+    setRecording(false);
+    if (!rec) return;
+    setTranscribing(true);
+    try {
+      const blob = await rec.stop();
+      recorderRef.current = null;
+      const form = new FormData();
+      // Give the file a name/ext the backend can normalise; Whisper needs
+      // a known extension. audio/webm → .webm.
+      const ext = (blob.type.split("/")[1] || "webm").split(";")[0];
+      form.append("file", blob as unknown as Blob, `voice.${ext}`);
+      const url = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api/voice-transcribe`;
+      const r = await fetch(url, {
+        method: "POST",
+        body: form,
+      });
+      if (!r.ok) throw new Error(`transcribe ${r.status}`);
+      const data = (await r.json()) as { text?: string; transcript?: string };
+      const text = (data.text || data.transcript || "").trim();
+      if (text) {
+        setDraft((prev) => (prev ? prev + " " + text : text));
+      }
+    } catch {
+      // Silent — mic failures shouldn't cascade into visible errors
+    } finally {
+      setTranscribing(false);
+    }
+  }, [recording, transcribing, sending]);
 
   return (
     <>
@@ -259,6 +360,33 @@ export function OpsiOrb() {
                   >
                     <Ionicons name="send" size={16} color={colors.bgSolid} />
                   </TouchableOpacity>
+                  {/* Fix 5 — mic button (web-only). Silently omitted on
+                      platforms without MediaRecorder / getUserMedia. */}
+                  {VOICE_SUPPORTED ? (
+                    <TouchableOpacity
+                      onPress={toggleRecording}
+                      disabled={transcribing || sending}
+                      style={[
+                        styles.micBtn,
+                        recording && styles.micBtnActive,
+                        (transcribing || sending) && styles.sendBtnDisabled,
+                      ]}
+                      activeOpacity={0.8}
+                      accessibilityLabel={
+                        recording ? "Stop recording" : "Start voice input"
+                      }
+                    >
+                      {transcribing ? (
+                        <ActivityIndicator color={colors.brand} size="small" />
+                      ) : (
+                        <Ionicons
+                          name={recording ? "stop" : "mic"}
+                          size={16}
+                          color={recording ? colors.bgSolid : colors.brand}
+                        />
+                      )}
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               </KeyboardAvoidingView>
             </View>
@@ -446,4 +574,19 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   sendBtnDisabled: { opacity: 0.4 },
+  micBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.brandSoft,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 6,
+  },
+  micBtnActive: {
+    backgroundColor: colors.danger,
+    borderColor: colors.danger,
+  },
 });

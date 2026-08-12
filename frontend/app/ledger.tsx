@@ -13,16 +13,20 @@ import { Stack, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Modal,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiGet } from "@/src/lib/api";
+import { apiGet, apiPost } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { fmtCurrency, shortDate } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -56,6 +60,11 @@ export default function LedgerScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fix 2 · party filter chip + add-entry modal state
+  const [partyFilter, setPartyFilter] = useState<string>("all");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -87,11 +96,15 @@ export default function LedgerScreen() {
 
   const recentEntries = useMemo(() => {
     if (!entries) return [];
-    return entries
+    let list = entries;
+    if (partyFilter !== "all") {
+      list = list.filter((e) => e.party_id === partyFilter);
+    }
+    return list
       .slice()
       .sort((a, b) => (b.date || "").localeCompare(a.date || ""))
       .slice(0, 20);
-  }, [entries]);
+  }, [entries, partyFilter]);
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
@@ -230,39 +243,75 @@ export default function LedgerScreen() {
           </>
         ) : null}
 
-        {/* Recent entries */}
-        {recentEntries.length ? (
+        {/* Recent entries + party filter chips (Fix 2) */}
+        {(entries?.length ?? 0) > 0 ? (
           <>
-            <Text style={styles.section}>Recent entries</Text>
-            <GlassCard>
-              {recentEntries.map((e, idx, arr) => {
-                const isDebit = e.debit > 0;
-                const amount = isDebit ? e.debit : e.credit;
-                const tint = isDebit ? colors.debit : colors.credit;
-                return (
-                  <View
-                    key={e.id}
-                    style={[styles.entryRow, idx < arr.length - 1 && styles.entryRowBorder]}
-                  >
-                    <View style={styles.entryLeft}>
-                      <Text style={styles.entryDesc} numberOfLines={1}>
-                        {e.description}
-                      </Text>
-                      <Text style={styles.entrySub}>
-                        {partyMap[e.party_id] || "—"} · {shortDate(e.date)}
-                      </Text>
+            <View style={styles.recentHeader}>
+              <Text style={styles.section}>Recent entries</Text>
+              <Text style={styles.recentCount}>
+                {recentEntries.length}
+                {partyFilter !== "all" ? " filtered" : ""}
+              </Text>
+            </View>
+            {/* Party filter chips */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipRow}
+            >
+              <FilterChip
+                label="All"
+                active={partyFilter === "all"}
+                onPress={() => setPartyFilter("all")}
+              />
+              {(parties || []).map((p) => (
+                <FilterChip
+                  key={p.id}
+                  label={p.name}
+                  active={partyFilter === p.id}
+                  onPress={() => setPartyFilter(p.id)}
+                />
+              ))}
+            </ScrollView>
+
+            {recentEntries.length ? (
+              <GlassCard>
+                {recentEntries.map((e, idx, arr) => {
+                  const isDebit = e.debit > 0;
+                  const amount = isDebit ? e.debit : e.credit;
+                  const tint = isDebit ? colors.debit : colors.credit;
+                  return (
+                    <View
+                      key={e.id}
+                      style={[styles.entryRow, idx < arr.length - 1 && styles.entryRowBorder]}
+                    >
+                      <View style={styles.entryLeft}>
+                        <Text style={styles.entryDesc} numberOfLines={1}>
+                          {e.description}
+                        </Text>
+                        <Text style={styles.entrySub}>
+                          {partyMap[e.party_id] || "—"} · {shortDate(e.date)}
+                        </Text>
+                      </View>
+                      <View style={styles.entryRight}>
+                        <Text style={[styles.entryAmt, { color: tint }]}>
+                          {isDebit ? "− " : "+ "}
+                          {fmtCurrency(amount, e.currency)}
+                        </Text>
+                        <Text style={styles.entryType}>{isDebit ? "DEBIT" : "CREDIT"}</Text>
+                      </View>
                     </View>
-                    <View style={styles.entryRight}>
-                      <Text style={[styles.entryAmt, { color: tint }]}>
-                        {isDebit ? "− " : "+ "}
-                        {fmtCurrency(amount, e.currency)}
-                      </Text>
-                      <Text style={styles.entryType}>{isDebit ? "DEBIT" : "CREDIT"}</Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </GlassCard>
+                  );
+                })}
+              </GlassCard>
+            ) : (
+              <GlassCard style={styles.emptyFiltered}>
+                <Ionicons name="filter" size={22} color={colors.textDim} />
+                <Text style={styles.emptyFilteredText}>
+                  No entries for this party yet.
+                </Text>
+              </GlassCard>
+            )}
           </>
         ) : null}
 
@@ -270,7 +319,312 @@ export default function LedgerScreen() {
           {entries?.length ?? 0} total entries · showing latest {recentEntries.length}
         </Text>
       </ScrollView>
+
+      {/* Fix 2 · Floating "+ Add Entry" button. Positioned above the
+          OPSI orb which sits at bottom-right (72px pad). */}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => setModalOpen(true)}
+        activeOpacity={0.85}
+        accessibilityLabel="Add ledger entry"
+      >
+        <Ionicons name="add" size={22} color={colors.bgSolid} />
+        <Text style={styles.fabText}>Add Entry</Text>
+      </TouchableOpacity>
+
+      {modalOpen ? (
+        <AddEntryModal
+          parties={parties || []}
+          defaultPartyId={partyFilter !== "all" ? partyFilter : undefined}
+          saving={saving}
+          onClose={() => setModalOpen(false)}
+          onSubmit={async (payload) => {
+            setSaving(true);
+            try {
+              await apiPost("/api/ledger/entries", payload);
+              setModalOpen(false);
+              await load(); // refresh entries + summary
+            } catch (e) {
+              Alert.alert(
+                "Add entry failed",
+                (e as Error).message || "Please try again.",
+              );
+            } finally {
+              setSaving(false);
+            }
+          }}
+        />
+      ) : null}
     </SafeAreaView>
+  );
+}
+
+// ─── Small chip button used for party filter row ───────────────────
+function FilterChip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.chip, active && styles.chipActive]}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
+      <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+// ─── Add-entry modal (Fix 2) ───────────────────────────────────────
+type AddPayload = {
+  party_id: string;
+  date: string;
+  description: string;
+  debit: number;
+  credit: number;
+  currency: "INR" | "THB";
+};
+
+function AddEntryModal({
+  parties,
+  defaultPartyId,
+  saving,
+  onClose,
+  onSubmit,
+}: {
+  parties: Party[];
+  defaultPartyId?: string;
+  saving: boolean;
+  onClose: () => void;
+  onSubmit: (payload: AddPayload) => void | Promise<void>;
+}) {
+  const [partyId, setPartyId] = useState<string | null>(defaultPartyId || null);
+  const [type, setType] = useState<"debit" | "credit">("credit");
+  const [amountStr, setAmountStr] = useState("");
+  const [currency, setCurrency] = useState<"INR" | "THB">("INR");
+  const [description, setDescription] = useState("");
+  const [dateStr, setDateStr] = useState(new Date().toISOString().slice(0, 10));
+
+  const canSubmit =
+    !!partyId && parseFloat(amountStr) > 0 && description.trim().length > 0;
+
+  const handleSave = () => {
+    if (!canSubmit || !partyId) return;
+    const amt = parseFloat(amountStr);
+    onSubmit({
+      party_id: partyId,
+      date: dateStr,
+      description: description.trim(),
+      debit: type === "debit" ? amt : 0,
+      credit: type === "credit" ? amt : 0,
+      currency,
+    });
+  };
+
+  return (
+    <Modal
+      visible
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <View style={styles.modalBackdrop}>
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add Ledger Entry</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={10}>
+              <Ionicons name="close" size={22} color={colors.textDim} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            style={{ maxHeight: 500 }}
+            contentContainerStyle={{ paddingBottom: 12 }}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Party */}
+            <Text style={styles.modalLabel}>Party</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipRow}
+            >
+              {parties.length === 0 ? (
+                <Text style={styles.dim}>No parties available</Text>
+              ) : (
+                parties.map((p) => (
+                  <FilterChip
+                    key={p.id}
+                    label={p.name}
+                    active={partyId === p.id}
+                    onPress={() => setPartyId(p.id)}
+                  />
+                ))
+              )}
+            </ScrollView>
+
+            {/* Type */}
+            <Text style={styles.modalLabel}>Type</Text>
+            <View style={styles.segment}>
+              <TouchableOpacity
+                style={[
+                  styles.segmentBtn,
+                  type === "credit" && {
+                    backgroundColor: colors.brandSoft,
+                    borderColor: colors.brand,
+                  },
+                ]}
+                onPress={() => setType("credit")}
+                activeOpacity={0.75}
+              >
+                <Ionicons
+                  name="arrow-down"
+                  size={14}
+                  color={type === "credit" ? colors.credit : colors.textDim}
+                />
+                <Text
+                  style={[
+                    styles.segmentText,
+                    { color: type === "credit" ? colors.credit : colors.textDim },
+                  ]}
+                >
+                  Credit
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.segmentBtn,
+                  type === "debit" && {
+                    backgroundColor: "rgba(255,68,68,0.10)",
+                    borderColor: colors.danger,
+                  },
+                ]}
+                onPress={() => setType("debit")}
+                activeOpacity={0.75}
+              >
+                <Ionicons
+                  name="arrow-up"
+                  size={14}
+                  color={type === "debit" ? colors.debit : colors.textDim}
+                />
+                <Text
+                  style={[
+                    styles.segmentText,
+                    { color: type === "debit" ? colors.debit : colors.textDim },
+                  ]}
+                >
+                  Debit
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Amount + Currency */}
+            <View style={styles.modalRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>Amount</Text>
+                <TextInput
+                  style={styles.input}
+                  value={amountStr}
+                  onChangeText={setAmountStr}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor={colors.textDim}
+                />
+              </View>
+              <View style={{ width: 130 }}>
+                <Text style={styles.modalLabel}>Currency</Text>
+                <View style={styles.segment}>
+                  {(["INR", "THB"] as const).map((c) => (
+                    <TouchableOpacity
+                      key={c}
+                      style={[
+                        styles.segmentBtn,
+                        currency === c && {
+                          backgroundColor: colors.brandSoft,
+                          borderColor: colors.brand,
+                        },
+                      ]}
+                      onPress={() => setCurrency(c)}
+                      activeOpacity={0.75}
+                    >
+                      <Text
+                        style={[
+                          styles.segmentText,
+                          { color: currency === c ? colors.brand : colors.textDim },
+                        ]}
+                      >
+                        {c}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+
+            {/* Description */}
+            <Text style={styles.modalLabel}>Description</Text>
+            <TextInput
+              style={styles.input}
+              value={description}
+              onChangeText={setDescription}
+              placeholder="e.g. Payment received for AURA-INV-001"
+              placeholderTextColor={colors.textDim}
+              multiline
+            />
+
+            {/* Date */}
+            <Text style={styles.modalLabel}>Date (YYYY-MM-DD)</Text>
+            <TextInput
+              style={styles.input}
+              value={dateStr}
+              onChangeText={setDateStr}
+              placeholder="2026-08-12"
+              placeholderTextColor={colors.textDim}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </ScrollView>
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[styles.modalBtn, styles.modalBtnGhost]}
+              onPress={onClose}
+              disabled={saving}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.modalBtnGhostText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.modalBtn,
+                styles.modalBtnPrimary,
+                (!canSubmit || saving) && { opacity: 0.5 },
+              ]}
+              onPress={handleSave}
+              disabled={!canSubmit || saving}
+              activeOpacity={0.85}
+            >
+              {saving ? (
+                <ActivityIndicator color={colors.bgSolid} size="small" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={16} color={colors.bgSolid} />
+                  <Text style={styles.modalBtnPrimaryText}>Save Entry</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -303,6 +657,155 @@ function SummaryCard({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
+
+  // Fix 2 · filter chips + FAB + modal styles
+  recentHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    marginTop: spacing.md,
+  },
+  recentCount: { color: colors.textDim, fontSize: 11, fontWeight: "700" },
+  chipRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingVertical: spacing.sm,
+    paddingRight: spacing.md,
+  },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+    maxWidth: 180,
+  },
+  chipActive: { backgroundColor: colors.brandSoft, borderColor: colors.brandBorder },
+  chipText: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
+  chipTextActive: { color: colors.brand },
+  emptyFiltered: {
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: spacing.lg,
+  },
+  emptyFilteredText: { color: colors.textMuted, fontSize: 12 },
+  fab: {
+    position: "absolute",
+    right: spacing.lg,
+    // sits well above the OPSI orb (~64 px orb + 24 pad + safe margin).
+    bottom: 160,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.brand,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+    shadowColor: colors.brand,
+    shadowOpacity: 0.5,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 14,
+    elevation: 8,
+    zIndex: 20,
+  },
+  fabText: {
+    color: colors.bgSolid,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "flex-end",
+    ...(Platform.OS === "web" ? { alignItems: "center" } : {}),
+  },
+  modalSheet: {
+    backgroundColor: colors.bgSolid,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderLeftColor: colors.cardBorder,
+    borderRightColor: colors.cardBorder,
+    padding: spacing.lg,
+    paddingBottom: Platform.OS === "web" ? spacing.lg : 32,
+    ...(Platform.OS === "web"
+      ? { width: 460, maxWidth: "90%", borderRadius: 20, borderWidth: 1, marginBottom: 32 }
+      : {}),
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.md,
+  },
+  modalTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
+  modalLabel: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginTop: spacing.md,
+    marginBottom: 6,
+  },
+  modalRow: { flexDirection: "row", gap: spacing.md, alignItems: "flex-start" },
+  input: {
+    backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: colors.text,
+    fontSize: 14,
+  },
+  segment: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  segmentBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+  },
+  segmentText: { fontSize: 12, fontWeight: "700", letterSpacing: 0.3 },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+  },
+  modalBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+  },
+  modalBtnGhost: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  modalBtnGhostText: { color: colors.textMuted, fontSize: 13, fontWeight: "700" },
+  modalBtnPrimary: { backgroundColor: colors.brand },
+  modalBtnPrimaryText: { color: colors.bgSolid, fontSize: 13, fontWeight: "800" },
   headerBar: {
     flexDirection: "row",
     alignItems: "center",

@@ -487,6 +487,96 @@ async def bullion_delete_txn(txn_id: str):
     return {"ok": True}
 
 
+# ───────── Trips (Fix 3) ─────────────────────────────────────────────
+# Simpler, generic "trip" resource that the mobile /trips route hits.
+# Backed by db.trips (distinct from db.bullion_trips which is bullion-
+# specific). Fields per spec.
+class Trip(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    carrier_id: Optional[str] = None
+    flight_number: Optional[str] = None
+    airline: Optional[str] = None
+    departure_date: Optional[str] = None  # ISO date
+    origin: Optional[str] = None
+    destination: Optional[str] = None
+    capacity_kg: Optional[float] = None
+    gold_baht: Optional[float] = None
+    currency_amount: Optional[float] = None
+    carry_charge: Optional[float] = None
+    status: Optional[str] = "scheduled"
+    notes: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    class Config:
+        extra = "allow"
+
+
+@api_router.get("/trips")
+async def trips_list():
+    docs = await db.trips.find().sort("departure_date", -1).to_list(500)
+    return [_clean_mongo_id(d) for d in docs]
+
+
+@api_router.get("/trips/{trip_id}")
+async def trips_get(trip_id: str):
+    doc = await db.trips.find_one({"id": trip_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    return _clean_mongo_id(doc)
+
+
+@api_router.post("/trips")
+async def trips_create(trip: Trip, request: Request):
+    doc = trip.dict()
+    doc.update(audit_stamp(request, creating=True, source=request.state.audit_source))
+    await db.trips.insert_one(doc.copy())
+    return _clean_mongo_id(doc)
+
+
+# ───────── Bullion vault summary (Fix 3) ─────────────────────────────
+@api_router.get("/bullion/vault")
+async def bullion_vault_summary():
+    """Aggregate summary of bullion in the vault. Returns totals across
+    all recorded bullion transactions:
+        • total_gold_baht  — sum of gold_amount where unit is "baht"
+        • total_inr        — sum of gold_cost_inr + currency_amount * 0
+                             (best-effort — INR-side money in vault)
+        • total_thb        — sum of gold_purchase_thb
+        • open_txn_count   — bullion transactions not in a terminal state
+    """
+    txns = await db.bullion_transactions.find().to_list(5000)
+    total_gold_baht = 0.0
+    total_inr = 0.0
+    total_thb = 0.0
+    open_count = 0
+    terminal = {"settled", "completed", "closed", "delivered", "cancelled"}
+    for t in txns:
+        unit = (t.get("gold_unit") or "").lower()
+        amt = t.get("gold_amount") or 0
+        if unit == "baht":
+            total_gold_baht += float(amt or 0)
+        # INR side — prefer gold_cost_inr; fall back to gold_sale_inr; add
+        # currency_amount if the txn was booked in INR.
+        inr_val = t.get("gold_cost_inr") or t.get("gold_sale_inr") or 0
+        total_inr += float(inr_val or 0)
+        if (t.get("currency") or "").upper() == "INR":
+            total_inr += float(t.get("currency_amount") or 0)
+        # THB side
+        total_thb += float(t.get("gold_purchase_thb") or 0)
+        if (t.get("currency") or "").upper() == "THB":
+            total_thb += float(t.get("currency_amount") or 0)
+        # Open status?
+        status = (t.get("status") or "").lower()
+        if status not in terminal:
+            open_count += 1
+    return {
+        "total_gold_baht": round(total_gold_baht, 4),
+        "total_inr": round(total_inr, 2),
+        "total_thb": round(total_thb, 2),
+        "open_txn_count": open_count,
+    }
+
+
 class BullionSplitPayload(BaseModel):
     split_weight_kg: float
     trip_id: Optional[str] = None
@@ -2334,17 +2424,20 @@ async def assistant_tts_stream_get(
 
 @api_router.post("/assistant/stt")
 @api_router.post("/transcribe")
+@api_router.post("/voice-transcribe")
 async def assistant_stt(request: Request):
     """Whisper-1 STT via the Emergent proxy. Accepts multipart/form-data
-    with an `audio` field (accepted formats: mp3, mp4, mpeg, mpga, m4a, wav,
-    webm), returns { text: ... } for Hinglish transcriptions.
+    with an `audio` OR `file` field (accepted formats: mp3, mp4, mpeg,
+    mpga, m4a, wav, webm, ogg), returns { text: ... } for Hinglish
+    transcriptions.
 
-    Aliased as `/api/transcribe` for the Voice AI Wingman flow.
+    Aliased as `/api/transcribe` and `/api/voice-transcribe` for the
+    Voice AI Wingman + OPSI mic-button flow.
     """
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
     form = await request.form()
-    upload = form.get("audio")
+    upload = form.get("audio") or form.get("file")
     if not upload:
         raise HTTPException(400, "Missing `audio` file")
     from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
@@ -2492,7 +2585,14 @@ async def dashboard_now_brief(body: NowBriefIn, current: UserPublic = Depends(ge
             )
             .with_model("anthropic", "claude-haiku-4-5")
         )
-        text = await chat.send_message(UserMessage(text=prompt))
+        # Fix 6b · Bump upstream LLM timeout to 60 s so the Now Brief
+        # doesn't fall back to the templated greeting on slower
+        # generations. We enforce the timeout at the asyncio layer
+        # since emergentintegrations doesn't expose a per-call timeout.
+        text = await asyncio.wait_for(
+            chat.send_message(UserMessage(text=prompt)),
+            timeout=60,
+        )
         content = (text or "").strip()
     except Exception as e:
         # Graceful fallback so the dashboard still renders something useful.

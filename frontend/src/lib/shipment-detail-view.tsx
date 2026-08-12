@@ -260,14 +260,6 @@ export function ShipmentDetailView({ id }: { id: string }) {
             </Text>
           </GlassCard>
 
-          {/* ── Bags section — at the VERY TOP of detail (Fix 4) ── */}
-          <BagsSection
-            bags={bagsList || []}
-            allParties={allParties}
-            defaultCarrier={carrier}
-            customer={party}
-          />
-
           {/* ── Cost cards row: Customer pays / You pay carrier ── */}
           {money ? (
             <View style={styles.costRow}>
@@ -346,6 +338,14 @@ export function ShipmentDetailView({ id }: { id: string }) {
               />
             ) : null}
           </GlassCard>
+
+          {/* ── Bags detail section — below Financials, above Timeline (Fix 1) ── */}
+          <BagsSection
+            bags={bagsList || []}
+            allParties={allParties}
+            defaultCarrier={carrier}
+            customer={party}
+          />
 
           <Text style={styles.section}>Timeline</Text>
           <GlassCard>

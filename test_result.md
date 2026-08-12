@@ -2640,3 +2640,156 @@ frontend:
           Verified via screenshot: exactly 2 cards side-by-side;
           screen text scan confirmed no "MARGIN"/"PROFIT"/"LOSS" text
           in shipment detail body.
+
+##====================================================================================================
+## PHASE 10 · 6-FIX BATCH v3 (2026-08-12)
+##====================================================================================================
+
+frontend:
+  - task: "Fix 1 — Move Bags section below Financials, above Timeline"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/shipment-detail-view.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Removed BagsSection from top of detail panel; re-inserted
+          between Financials and Timeline. Verified via DOM scan:
+          PENDING → CUSTOMER PAYS → YOU PAY CARRIER → PARTIES →
+          FINANCIALS → BAGS → TIMELINE.
+
+  - task: "Fix 2 — Ledger: +Add Entry FAB + party filter chips"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/ledger.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          • Horizontal scrollable filter chip strip above Recent Entries:
+            [All, Abhishek Singh, Arun Carriers, Deepak Adavani, …].
+            Tapping a chip filters recentEntries by party_id.
+          • Floating "+ Add Entry" FAB at bottom-right (bottom: 160 to
+            sit above the OPSI orb, zIndex: 20).
+          • Modal opens with fields: Party (horizontal chips),
+            Type (Credit/Debit segment), Amount (decimal-pad),
+            Currency (INR/THB), Description, Date (YYYY-MM-DD).
+          • On Save: apiPost("/api/ledger/entries", payload) then
+            reloads summary + entries. Errors show Alert.
+          Verified: chip click filters, FAB opens modal, modal shows
+          all inputs correctly.
+
+  - task: "Fix 3 — /api/trips + /api/bullion/vault endpoints"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Added MongoDB-backed endpoints (db.trips) alongside existing
+          bullion routes:
+            • GET  /api/trips           → 200 [] (empty at first)
+            • POST /api/trips           → creates trip; sample POST with
+              carrier_id, flight_number, airline, departure_date, origin,
+              destination, capacity_kg, gold_baht, currency_amount,
+              carry_charge, status → returns full doc with generated
+              UUID + audit stamps
+            • GET  /api/trips/{id}      → 200 returns the trip
+          Also added:
+            • GET  /api/bullion/vault   → 200 aggregate summary from
+              db.bullion_transactions: total_gold_baht, total_inr,
+              total_thb, open_txn_count (skips terminal states).
+              Verified live payload:
+              {"total_gold_baht":35.0, "total_inr":5395833.33,
+               "total_thb":1942500.0, "open_txn_count":43}
+
+  - task: "Fix 4 — Restore Lalamove screen + More tab row"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/lalamove.tsx, /app/frontend/app/(tabs)/more.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Created a lean adaptation of the quarantined lalamove.tsx
+          using our current import paths (@/src/lib/api, auth-context,
+          theme, ui). Talks to existing backend endpoints:
+            • GET  /api/lalamove/config
+            • GET  /api/lalamove/orders
+            • POST /api/lalamove/quote
+            • POST /api/lalamove/order
+          Screen features:
+            - Green/red status banner (configured vs not)
+            - Orders list w/ pull-to-refresh + empty state
+            - "Book new" FAB opens booking modal with service picker
+              (Motorcycle/Car/Van), pickup + drop-off address+phone,
+              notes, "Get quote" → shows estimated fare → "Book delivery"
+            - FAB disabled + Alert hint if Lalamove not configured
+          More tab now includes a "Lalamove" row (bicycle icon,
+          subtitle "Instant last-mile delivery — quote, book, track")
+          that routes to /lalamove.
+
+  - task: "Fix 5 — Voice input mic button on OPSI orb"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/opsi-orb.tsx, /app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Since expo-av/expo-audio are NOT installed (strict rule: no
+          new packages), the mic button is implemented as web-only via
+          the browser's built-in MediaRecorder + getUserMedia. A
+          feature-detect constant VOICE_SUPPORTED gates rendering — on
+          native we silently hide the button, no crash.
+          Flow:
+            1. Tap mic → getUserMedia → MediaRecorder starts (button
+               turns red with stop icon)
+            2. Tap again → stop, upload audio Blob to
+               POST /api/voice-transcribe (multipart form, field "file")
+            3. Backend transcribes via emergentintegrations Whisper-1
+               and returns { text }
+            4. Text auto-appends to the input draft
+          Backend:
+            • Added /api/voice-transcribe as an alias to the existing
+              /api/transcribe handler (same @api_router.post stacking)
+            • Handler accepts either "audio" or "file" field name
+              → POST with empty body returns 400 (endpoint reachable)
+
+  - task: "Fix 6 — Now Brief 60s timeout + OPSI greeting rename"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/frontend/src/lib/opsi-orb.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          6a — Frontend HELLO_TEXTS[0] changed from
+              "Namaste Sir · I'm OPSI, your logistics wingman."
+              → "Namaste Sir · I'm OPSI, aapka logistics assistant."
+          6b — Backend /api/dashboard/now-brief LLM call wrapped in
+              asyncio.wait_for(chat.send_message(...), timeout=60)
+              so slower generations don't fall back to the templated
+              greeting. asyncio was already imported.
+          Verified: OPSI panel opens showing "aapka logistics assistant"
+          and Now Brief loads full generated text on the dashboard.

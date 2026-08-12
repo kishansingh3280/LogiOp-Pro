@@ -54,6 +54,13 @@ const MENU: MenuItem[] = [
     route: "/bags",
   },
   {
+    key: "lalamove",
+    title: "Lalamove",
+    subtitle: "Instant last-mile delivery — quote, book, track",
+    icon: "bicycle",
+    route: "/lalamove",
+  },
+  {
     key: "items",
     title: "Catalog",
     subtitle: "Products, buying / selling price, margin",
