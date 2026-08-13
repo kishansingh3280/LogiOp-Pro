@@ -735,11 +735,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
   },
   notifRightBackdrop: {
-    flex: 2,
+    flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
   },
   notifRightPanel: {
-    flex: 1,
+    flex: 2,
     backgroundColor: colors.bgSolid,
     borderLeftWidth: 1,
     borderColor: colors.brandBorder,

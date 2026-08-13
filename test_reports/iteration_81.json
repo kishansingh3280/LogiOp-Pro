@@ -1,0 +1,40 @@
+{
+  "summary": "Phase 6 · Batch A (Fixes 1,2,3,4,5,7,8) end-to-end review. FIX 7 (carrier rates: labels, pill toggles, values, persistence after reload — no auto-conversion) VERIFIED green. FIX 3 (sidebar active highlight for /shipments /ledger /bullion(Trips) /more /parties /) VERIFIED. FIX 4 (INSE LENA HAI green / INHE DENA HAI red / SETTLED muted) VERIFIED on both /ledger and party detail. FIX 8 (Lalamove row uses MaterialCommunityIcons truck-fast and routes to /lalamove) VERIFIED via code + UI. FIX 5 (verified row tint + green dot) verified via code review — CSS matches spec (rgba(0,255,136,0.08) bg + 8px #00FF88 dot). FIX 1 (sparkle FAB present bottom-right on every screen) visually confirmed; the swipe-in-from-right 2/3 panel behavior was not exercised — panel render is code-owned by dashboard-widgets NotificationsButton. FIX 2 is FAILING: mobile bottom dock inserts a tab labeled 'Ledger' that routes to '/ledger' — spec required label 'New Entry' routing to '/ledger/new-entry'. The screen /ledger/new-entry does exist and works when reached from other CTAs. React Native deprecation warnings persist (shadow*, pointerEvents, useNativeDriver on web) — cosmetic.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "(tabs)/_layout.tsx FloatingBottomBar",
+        "issue": "FIX 2 mismatch — dock item after Shipments is labeled 'Ledger' and routes to '/ledger'. Spec requires label 'New Entry' routing to '/ledger/new-entry'. Reference: /app/frontend/app/(tabs)/_layout.tsx:107-114 (title:'Ledger', onPress: router.push('/ledger')).",
+        "testID": "",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Animated.useNativeDriver", "issue": "React-Native-Web logs 'useNativeDriver is not supported' on every navigation (particles + slide modals). Cosmetic on web only. Reference: /app/frontend/src/lib/global-sidebar.tsx:341-354 (ParticleLayer)."},
+      {"component": "shadow* style props", "issue": "React-Native-Web deprecation: 'shadow* props are deprecated. Use boxShadow.' Reference: theme.ts + (tabs)/_layout.tsx bottomBarInner + primaryBtn shadow blocks."},
+      {"component": "props.pointerEvents", "issue": "RN-Web deprecation: 'props.pointerEvents is deprecated. Use style.pointerEvents.' Reference: /app/frontend/app/(tabs)/_layout.tsx:75 (bottomBar pointerEvents='box-none')."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase5_fixes.py"
+  ],
+  "action_items": [
+    "MAIN AGENT — FIX 2: In /app/frontend/app/(tabs)/_layout.tsx around lines 104-114, change the inserted mobile-dock tab so title reads 'New Entry' and onPress calls router.push('/ledger/new-entry'). Consider also swapping the icon to something more 'add-entry' shaped (e.g. add-circle-outline / add-circle) if the design system agrees; current book icon is misleading for a New-Entry action."
+  ],
+  "critical_code_review_comments": [
+    "Sidebar highlight isActive() correctly handles prefix boundary — /ledger will not match /ledger-anything (server logic at global-sidebar.tsx:144-157). Good.",
+    "CarrierRatesCard hydrate() rehydrates ALL six persisted keys after reload (per_kg, per_kg_ccy, per_baht, gold_ccy, gold_unit, per_1000_usd, currency_ccy) — confirmed values survive reload (₹100/kg, ฿110/gram, ₹120/$1000) and pill positions restore.",
+    "Statement row tint uses paddingLeft:6 to leave room for the 3px green left-border — visually clean.",
+    "Fix 2 bug is a two-line change; nothing on the backend needs to move. /ledger/new-entry route file already exists at /app/frontend/app/ledger/new-entry.tsx."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (no backend changes to test in this batch)", "frontend": "86% (6 of 7 Batch-A fixes verified; FIX 2 failing)"},
+  "seed_data_creation": "None. Fix 7 test wrote carrier_rates onto real party 'Arun Carriers' (a6c25f64-db4f-4da0-b5dd-fe7b10c507ab): per_kg=100 INR, gold=110 THB per gram, currency=120 INR per $1000. Values are relabel-only per user choice — main agent can leave or reset via Edit Rates.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent flips the dock label to 'New Entry' and target to '/ledger/new-entry', reopen mobile viewport (390x844) at /, look for 'New Entry' tab between Shipments and Invoices, tap and confirm URL becomes /ledger/new-entry. All other Batch-A fixes are already green and do not need retesting unless main agent edits shared files.",
+  "rca_of_issue": "FIX 2 root cause: (tabs)/_layout.tsx:105-115 was implemented earlier as a 'Ledger → /ledger' shortcut and was not updated when Phase 6 Batch A redefined the mobile dock middle-slot as a 'New Entry' quick-add tab. Reproduction: open the web preview at width <900px, sign in, observe bottom dock — middle chip reads 'Ledger'. Expected: 'New Entry' → tap → /ledger/new-entry. Mitigation: change title and router.push target as noted in action_items."
+}

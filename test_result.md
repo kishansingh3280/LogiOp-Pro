@@ -2903,3 +2903,193 @@ backend:
             • GET /api/ledger/verified?party_id=... → returns
               { entry_ids: [...], last_verified_at }.
               Verified test: GET → 200 with entry ids and timestamp.
+
+##====================================================================================================
+## PHASE 6 · BATCH A — 7-FIX LEDGER + CARRIER RATES BUNDLE (2026-08-13)
+##====================================================================================================
+
+frontend:
+  - task: "Phase 6 Fix 1 — Alerts panel right-slide 2/3 width"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/_layout.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Alerts panel now slides in from the right at ~66% of screen
+          width using Animated + PanResponder. Tap outside dismisses.
+          Needs a visual sanity check.
+
+  - task: "Phase 6 Fix 2 — Mobile dock Add Ledger tab"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/_layout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Bottom dock now surfaces a "New Entry" tab that pushes to
+          /ledger/new-entry. Verify the tab appears on mobile viewport
+          (<1024px width) and successfully navigates to the entry form.
+        -working: false
+        -agent: "testing"
+        -comment: |
+          Middle-slot chip labeled "Ledger" and routed to /ledger, not
+          "New Entry" → /ledger/new-entry as spec required.
+        -working: true
+        -agent: "main"
+        -comment: |
+          Updated the shipments-adjacent tab item: title changed from
+          "Ledger" to "New Entry", icons changed from book/book-outline
+          to add-circle/add-circle-outline, and onPress now pushes to
+          /ledger/new-entry. Screenshot-verified: tapping "New Entry"
+          from the dock opens the Add Ledger Entry form.
+
+  - task: "Phase 6 Fix 3 — Sidebar active state routing fix"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/lib/global-sidebar.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Sidebar active-state now correctly derives from pathname; the
+          previously stale highlight when moving between /shipments,
+          /ledger, /trips, /more should be gone.
+
+  - task: "Phase 6 Fix 4 — Balance Hinglish labels + color fix"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/party/[id]/index.tsx, /app/frontend/app/ledger.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Positive balance → "INSE LENA HAI" (green), negative →
+          "INHE DENA HAI" (red), zero → "SETTLED" (muted). Applies on
+          party detail Net Balance cards and Ledger top receivables/
+          payables cards. Verify on party pages.
+
+  - task: "Phase 6 Fix 5 — Verified entries green highlight + dot"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/party/[id]/statement.tsx, /app/frontend/app/ledger.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Verified ledger rows now show a green tint background and a
+          small green dot next to the check icon in the party statement
+          view. Needs UI verification.
+
+  - task: "Phase 6 Fix 7 — Carrier Rates flexible currency + unit"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/party/[id]/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Rewrote CarrierRatesCard with per-row currency and unit pill
+          selectors:
+            • Per kg (Bag): INR / THB pill
+            • Gold: INR / THB pill + per gram / per Baht pill
+            • Currency (per $1000): INR / THB pill
+          Currency/unit toggles are RELABEL-ONLY (no auto-conversion)
+          per user choice "1: b". Extended CarrierRates schema with
+          per_kg_ccy, gold_ccy, gold_unit, currency_ccy. Payload PUTs
+          to /api/parties/{id}/meta (backend already accepts arbitrary
+          keys under `carrier_rates: Dict[str, Any]`).
+          Introduced a local `CcyPill` component (renamed to avoid a
+          name clash with the existing `Pill` import from src/lib/ui).
+          Visual sanity screenshot captured — pills + amount rows render
+          correctly for both INR and THB with the right prefix (₹ / ฿)
+          and suffix (/ kg, / gram, / Baht, / $1000). Requires
+          testing_agent verification of PUT persistence and reload
+          round-trip.
+
+  - task: "Phase 6 Fix 8 — Lalamove icon → truck"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/(tabs)/more.tsx"
+    stuck_count: 0
+    priority: "low"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Lalamove row in More tab now renders a MaterialCommunityIcons
+          "truck-fast" glyph instead of the previous Ionicons "car-sport".
+          Import added, MenuItem.icon type widened, render path branches
+          on item.key === "lalamove".
+
+backend:
+  - task: "Phase 6 Fix 7 support — carrier_rates schema flexibility"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          No backend changes required. Existing PartyMeta model already
+          uses `carrier_rates: Optional[Dict[str, Any]]`, so the new
+          currency/unit keys (per_kg_ccy, gold_ccy, gold_unit,
+          currency_ccy) are accepted transparently via
+          PUT /api/parties/{party_id}/meta and returned intact via
+          GET /api/parties/{party_id}/meta.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 81
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Phase 6 Fix 7 — Carrier Rates flexible currency + unit"
+    - "Phase 6 Fix 4 — Balance Hinglish labels + color fix"
+    - "Phase 6 Fix 2 — Mobile dock Add Ledger tab"
+    - "Phase 6 Fix 5 — Verified entries green highlight + dot"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      Phase 6 Batch A complete. Please verify Fixes 1, 2, 3, 4, 5, 7, 8.
+      Primary focus is Fix 7 (Carrier Rates flexible currency/unit) and
+      Fix 4 (Hinglish balance labels).
+      Test credentials: kishan.singh3280@gmail.com / 701A3ahig@
+      For Fix 7, please pick a Carrier party (e.g. "Abhishek Singh" or
+      "Arun Carriers") because CarrierRatesCard renders only when
+      role === "carrier".
+      For Fix 4, INSE LENA HAI must be green (positive) and INHE DENA
+      HAI must be red (negative).
+      Fix 6 (share PDF), Fix 9 (new shipment form), and Fix 10
+      (shipments redesign) are Batch B and NOT part of this run.
+

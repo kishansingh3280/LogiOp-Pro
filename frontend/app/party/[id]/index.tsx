@@ -356,16 +356,67 @@ export default function PartyDetail() {
 }
 
 
-// Fix 3 (Phase 5) · Carrier rates card. Reads/writes carrier_rates
-// from the party_meta local overlay.
-type CarrierRates = { per_kg?: string; per_baht?: string; per_1000_usd?: string };
+// Fix 7 (Phase 6) · Carrier rates card with flexible currency + unit
+// selectors. Reads/writes carrier_rates from the party_meta local
+// overlay. Currency and unit toggles are simple relabels (no numeric
+// auto-conversion) per user choice "1: b".
+type Ccy = "INR" | "THB";
+type GoldUnit = "per_gram" | "per_baht";
+type CarrierRates = {
+  per_kg?: string;
+  per_kg_ccy?: Ccy;
+  per_baht?: string;
+  gold_ccy?: Ccy;
+  gold_unit?: GoldUnit;
+  per_1000_usd?: string;
+  currency_ccy?: Ccy;
+};
+const CCY_SYM: Record<Ccy, string> = { INR: "₹", THB: "฿" };
+
+function CcyPill({
+  label,
+  active,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.75}
+      style={[styles.pill, active ? styles.pillActive : styles.pillIdle]}
+    >
+      <Text style={active ? styles.pillTextActive : styles.pillTextIdle}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 function CarrierRatesCard({ partyId }: { partyId: string }) {
   const [rates, setRates] = useState<CarrierRates>({});
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [perKg, setPerKg] = useState("");
+  const [perKgCcy, setPerKgCcy] = useState<Ccy>("INR");
   const [perBaht, setPerBaht] = useState("");
+  const [goldCcy, setGoldCcy] = useState<Ccy>("THB");
+  const [goldUnit, setGoldUnit] = useState<GoldUnit>("per_baht");
   const [per1000Usd, setPer1000Usd] = useState("");
+  const [currencyCcy, setCurrencyCcy] = useState<Ccy>("INR");
+
+  const hydrate = (r: CarrierRates) => {
+    setPerKg(r.per_kg || "");
+    setPerKgCcy((r.per_kg_ccy as Ccy) || "INR");
+    setPerBaht(r.per_baht || "");
+    setGoldCcy((r.gold_ccy as Ccy) || "THB");
+    setGoldUnit((r.gold_unit as GoldUnit) || "per_baht");
+    setPer1000Usd(r.per_1000_usd || "");
+    setCurrencyCcy((r.currency_ccy as Ccy) || "INR");
+  };
 
   useEffect(() => {
     if (!partyId) return;
@@ -373,9 +424,7 @@ function CarrierRatesCard({ partyId }: { partyId: string }) {
       .then((m) => {
         const r = m?.carrier_rates || {};
         setRates(r);
-        setPerKg(r.per_kg || "");
-        setPerBaht(r.per_baht || "");
-        setPer1000Usd(r.per_1000_usd || "");
+        hydrate(r);
       })
       .catch(() => setRates({}));
   }, [partyId]);
@@ -385,8 +434,12 @@ function CarrierRatesCard({ partyId }: { partyId: string }) {
     try {
       const next: CarrierRates = {
         per_kg: perKg.trim() || undefined,
+        per_kg_ccy: perKgCcy,
         per_baht: perBaht.trim() || undefined,
+        gold_ccy: goldCcy,
+        gold_unit: goldUnit,
         per_1000_usd: per1000Usd.trim() || undefined,
+        currency_ccy: currencyCcy,
       };
       await apiPut(`/api/parties/${partyId}/meta`, {
         party_id: partyId,
@@ -401,40 +454,129 @@ function CarrierRatesCard({ partyId }: { partyId: string }) {
     }
   };
 
-  const row = (label: string, unit: string, value: string, setValue: (v: string) => void) => (
-    <View style={styles.rateRow}>
-      <Text style={styles.rateLabel}>{label}</Text>
-      {editing ? (
-        <TextInput
-          style={styles.rateInput}
-          value={value}
-          onChangeText={setValue}
-          keyboardType="decimal-pad"
-          placeholder="—"
-          placeholderTextColor={colors.textDim}
-        />
-      ) : (
-        <Text style={styles.rateValue}>{value ? `${unit}${value}` : "—"}</Text>
-      )}
-    </View>
-  );
+  // View-mode formatted values.
+  const perKgView = perKg ? `${CCY_SYM[perKgCcy]}${perKg} / kg` : "—";
+  const goldUnitLabel = goldUnit === "per_gram" ? "gram" : "Baht";
+  const goldView = perBaht ? `${CCY_SYM[goldCcy]}${perBaht} / ${goldUnitLabel}` : "—";
+  const currencyView = per1000Usd
+    ? `${CCY_SYM[currencyCcy]}${per1000Usd} / $1000`
+    : "—";
 
   return (
     <>
       <Text style={styles.section}>Rates & Quotation</Text>
       <GlassCard>
         <Text style={styles.rateHeader}>CARRYING RATES</Text>
-        {row("Per kg (Bag)", "₹", perKg, setPerKg)}
-        {row("Gold (per Baht)", "₹", perBaht, setPerBaht)}
-        {row("Currency (per $1000)", "₹", per1000Usd, setPer1000Usd)}
+
+        {/* Per kg */}
+        <View style={styles.rateBlock}>
+          <View style={styles.rateBlockHead}>
+            <Text style={styles.rateLabel}>Per kg (Bag)</Text>
+            {!editing && <Text style={styles.rateValue}>{perKgView}</Text>}
+          </View>
+          {editing && (
+            <View style={styles.rateBlockControls}>
+              <View style={styles.pillRow}>
+                <CcyPill label="INR" active={perKgCcy === "INR"} onPress={() => setPerKgCcy("INR")} />
+                <CcyPill label="THB" active={perKgCcy === "THB"} onPress={() => setPerKgCcy("THB")} />
+              </View>
+              <View style={styles.amountRow}>
+                <Text style={styles.amountPrefix}>{CCY_SYM[perKgCcy]}</Text>
+                <TextInput
+                  style={styles.amountInput}
+                  value={perKg}
+                  onChangeText={setPerKg}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  placeholderTextColor={colors.textDim}
+                />
+                <Text style={styles.amountSuffix}>/ kg</Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* Gold */}
+        <View style={styles.rateBlock}>
+          <View style={styles.rateBlockHead}>
+            <Text style={styles.rateLabel}>Gold</Text>
+            {!editing && <Text style={styles.rateValue}>{goldView}</Text>}
+          </View>
+          {editing && (
+            <View style={styles.rateBlockControls}>
+              <View style={styles.pillRow}>
+                <CcyPill label="INR" active={goldCcy === "INR"} onPress={() => setGoldCcy("INR")} />
+                <CcyPill label="THB" active={goldCcy === "THB"} onPress={() => setGoldCcy("THB")} />
+                <View style={styles.pillSpacer} />
+                <CcyPill
+                  label="per gram"
+                  active={goldUnit === "per_gram"}
+                  onPress={() => setGoldUnit("per_gram")}
+                />
+                <CcyPill
+                  label="per Baht"
+                  active={goldUnit === "per_baht"}
+                  onPress={() => setGoldUnit("per_baht")}
+                />
+              </View>
+              <View style={styles.amountRow}>
+                <Text style={styles.amountPrefix}>{CCY_SYM[goldCcy]}</Text>
+                <TextInput
+                  style={styles.amountInput}
+                  value={perBaht}
+                  onChangeText={setPerBaht}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  placeholderTextColor={colors.textDim}
+                />
+                <Text style={styles.amountSuffix}>/ {goldUnitLabel}</Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* Currency (per $1000) */}
+        <View style={[styles.rateBlock, { borderBottomWidth: 0 }]}>
+          <View style={styles.rateBlockHead}>
+            <Text style={styles.rateLabel}>Currency (per $1000)</Text>
+            {!editing && <Text style={styles.rateValue}>{currencyView}</Text>}
+          </View>
+          {editing && (
+            <View style={styles.rateBlockControls}>
+              <View style={styles.pillRow}>
+                <CcyPill
+                  label="INR"
+                  active={currencyCcy === "INR"}
+                  onPress={() => setCurrencyCcy("INR")}
+                />
+                <CcyPill
+                  label="THB"
+                  active={currencyCcy === "THB"}
+                  onPress={() => setCurrencyCcy("THB")}
+                />
+              </View>
+              <View style={styles.amountRow}>
+                <Text style={styles.amountPrefix}>{CCY_SYM[currencyCcy]}</Text>
+                <TextInput
+                  style={styles.amountInput}
+                  value={per1000Usd}
+                  onChangeText={setPer1000Usd}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  placeholderTextColor={colors.textDim}
+                />
+                <Text style={styles.amountSuffix}>/ $1000</Text>
+              </View>
+            </View>
+          )}
+        </View>
+
         {editing ? (
           <View style={styles.rateActions}>
             <TouchableOpacity
               onPress={() => {
                 setEditing(false);
-                setPerKg(rates.per_kg || "");
-                setPerBaht(rates.per_baht || "");
-                setPer1000Usd(rates.per_1000_usd || "");
+                hydrate(rates);
               }}
               disabled={saving}
               activeOpacity={0.75}
@@ -455,7 +597,7 @@ function CarrierRatesCard({ partyId }: { partyId: string }) {
           <TouchableOpacity
             onPress={() => setEditing(true)}
             activeOpacity={0.75}
-            style={[styles.rateBtn, styles.rateBtnPrimary, { alignSelf: "flex-start", marginTop: 8 }]}
+            style={[styles.rateBtn, styles.rateBtnPrimary, { alignSelf: "flex-start", marginTop: 12 }]}
           >
             <Ionicons name="create-outline" size={14} color={colors.bgSolid} />
             <Text style={styles.rateBtnPrimaryText}>Edit Rates</Text>
@@ -675,6 +817,50 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginBottom: spacing.sm,
   },
+  rateBlock: {
+    paddingVertical: 10,
+    borderBottomColor: colors.divider,
+    borderBottomWidth: 1,
+  },
+  rateBlockHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  rateBlockControls: { marginTop: 10, gap: 8 },
+  pillRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  pillSpacer: { width: 8 },
+  pill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  pillIdle: { borderColor: colors.cardBorder, backgroundColor: "transparent" },
+  pillActive: { borderColor: colors.brand, backgroundColor: colors.brandSoft },
+  pillTextIdle: { color: colors.textDim, fontSize: 11, fontWeight: "700" },
+  pillTextActive: { color: colors.brand, fontSize: 11, fontWeight: "800" },
+  amountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: colors.card,
+    alignSelf: "flex-start",
+  },
+  amountPrefix: { color: colors.brand, fontSize: 14, fontWeight: "800" },
+  amountInput: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+    minWidth: 70,
+    padding: 0,
+  },
+  amountSuffix: { color: colors.textDim, fontSize: 12, fontWeight: "700" },
   rateRow: {
     flexDirection: "row",
     alignItems: "center",

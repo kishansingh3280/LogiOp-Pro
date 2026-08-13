@@ -259,21 +259,10 @@ export default function PartyStatement() {
               <Text style={styles.eyebrow}>Statement · {party.role?.toUpperCase()}</Text>
               <Text style={styles.headerName}>{party.name}</Text>
               <Text style={styles.headerPeriod}>{period}</Text>
-              <View style={styles.headerBadges}>
-                {closingInr !== 0 || closingThb !== 0 ? (
-                  <Pill
-                    label={
-                      closingInr > 0 || closingThb > 0 ? "INSE LENA HAI" : "INHE DENA HAI"
-                    }
-                    tint={closingInr > 0 || closingThb > 0 ? colors.credit : colors.debit}
-                    soft={
-                      closingInr > 0 || closingThb > 0 ? colors.brandSoft : colors.dangerSoft
-                    }
-                  />
-                ) : (
-                  <Pill label="SETTLED" tint={colors.textMuted} soft={colors.divider} />
-                )}
-              </View>
+              {/* Fix 4 (Phase 6) · Standalone balance pill removed —
+                  balance direction is expressed in the currency cards
+                  below where "Inse Lena Hai" / "Inhe Dena Hai" is the
+                  card label. */}
             </GlassCard>
 
             {/* Fix 4 (Phase 4) · Two balance cards, one per currency. */}
@@ -353,12 +342,14 @@ export default function PartyStatement() {
                 rows.map((r, idx) => {
                   const cur = r.entry.currency;
                   const bal = cur === "THB" ? r.balThb : r.balInr;
+                  const isVerified = verifiedIds.has(r.entry.id);
                   return (
                     <View
                       key={r.entry.id}
                       style={[
                         styles.tableRow,
                         idx < rows.length - 1 && styles.tableRowBorder,
+                        isVerified && styles.tableRowVerified,
                       ]}
                     >
                       <View style={[styles.tdDateWrap, { flex: 1.4 }]}>
@@ -388,13 +379,8 @@ export default function PartyStatement() {
                         >
                           {fmtCurrency(bal, cur)}
                         </Text>
-                        {verifiedIds.has(r.entry.id) ? (
-                          <Ionicons
-                            name="checkmark-circle"
-                            size={12}
-                            color={colors.textDim}
-                            style={{ marginLeft: 4 }}
-                          />
+                        {isVerified ? (
+                          <View style={styles.verifiedDot} />
                         ) : null}
                       </View>
                     </View>
@@ -588,6 +574,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   tableRowBorder: { borderBottomWidth: 1, borderBottomColor: colors.divider },
+  // Fix 5 (Phase 6) · Verified row highlight — green tint + 3px left rail.
+  tableRowVerified: {
+    backgroundColor: "rgba(0,255,136,0.08)",
+    borderLeftWidth: 3,
+    borderLeftColor: "#00FF88",
+    paddingLeft: 6,
+  },
+  verifiedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#00FF88",
+    marginLeft: 6,
+  },
   tdDate: { color: colors.textMuted, fontSize: 10, fontWeight: "600" },
   tdDateWrap: { flexDirection: "row", alignItems: "center" },
 

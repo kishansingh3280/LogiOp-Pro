@@ -98,7 +98,7 @@ const NAV_ITEMS: NavItem[] = [
     href: "/ledger",
     icon: "book-outline",
     iconActive: "book",
-    matchPrefixes: ["/ledger", "/party"],
+    matchPrefixes: ["/ledger"],
   },
   {
     key: "trips",
@@ -114,7 +114,7 @@ const NAV_ITEMS: NavItem[] = [
     href: "/more",
     icon: "menu-outline",
     iconActive: "menu",
-    matchPrefixes: ["/more", "/reports", "/items", "/admin", "/parties"],
+    matchPrefixes: ["/more", "/reports", "/items", "/admin", "/parties", "/party"],
   },
 ];
 
@@ -147,9 +147,13 @@ export function GlobalSidebar({
     if (item.key === "overview") {
       return pathname === "/" || pathname === "" || pathname === "/(tabs)";
     }
-    return item.matchPrefixes.some(
-      (p) => p !== "/" && (pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p)),
-    );
+    // Fix 3 (Phase 6) · Proper prefix boundary — /ledger must NOT
+    // match /ledger-anything unless the char after is "/" or end.
+    return item.matchPrefixes.some((p) => {
+      if (p === "/") return false;
+      if (pathname === p) return true;
+      return pathname.startsWith(p + "/");
+    });
   };
 
   // Fix 6 removed (Phase 3) — company/mode switcher moved to More tab.

@@ -101,15 +101,16 @@ function FloatingBottomBar({ state, descriptors, navigation }: BottomTabBarProps
             />,
           ];
 
-          // Insert Trips synthetic button between Shipments and Invoices.
+          // Fix 2 (Phase 6) · Insert quick "Add Entry" ledger shortcut
+          // between Shipments and Invoices in the mobile dock.
           if (route.name === "shipments") {
             items.push(
               <TabItem
-                key="__trips"
+                key="__ledger_new"
                 focused={false}
-                icons={{ active: "diamond", inactive: "diamond-outline" }}
-                title="Trips"
-                onPress={() => router.push("/bullion" as any)}
+                icons={{ active: "add-circle", inactive: "add-circle-outline" }}
+                title="New Entry"
+                onPress={() => router.push("/ledger/new-entry" as any)}
               />,
             );
           }

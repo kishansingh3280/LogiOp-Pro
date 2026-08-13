@@ -5,7 +5,7 @@
  * (Reports, Bullion, OPSI, Settings) still show a Coming Soon toast
  * until their phases arrive.
  */
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import {
   Alert,
@@ -26,7 +26,9 @@ type MenuItem = {
   key: string;
   title: string;
   subtitle: string;
-  icon: React.ComponentProps<typeof Ionicons>["name"];
+  // Icon name — usually an Ionicons name; special-cased for "lalamove"
+  // which renders a MaterialCommunityIcons truck (Fix 8 · Phase 6).
+  icon: React.ComponentProps<typeof Ionicons>["name"] | "truck-fast";
   route?: string;
   phase?: "3" | "4" | "5" | "8" | "9";
   adminOnly?: boolean;
@@ -51,7 +53,7 @@ const MENU: MenuItem[] = [
     key: "lalamove",
     title: "Lalamove",
     subtitle: "Instant last-mile delivery — quote, book, track",
-    icon: "car-sport",
+    icon: "truck-fast",
     route: "/lalamove",
   },
   {
@@ -266,7 +268,15 @@ export default function MoreScreen() {
             activeOpacity={0.75}
           >
             <View style={styles.rowIcon}>
-              <Ionicons name={item.icon} size={18} color={colors.brand} />
+              {item.key === "lalamove" ? (
+                <MaterialCommunityIcons name="truck-fast" size={20} color={colors.brand} />
+              ) : (
+                <Ionicons
+                  name={item.icon as React.ComponentProps<typeof Ionicons>["name"]}
+                  size={18}
+                  color={colors.brand}
+                />
+              )}
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>{item.title}</Text>
