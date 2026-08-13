@@ -33,6 +33,7 @@ import { apiGet, apiPost } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { useCompany } from "@/src/lib/company-context";
 import { ModeCompanyBlock } from "@/src/lib/mode-company-block";
+import { fetchPartyRates, computeCarrierCharge } from "@/src/lib/party-rates";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard } from "@/src/lib/ui";
 
@@ -97,7 +98,10 @@ export default function NewShipmentScreen() {
     key: string;
     bag_no: number;
     weight_kg: string;
+    // Fix A (Phase 7) · Per-bag dispatch date + collapsible description.
+    bag_date: string;                // ISO YYYY-MM-DD; defaults to today
     description: string;
+    description_open: boolean;       // UI-only: is the description input expanded?
     items: BagItem[];
     customer_party_id: string;
     freight: string;
@@ -108,6 +112,13 @@ export default function NewShipmentScreen() {
   };
 
   const [bagRows, setBagRows] = useState<BagRow[]>([]);
+  // Fix A (Phase 7) · Parent Customer picker at the shipment level.
+  // Every bag's End Customer defaults to being a sub-customer of the
+  // Parent Customer. When set, the bag customer picker filters to
+  // parties whose `parent_party_id` equals this ID (falls back to
+  // showing all customers if none match, so legacy flows still work).
+  const [parentCustomerPartyId, setParentCustomerPartyId] = useState<string>("");
+  const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [goods, setGoods] = useState<string>("");
   // Which bag's customer/carrier/item picker is currently open.
   const [bagPickerOpen, setBagPickerOpen] = useState<
@@ -170,7 +181,9 @@ export default function NewShipmentScreen() {
         key: `bag-${Date.now()}-${prev.length}`,
         bag_no: prev.length + 1,
         weight_kg: "",
+        bag_date: new Date().toISOString().slice(0, 10),
         description: "",
+        description_open: false,
         items: [],
         customer_party_id: "",
         freight: "",
@@ -190,29 +203,50 @@ export default function NewShipmentScreen() {
     setBagRows((prev) => prev.map((b) => (b.key === key ? { ...b, ...patch } : b)));
   };
 
-  // Fix 2 · Auto-fetch rates from party_meta when carrier is picked.
+  // Fix I (Phase 7) · Auto-fetch rates from party_meta when carrier
+  // is picked. Uses shared fetchPartyRates helper so shipments/trips
+  // stay consistent. Silently falls back to blank inputs if the
+  // party has no saved rates (user can type manually).
   const applyCarrierRates = async (bagKey: string, carrierPartyId: string) => {
     updateBag(bagKey, { carrier_party_id: carrierPartyId });
     try {
-      const meta = await apiGet<{ carrier_rates?: { per_kg?: string; per_kg_ccy?: Currency } }>(
-        `/api/parties/${carrierPartyId}/meta`,
-      );
-      const perKg = Number(meta?.carrier_rates?.per_kg || 0);
-      const ccy = (meta?.carrier_rates?.per_kg_ccy as Currency) || "INR";
-      if (perKg > 0) {
-        const bag = bagRows.find((b) => b.key === bagKey);
-        const w = Number(bag?.weight_kg || 0);
-        if (w > 0) {
-          updateBag(bagKey, {
-            carrier_charge: (perKg * w).toFixed(0),
-            carrier_charge_currency: ccy,
-          });
-        } else {
-          updateBag(bagKey, { carrier_charge_currency: ccy });
-        }
+      const rates = await fetchPartyRates(carrierPartyId);
+      const bag = bagRows.find((b) => b.key === bagKey);
+      const w = Number(bag?.weight_kg || 0);
+      const charge = computeCarrierCharge(rates, w);
+      if (charge) {
+        updateBag(bagKey, {
+          carrier_charge: charge.amount.toFixed(0),
+          carrier_charge_currency: charge.currency,
+        });
+      } else if (rates.per_kg_ccy) {
+        updateBag(bagKey, { carrier_charge_currency: rates.per_kg_ccy });
       }
     } catch {
       /* silent — user can enter manually */
+    }
+  };
+
+  // Fix I (Phase 7) · Auto-fetch customer freight rates on pick.
+  const applyCustomerRates = async (bagKey: string, customerPartyId: string) => {
+    updateBag(bagKey, { customer_party_id: customerPartyId });
+    try {
+      const rates = await fetchPartyRates(customerPartyId);
+      if (rates.freight !== undefined) {
+        updateBag(bagKey, {
+          freight: String(rates.freight),
+          freight_currency: rates.freight_ccy || "INR",
+        });
+      } else if (rates.last_quoted_rate !== undefined) {
+        // Fallback: use the last invoice rate as a starting freight
+        // suggestion so the user isn't blank-slating every shipment.
+        updateBag(bagKey, {
+          freight: String(rates.last_quoted_rate),
+          freight_currency: rates.last_quoted_ccy || "INR",
+        });
+      }
+    } catch {
+      /* silent */
     }
   };
 
@@ -335,7 +369,7 @@ export default function NewShipmentScreen() {
     return null;
   };
 
-  const onSave = async () => {
+  const onSave = async (thenInvoice: boolean = false) => {
     const err = validate();
     if (err) {
       Alert.alert("Missing info", err);
@@ -350,6 +384,8 @@ export default function NewShipmentScreen() {
       const bagPayload = bagRows.map((b) => ({
         bag_no: b.bag_no,
         weight_kg: Number(b.weight_kg) || 0,
+        // Fix A (Phase 7) · Per-bag dispatch date.
+        bag_date: b.bag_date || undefined,
         description: b.description.trim() || undefined,
         items: b.items
           .filter((it) => it.item_id || it.item_name)
@@ -385,6 +421,8 @@ export default function NewShipmentScreen() {
         party_ids: uniqueCustomerIds,
         carrier_party_id: uniqueCarrierIds[0],
         carrier_party_ids: uniqueCarrierIds.length > 1 ? uniqueCarrierIds : undefined,
+        // Fix A (Phase 7) · Optional shipment-level parent customer.
+        parent_customer_party_id: parentCustomerPartyId || undefined,
         bags: bagPayload,
         freight: totalReceivableInr + totalReceivableThb,
         freight_currency: bagRows[0]?.freight_currency || "INR",
@@ -400,7 +438,10 @@ export default function NewShipmentScreen() {
       const res = await apiPost<{ id?: string }>("/api/shipments", payload);
       if (formCompany !== activeCompany) setActiveCompany(formCompany);
       if (formMode !== activeMode) setActiveMode(formMode);
-      if (res?.id) {
+      if (thenInvoice && res?.id) {
+        // Fix B (Phase 7) · 1-click Shipment → Invoice.
+        router.replace(`/invoice/new?from_shipment=${res.id}` as never);
+      } else if (res?.id) {
         router.replace(`/shipment/${res.id}` as never);
       } else {
         router.replace("/shipments" as never);
@@ -540,8 +581,49 @@ export default function NewShipmentScreen() {
             </View>
           </GlassCard>
 
-          {/* ── 3 · Bags (Fix 2 · Phase 7 · Batch C-1) ── */}
-          <SectionHeader index={3} title="Bags" />
+          {/* ── Fix A (Phase 7) · Parent Customer picker (shipment-level) ──
+              Optional overarching customer whose sub-customers get
+              suggested inside every bag. Default filter widens to
+              all customers when the parent has no children. */}
+          <SectionHeader index={3} title="Parent Customer" />
+          <GlassCard>
+            <Text style={styles.subhead}>
+              Parent Grahak (jiske sub-customers bags mein aayenge)
+            </Text>
+            <TouchableOpacity
+              style={styles.pickerBtn}
+              activeOpacity={0.75}
+              onPress={() => setParentPickerOpen(true)}
+            >
+              <Ionicons name="people-circle" size={16} color={colors.brand} />
+              <Text
+                style={[
+                  styles.pickerBtnText,
+                  {
+                    color: parentCustomerPartyId ? colors.text : colors.textDim,
+                  },
+                ]}
+                numberOfLines={1}
+              >
+                {parentCustomerPartyId
+                  ? partyById[parentCustomerPartyId]?.name || "Selected"
+                  : "Parent Customer chuno (optional)"}
+              </Text>
+              {parentCustomerPartyId ? (
+                <TouchableOpacity
+                  onPress={() => setParentCustomerPartyId("")}
+                  hitSlop={12}
+                >
+                  <Ionicons name="close-circle" size={16} color={colors.textDim} />
+                </TouchableOpacity>
+              ) : (
+                <Ionicons name="chevron-forward" size={14} color={colors.textDim} />
+              )}
+            </TouchableOpacity>
+          </GlassCard>
+
+          {/* ── 4 · Bags (Fix 2 · Phase 7 · Batch C-1) ── */}
+          <SectionHeader index={4} title="Bags" />
           <GlassCard>
             <View style={styles.subheadRow}>
               <Text style={styles.subhead}>Bags — sabhi</Text>
@@ -575,21 +657,35 @@ export default function NewShipmentScreen() {
                       </TouchableOpacity>
                     </View>
 
-                    <Label>Weight (kg)</Label>
-                    <TextInput
-                      style={styles.input}
-                      value={b.weight_kg}
-                      onChangeText={(v) => {
-                        updateBag(b.key, { weight_kg: v });
-                        // Recompute carrier charge if carrier + rate known
-                        if (b.carrier_party_id) {
-                          applyCarrierRates(b.key, b.carrier_party_id);
-                        }
-                      }}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textDim}
-                    />
+                    <View style={styles.rowSplit}>
+                      <View style={{ flex: 1 }}>
+                        <Label>Weight (kg)</Label>
+                        <TextInput
+                          style={styles.input}
+                          value={b.weight_kg}
+                          onChangeText={(v) => {
+                            updateBag(b.key, { weight_kg: v });
+                            // Recompute carrier charge if carrier + rate known
+                            if (b.carrier_party_id) {
+                              applyCarrierRates(b.key, b.carrier_party_id);
+                            }
+                          }}
+                          keyboardType="decimal-pad"
+                          placeholder="0"
+                          placeholderTextColor={colors.textDim}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Label>Date</Label>
+                        <TextInput
+                          style={styles.input}
+                          value={b.bag_date}
+                          onChangeText={(v) => updateBag(b.key, { bag_date: v })}
+                          placeholder="YYYY-MM-DD"
+                          placeholderTextColor={colors.textDim}
+                        />
+                      </View>
+                    </View>
 
                     {/* Items */}
                     <View style={[styles.subheadRow, { marginTop: 12 }]}>
@@ -653,14 +749,54 @@ export default function NewShipmentScreen() {
                       ))
                     )}
 
-                    <Label style={{ marginTop: 12 }}>Description (optional)</Label>
-                    <TextInput
-                      style={styles.input}
-                      value={b.description}
-                      onChangeText={(v) => updateBag(b.key, { description: v })}
-                      placeholder="e.g. Gold, docs"
-                      placeholderTextColor={colors.textDim}
-                    />
+                    {/* Fix A (Phase 7) · Description collapse-to-save-space */}
+                    {b.description_open ? (
+                      <>
+                        <Label style={{ marginTop: 12 }}>Description</Label>
+                        <TextInput
+                          style={styles.input}
+                          value={b.description}
+                          onChangeText={(v) => updateBag(b.key, { description: v })}
+                          placeholder="e.g. Gold, docs"
+                          placeholderTextColor={colors.textDim}
+                          autoFocus
+                        />
+                        <TouchableOpacity
+                          onPress={() =>
+                            updateBag(b.key, {
+                              description_open: false,
+                              description: b.description,
+                            })
+                          }
+                          style={{ paddingVertical: 6 }}
+                        >
+                          <Text style={{ color: colors.textDim, fontSize: 11 }}>
+                            − Hide description
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : b.description ? (
+                      <TouchableOpacity
+                        onPress={() => updateBag(b.key, { description_open: true })}
+                        style={{ marginTop: 10 }}
+                      >
+                        <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                          📝 {b.description}{" "}
+                          <Text style={{ color: colors.brand, fontSize: 11 }}>
+                            (edit)
+                          </Text>
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={() => updateBag(b.key, { description_open: true })}
+                        style={{ marginTop: 10 }}
+                      >
+                        <Text style={{ color: colors.brand, fontSize: 11 }}>
+                          + Description Jodo (optional)
+                        </Text>
+                      </TouchableOpacity>
+                    )}
 
                     {/* End Customer */}
                     <Label style={{ marginTop: 12 }}>End Customer</Label>
@@ -796,8 +932,8 @@ export default function NewShipmentScreen() {
             />
           </GlassCard>
 
-          {/* ── 4 · Financials · Auto-summed from bag rows ── */}
-          <SectionHeader index={4} title="Financials" />
+          {/* ── 5 · Financials · Auto-summed from bag rows ── */}
+          <SectionHeader index={5} title="Financials" />
           <GlassCard>
             <View style={styles.totalsRow}>
               <View style={styles.totalsCol}>
@@ -844,7 +980,7 @@ export default function NewShipmentScreen() {
             />
           </GlassCard>
           {/* ── 4 · Meta ──────────────────────────────────── */}
-          <SectionHeader index={5} title="Notes" />
+          <SectionHeader index={6} title="Notes" />
           <GlassCard>
             <Label>Notes (optional)</Label>
             <TextInput
@@ -857,10 +993,20 @@ export default function NewShipmentScreen() {
             />
           </GlassCard>
 
+          {/* Fix B (Phase 7) · 1-click Shipment → Invoice */}
+          <TouchableOpacity
+            style={[styles.invoiceBtn, saving && { opacity: 0.7 }]}
+            activeOpacity={0.85}
+            onPress={() => onSave(true)}
+            disabled={saving}
+          >
+            <Ionicons name="receipt" size={16} color={colors.bg} />
+            <Text style={styles.invoiceBtnText}>💾 Save + 📄 Invoice Banao</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.saveBtn, saving && { opacity: 0.7 }]}
             activeOpacity={0.85}
-            onPress={onSave}
+            onPress={() => onSave(false)}
             disabled={saving}
           >
             {saving ? (
@@ -936,7 +1082,7 @@ export default function NewShipmentScreen() {
                     style={styles.pickerRow}
                     onPress={() => {
                       if (bagPickerOpen.kind === "customer") {
-                        updateBag(bagPickerOpen.bagKey, { customer_party_id: p.id });
+                        applyCustomerRates(bagPickerOpen.bagKey, p.id);
                       } else {
                         applyCarrierRates(bagPickerOpen.bagKey, p.id);
                       }
@@ -957,6 +1103,65 @@ export default function NewShipmentScreen() {
             <TouchableOpacity
               style={styles.pickerDone}
               onPress={() => setBagPickerOpen(null)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.pickerDoneText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      ) : null}
+
+      {/* ── Fix A · Parent Customer picker modal ────────────── */}
+      {parentPickerOpen ? (
+        <Pressable
+          style={styles.pickerBackdrop}
+          onPress={() => setParentPickerOpen(false)}
+        >
+          <Pressable style={styles.pickerCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.pickerTitle}>Parent Customer</Text>
+            <TextInput
+              style={styles.input}
+              value={partySearch}
+              onChangeText={setPartySearch}
+              placeholder="Search customers…"
+              placeholderTextColor={colors.textDim}
+              autoFocus
+            />
+            <ScrollView style={{ maxHeight: 340, marginTop: 8 }}>
+              {customers.length === 0 ? (
+                <Text style={styles.pickerEmpty}>
+                  No customers found — add one first.
+                </Text>
+              ) : (
+                customers
+                  .filter((p) =>
+                    !partySearch.trim()
+                      ? true
+                      : p.name.toLowerCase().includes(partySearch.toLowerCase()),
+                  )
+                  .map((p) => (
+                    <TouchableOpacity
+                      key={p.id}
+                      style={styles.pickerRow}
+                      onPress={() => {
+                        setParentCustomerPartyId(p.id);
+                        setParentPickerOpen(false);
+                      }}
+                      activeOpacity={0.75}
+                    >
+                      <Ionicons
+                        name="people-circle"
+                        size={16}
+                        color={colors.brand}
+                      />
+                      <Text style={styles.pickerRowText}>{p.name}</Text>
+                    </TouchableOpacity>
+                  ))
+              )}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.pickerDone}
+              onPress={() => setParentPickerOpen(false)}
               activeOpacity={0.85}
             >
               <Text style={styles.pickerDoneText}>Cancel</Text>
@@ -1316,6 +1521,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   saveBtnText: { color: colors.bgSolid, fontSize: 14, fontWeight: "800" },
+  // Fix B (Phase 7) · Save + Invoice combo button.
+  invoiceBtn: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.info || colors.brand,
+    borderRadius: radii.pill,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  invoiceBtnText: { color: colors.bg, fontSize: 13, fontWeight: "800", letterSpacing: 0.2 },
 
   // Party picker
   pickerBackdrop: {

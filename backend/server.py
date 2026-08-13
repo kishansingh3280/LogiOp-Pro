@@ -384,50 +384,122 @@ class BullionRates(BaseModel):
 
 
 @api_router.get("/bullion/trips")
-async def bullion_list_trips(company: Optional[str] = None):
-    """List all bullion trips. When `company` is provided, results are
-    filtered to that company (multi-company Phase 1). Matches both
-    prefixed (`co_singh_exports`) and short (`singh_exports`) forms so
-    legacy records tagged either way stay reachable. No filter = all
-    trips (backward compat for older clients)."""
+async def bullion_list_trips(
+    company: Optional[str] = None,
+    company_id: Optional[str] = None,
+    mode: Optional[str] = None,
+):
+    """List all bullion trips.
+
+    Company-mode filter (Fix D · Phase 7):
+        • `mode=formal`   → tag==formal OR untagged (legacy).
+        • `mode=informal` → tag==informal only.
+        • `mode=all`      → skip filter (Master view).
+        • no `mode`       → skip filter (backward compat).
+
+    `company` (legacy) and `company_id` (new) are aliases.
+    """
     query: Dict[str, Any] = {}
-    if company:
-        short = company[3:] if company.startswith("co_") else company
-        prefixed = company if company.startswith("co_") else f"co_{company}"
-        query["company"] = {"$in": list({company, short, prefixed})}
+    co = company or company_id
+    if co:
+        short = co[3:] if co.startswith("co_") else co
+        prefixed = co if co.startswith("co_") else f"co_{co}"
+        query["company"] = {"$in": list({co, short, prefixed})}
     docs = await db.bullion_trips.find(query).sort("date", -1).to_list(500)
     trips = [_clean_mongo_id(d) for d in docs]
 
-    # Fix 3 (Phase 7 · Batch C-1) · Compute allocated_kg per trip by
-    # aggregating bag weights across shipments whose bags reference
-    # each trip's carrier. Only counts bags on non-cancelled shipments.
+    # Fix D · in-memory mode filter (values may live on either the
+    # trip doc's `mode`, `company_mode`, or on the legacy `type` key).
+    m = (mode or "").strip().lower()
+    if m == "informal":
+        trips = [
+            t for t in trips
+            if (str(t.get("company_mode") or t.get("mode") or "").lower() == "informal")
+        ]
+    elif m == "formal":
+        trips = [
+            t for t in trips
+            if (str(t.get("company_mode") or t.get("mode") or "formal").lower()
+                in ("formal", ""))
+        ]
+    # else: no filter (all / master / missing)
+
+    # Fix 3 (Phase 7 · Batch C-1) + Fix E (Phase 7) · Compute
+    # allocated_kg per trip. We aggregate BOTH local shipments
+    # (db.shipments — legacy hand-carry rows) AND remote shipments
+    # (proxied via /api/shipments — where new bag-based shipments
+    # actually live). Without the remote pass the progress bar
+    # was permanently stuck at 0 because new bags never landed in
+    # the local collection.
     try:
         carrier_ids = [t.get("carrier_party_id") for t in trips if t.get("carrier_party_id")]
+        allocations: Dict[str, float] = {}
+        linked: Dict[str, List[Dict[str, Any]]] = {}
+
+        def _accumulate(s: Dict[str, Any]) -> None:
+            bags = s.get("bags") or []
+            ship_id = s.get("id")
+            if bags:
+                for b in bags:
+                    cid = b.get("carrier_party_id") or s.get("carrier_party_id")
+                    if not cid:
+                        continue
+                    w = float(b.get("weight_kg") or 0)
+                    allocations[cid] = allocations.get(cid, 0.0) + w
+                    linked.setdefault(cid, []).append(
+                        {
+                            "bag_no": b.get("bag_no") or b.get("index"),
+                            "shipment_id": ship_id,
+                            "weight_kg": w,
+                            "customer_name": b.get("customer_name")
+                            or b.get("end_customer_name"),
+                        }
+                    )
+            else:
+                cid = s.get("carrier_party_id")
+                if cid:
+                    w = float(s.get("weight_kg") or 0)
+                    allocations[cid] = allocations.get(cid, 0.0) + w
+                    linked.setdefault(cid, []).append(
+                        {"shipment_id": ship_id, "weight_kg": w}
+                    )
+
         if carrier_ids:
+            # Local pass (legacy)
             ship_cursor = db.shipments.find(
                 {
                     "carrier_party_id": {"$in": carrier_ids},
                     "status": {"$ne": "cancelled"},
                 },
-                {"carrier_party_id": 1, "bags": 1, "weight_kg": 1, "carrier_party_ids": 1, "id": 1},
+                {
+                    "carrier_party_id": 1,
+                    "bags": 1,
+                    "weight_kg": 1,
+                    "carrier_party_ids": 1,
+                    "id": 1,
+                },
             )
-            allocations: Dict[str, float] = {}
             async for s in ship_cursor:
-                bags = s.get("bags") or []
-                if bags:
-                    for b in bags:
-                        cid = b.get("carrier_party_id") or s.get("carrier_party_id")
-                        if not cid:
-                            continue
-                        allocations[cid] = allocations.get(cid, 0.0) + float(b.get("weight_kg") or 0)
-                else:
-                    cid = s.get("carrier_party_id")
-                    if cid:
-                        allocations[cid] = allocations.get(cid, 0.0) + float(s.get("weight_kg") or 0)
-            for t in trips:
-                cid = t.get("carrier_party_id")
-                if cid and cid in allocations:
-                    t["allocated_kg"] = round(allocations[cid], 2)
+                _accumulate(s)
+
+        # Remote pass — new bag-based shipments live here.
+        try:
+            remote_shipments = await _proxy_get("/api/shipments") or []
+            if isinstance(remote_shipments, list):
+                for s in remote_shipments:
+                    if not isinstance(s, dict):
+                        continue
+                    if str(s.get("status") or "").lower() == "cancelled":
+                        continue
+                    _accumulate(s)
+        except Exception:
+            pass  # remote unavailable — local-only allocations still apply
+
+        for t in trips:
+            cid = t.get("carrier_party_id")
+            if cid and cid in allocations:
+                t["allocated_kg"] = round(allocations[cid], 2)
+                t["linked_bags"] = linked.get(cid, [])
     except Exception as e:
         logging.exception("[bullion-trips] allocated_kg compute failed: %s", e)
     return trips
@@ -568,6 +640,9 @@ class PartyMeta(BaseModel):
     photo_url: Optional[str] = None
     # Fix 3 (Phase 5) · Free-form carrier quoting rates.
     carrier_rates: Optional[Dict[str, Any]] = None
+    # Fix F (Phase 7) · Legal / firm name stored locally so the field
+    # survives even when the upstream party schema doesn't accept it.
+    company_name: Optional[str] = None
 
 
 @api_router.put("/parties/{party_id}/meta")
@@ -743,20 +818,98 @@ async def forex_rates():
 
 
 @api_router.get("/trips")
-async def trips_list(company_id: str = "awadh", mode: str = "formal"):
+async def trips_list(
+    company_id: str = "awadh",
+    mode: str = "formal",
+):
     """Fix 4 · Company + mode aware trip listing.
-    Records without company_id/company_mode default to awadh/formal so
-    the filter is safe against legacy documents. `mode` query param is
-    stored internally as `company_mode` to avoid clashing with any
-    transport-mode field.
+    Fix D (Phase 7) · mode=all skips mode filter; informal shows
+    only explicitly-tagged trips; formal includes legacy untagged
+    (backward compat).
+    Fix E (Phase 7) · Enriches each trip with allocated_kg +
+    linked_bags aggregated from all non-cancelled shipments whose
+    bag carrier matches this trip's carrier.
     """
     docs = await db.trips.find().sort("departure_date", -1).to_list(500)
-    out = []
+    m = (mode or "").strip().lower()
+    out: List[Dict[str, Any]] = []
     for d in docs:
         d_cid = d.get("company_id") or "awadh"
-        d_mode = d.get("company_mode") or "formal"
-        if d_cid == company_id and d_mode == mode:
+        d_mode = str(d.get("company_mode") or "formal").lower()
+        if d_cid != company_id:
+            continue
+        if m == "all":
             out.append(_clean_mongo_id(d))
+        elif m == "informal":
+            if d_mode == "informal":
+                out.append(_clean_mongo_id(d))
+        else:  # formal (default)
+            if d_mode in ("formal", ""):
+                out.append(_clean_mongo_id(d))
+
+    # Fix E · aggregate bag weights from local + remote shipments.
+    try:
+        carrier_ids = {
+            t.get("carrier_id") or t.get("carrier_party_id")
+            for t in out
+            if isinstance(t, dict) and (t.get("carrier_id") or t.get("carrier_party_id"))
+        }
+        if carrier_ids:
+            allocations: Dict[str, float] = {}
+            linked: Dict[str, List[Dict[str, Any]]] = {}
+
+            def _accumulate(s: Dict[str, Any]) -> None:
+                if str(s.get("status") or "").lower() == "cancelled":
+                    return
+                ship_id = s.get("id")
+                bags = s.get("bags") or []
+                if bags:
+                    for b in bags:
+                        cid = b.get("carrier_party_id") or s.get("carrier_party_id")
+                        if not cid or cid not in carrier_ids:
+                            continue
+                        w = float(b.get("weight_kg") or 0)
+                        allocations[cid] = allocations.get(cid, 0.0) + w
+                        linked.setdefault(cid, []).append(
+                            {
+                                "bag_no": b.get("bag_no") or b.get("index"),
+                                "shipment_id": ship_id,
+                                "weight_kg": w,
+                                "customer_name": b.get("customer_name")
+                                or b.get("end_customer_name"),
+                            }
+                        )
+                else:
+                    cid = s.get("carrier_party_id")
+                    if cid and cid in carrier_ids:
+                        w = float(s.get("weight_kg") or 0)
+                        allocations[cid] = allocations.get(cid, 0.0) + w
+                        linked.setdefault(cid, []).append(
+                            {"shipment_id": ship_id, "weight_kg": w}
+                        )
+
+            # Local pass
+            async for s in db.shipments.find(
+                {"carrier_party_id": {"$in": list(carrier_ids)}}
+            ):
+                _accumulate(s)
+            # Remote pass — new bag-based shipments live upstream.
+            try:
+                remote = await _proxy_get("/api/shipments") or []
+                if isinstance(remote, list):
+                    for s in remote:
+                        if isinstance(s, dict):
+                            _accumulate(s)
+            except Exception:
+                pass
+
+            for t in out:
+                cid = t.get("carrier_id") or t.get("carrier_party_id")
+                t["allocated_kg"] = round(allocations.get(cid, 0.0), 2) if cid else 0
+                t["linked_bags"] = linked.get(cid, []) if cid else []
+    except Exception as e:
+        logging.exception("[trips_list] allocated_kg compute failed: %s", e)
+
     return out
 
 
@@ -5761,14 +5914,37 @@ async def proxy_to_remote_backend(path: str, request: Request):
             arr = json.loads(resp_content)
             if isinstance(arr, list):
                 want_cid = company_id_q or "awadh"
-                want_mode = mode_q or "formal"
-                filtered = [
-                    r
-                    for r in arr
-                    if isinstance(r, dict)
-                    and (r.get("company_id") or "awadh") == want_cid
-                    and (r.get("company_mode") or "formal") == want_mode
-                ]
+                # Fix D (Phase 7) · Informal filter must match ONLY records
+                # explicitly tagged informal — legacy untagged records
+                # were treated as formal and were leaking into informal
+                # views, and informal saves were being hidden because the
+                # default fallback was "formal". Rules:
+                #   • mode=all       → skip mode filter (Master).
+                #   • mode=informal  → tag==informal only.
+                #   • mode=formal    → tag==formal OR untagged (legacy).
+                want_mode = (mode_q or "").strip().lower()
+                if want_mode == "all":
+                    filtered = [
+                        r for r in arr
+                        if isinstance(r, dict)
+                        and (r.get("company_id") or "awadh") == want_cid
+                    ]
+                elif want_mode == "informal":
+                    filtered = [
+                        r for r in arr
+                        if isinstance(r, dict)
+                        and (r.get("company_id") or "awadh") == want_cid
+                        and str(r.get("company_mode") or r.get("mode") or "").lower()
+                        == "informal"
+                    ]
+                else:  # formal (default)
+                    filtered = [
+                        r for r in arr
+                        if isinstance(r, dict)
+                        and (r.get("company_id") or "awadh") == want_cid
+                        and str(r.get("company_mode") or r.get("mode") or "formal").lower()
+                        in ("formal", "")
+                    ]
                 resp_content = json.dumps(filtered).encode()
                 resp_headers.pop("content-length", None)
         except (json.JSONDecodeError, ValueError):
@@ -5799,6 +5975,75 @@ async def proxy_to_remote_backend(path: str, request: Request):
         except (json.JSONDecodeError, ValueError, TypeError):
             pass
 
+    # Fix E (Phase 7) · Enrich /api/trips with allocated_kg + linked_bags.
+    # Aggregates bag weights from every non-cancelled shipment whose
+    # bag carrier matches each trip's carrier. Without this the
+    # progress bar on /bullion sat permanently at 0 for new trips.
+    if (
+        request.method == "GET"
+        and path == "trips"
+        and resp.status_code == 200
+    ):
+        try:
+            trips_arr = json.loads(resp_content)
+            if isinstance(trips_arr, list) and trips_arr:
+                carrier_ids = {
+                    t.get("carrier_id") or t.get("carrier_party_id")
+                    for t in trips_arr
+                    if isinstance(t, dict)
+                    and (t.get("carrier_id") or t.get("carrier_party_id"))
+                }
+                if carrier_ids:
+                    # Pull all shipments via proxy (cached 3 s).
+                    shipments = await _proxy_get("/api/shipments") or []
+                    allocations: Dict[str, float] = {}
+                    linked: Dict[str, List[Dict[str, Any]]] = {}
+                    for s in shipments if isinstance(shipments, list) else []:
+                        if not isinstance(s, dict):
+                            continue
+                        if str(s.get("status") or "").lower() == "cancelled":
+                            continue
+                        ship_id = s.get("id")
+                        bags = s.get("bags") or []
+                        if bags:
+                            for b in bags:
+                                cid = b.get("carrier_party_id") or s.get("carrier_party_id")
+                                if not cid or cid not in carrier_ids:
+                                    continue
+                                w = float(b.get("weight_kg") or 0)
+                                allocations[cid] = allocations.get(cid, 0.0) + w
+                                linked.setdefault(cid, []).append(
+                                    {
+                                        "bag_no": b.get("bag_no") or b.get("index"),
+                                        "shipment_id": ship_id,
+                                        "weight_kg": w,
+                                        "customer_name": b.get("customer_name")
+                                        or b.get("end_customer_name"),
+                                    }
+                                )
+                        else:
+                            cid = s.get("carrier_party_id")
+                            if cid and cid in carrier_ids:
+                                w = float(s.get("weight_kg") or 0)
+                                allocations[cid] = allocations.get(cid, 0.0) + w
+                                linked.setdefault(cid, []).append(
+                                    {"shipment_id": ship_id, "weight_kg": w}
+                                )
+                    for t in trips_arr:
+                        if not isinstance(t, dict):
+                            continue
+                        cid = t.get("carrier_id") or t.get("carrier_party_id")
+                        if cid and cid in allocations:
+                            t["allocated_kg"] = round(allocations[cid], 2)
+                            t["linked_bags"] = linked.get(cid, [])
+                        else:
+                            t.setdefault("allocated_kg", 0)
+                            t.setdefault("linked_bags", [])
+                    resp_content = json.dumps(trips_arr).encode()
+                    resp_headers.pop("content-length", None)
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logging.exception("[proxy] trips allocated_kg enrichment failed: %s", e)
+
     # Fix 3 (Phase 3) · Merge party_meta overlay (notes, photo_url) into
     # party GET responses so the frontend sees a unified party object.
     if (
@@ -5818,6 +6063,7 @@ async def proxy_to_remote_backend(path: str, request: Request):
                             "notes": x.get("notes"),
                             "photo_url": x.get("photo_url"),
                             "carrier_rates": x.get("carrier_rates"),
+                            "company_name": x.get("company_name"),
                         }
                     for d in data:
                         if isinstance(d, dict):
@@ -5825,6 +6071,7 @@ async def proxy_to_remote_backend(path: str, request: Request):
                             d.setdefault("notes", over.get("notes"))
                             d.setdefault("photo_url", over.get("photo_url"))
                             d.setdefault("carrier_rates", over.get("carrier_rates"))
+                            d.setdefault("company_name", over.get("company_name"))
                     resp_content = json.dumps(data).encode()
                     resp_headers.pop("content-length", None)
             elif isinstance(data, dict) and data.get("id"):
@@ -5833,6 +6080,7 @@ async def proxy_to_remote_backend(path: str, request: Request):
                     data.setdefault("notes", over.get("notes"))
                     data.setdefault("photo_url", over.get("photo_url"))
                     data.setdefault("carrier_rates", over.get("carrier_rates"))
+                    data.setdefault("company_name", over.get("company_name"))
                     resp_content = json.dumps(data).encode()
                     resp_headers.pop("content-length", None)
         except (json.JSONDecodeError, ValueError, TypeError):

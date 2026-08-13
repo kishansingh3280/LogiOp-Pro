@@ -33,6 +33,7 @@ import { GlassCard } from "@/src/lib/ui";
 export type PartyFormValues = {
   id?: string;
   name?: string;
+  company_name?: string;
   role?: string;
   phone?: string;
   address?: string;
@@ -63,6 +64,7 @@ export function PartyForm({
 }) {
   const router = useRouter();
   const [name, setName] = useState(initial?.name || "");
+  const [companyName, setCompanyName] = useState(initial?.company_name || "");
   const [role, setRole] = useState<string>(initial?.role || "customer");
   const [phone, setPhone] = useState(initial?.phone || "");
   const [address, setAddress] = useState(initial?.address || "");
@@ -106,6 +108,10 @@ export function PartyForm({
           if (r?.valid && r.legal_name) {
             setGstStatus("verified");
             setGstLegalName(r.legal_name);
+            // Fix F · GST verified — auto-fill Company Name from
+            // legal_name (only when the operator hasn't already
+            // typed one). Party's colloquial `name` stays free.
+            if (!companyName.trim()) setCompanyName(r.legal_name);
             if (!name.trim()) setName(r.legal_name);
             if (!address.trim() && r.address) setAddress(r.address);
           } else {
@@ -128,6 +134,7 @@ export function PartyForm({
     try {
       const upstreamBody: Record<string, unknown> = {
         name: name.trim(),
+        company_name: companyName.trim() || null,
         role,
         phone: phone.trim() || null,
         address: address.trim() || null,
@@ -146,13 +153,14 @@ export function PartyForm({
         saved = await apiPost<{ id: string }>("/api/parties", upstreamBody);
       }
 
-      // Fix 3d overlay · Store notes + photo_url in local meta table.
+      // Fix 3d overlay · Store notes + photo_url + company_name in local meta table.
       const pid = saved.id;
       try {
         await apiPut(`/api/parties/${pid}/meta`, {
           party_id: pid,
           notes: notes.trim() || null,
           photo_url: initial?.photo_url ?? null,
+          company_name: companyName.trim() || null,
         });
       } catch {
         /* non-blocking */
@@ -200,6 +208,17 @@ export function PartyForm({
             value={name}
             onChangeText={setName}
             placeholder="e.g. Ravi Enterprises"
+            placeholderTextColor={colors.textDim}
+            autoCapitalize="words"
+          />
+
+          {/* Fix F (Phase 7) · Company / Firm ka naam (optional) */}
+          <Text style={styles.label}>Company Name (optional)</Text>
+          <TextInput
+            style={styles.input}
+            value={companyName}
+            onChangeText={setCompanyName}
+            placeholder="Company / Firm ka naam"
             placeholderTextColor={colors.textDim}
             autoCapitalize="words"
           />

@@ -11,7 +11,7 @@
  * Universal Form Rule respected via ModeCompanyBlock at TOP.
  */
 import { Ionicons } from "@expo/vector-icons";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -74,6 +74,12 @@ export default function NewInvoiceScreen() {
   const router = useRouter();
   const { token } = useAuth();
   const { activeCompany, activeMode, setActiveCompany, setActiveMode } = useCompany();
+  // Fix B (Phase 7) · Shipment → Invoice 1-click prefill.
+  // Deep-linked from /shipments/new or /shipment/[id] with a
+  // `from_shipment=<id>` query param → auto-fill party, mode, items
+  // and shipment link so the operator doesn't retype anything.
+  const params = useLocalSearchParams<{ from_shipment?: string }>();
+  const fromShipmentId = typeof params.from_shipment === "string" ? params.from_shipment : "";
 
   const [formMode, setFormMode] = useState<FormMode>(
     activeMode === "formal" ? "formal" : "informal",
@@ -107,6 +113,62 @@ export default function NewInvoiceScreen() {
       .then((rows) => setShipments(Array.isArray(rows) ? rows : []))
       .catch(() => setShipments([]));
   }, [token]);
+
+  // Fix B (Phase 7) · Prefill from `from_shipment=<id>` when present.
+  // Runs whenever the shipments list becomes available so the async
+  // fetch order doesn't matter.
+  useEffect(() => {
+    if (!fromShipmentId || shipments.length === 0) return;
+    const ship = shipments.find((s) => s.id === fromShipmentId);
+    if (!ship) return;
+    setShipmentId(ship.id);
+    const shipAny = ship as unknown as Record<string, unknown>;
+    // Party — parent customer wins; fall back to top-level party_id.
+    const parentId =
+      (typeof shipAny.parent_customer_party_id === "string"
+        ? (shipAny.parent_customer_party_id as string)
+        : "") ||
+      (typeof shipAny.party_id === "string" ? (shipAny.party_id as string) : "");
+    if (parentId) setPartyId(parentId);
+    // Mode — inherit shipment's company_mode.
+    const shipMode = String(shipAny.company_mode || shipAny.mode || "").toLowerCase();
+    if (shipMode === "formal" || shipMode === "informal") setFormMode(shipMode as FormMode);
+    const shipCompany = String(shipAny.company_id || "").toLowerCase();
+    if (shipCompany === "awadh" || shipCompany === "singh_exports") {
+      setFormCompany(shipCompany as FormCompany);
+    }
+    // Line items — flatten every bag's items list. Missing rates
+    // leave the field blank so the user can fill them in.
+    type ShipBagItem = { item_id?: string; item_name?: string; pieces?: number };
+    type ShipBag = { items?: ShipBagItem[]; freight?: number; freight_currency?: Currency };
+    const bags = Array.isArray(shipAny.bags) ? (shipAny.bags as ShipBag[]) : [];
+    const lineItems: LineItem[] = [];
+    bags.forEach((b) => {
+      const bagItems = Array.isArray(b.items) ? b.items : [];
+      bagItems.forEach((it, idx) => {
+        if (!it || (!it.item_name && !it.item_id)) return;
+        lineItems.push({
+          key: `li-prefill-${lineItems.length}-${idx}`,
+          description: it.item_name || "",
+          hsn: "",
+          qty: String(it.pieces || 1),
+          rate: "",
+          currency: (b.freight_currency as Currency) || "INR",
+          tax_percent: "0",
+        });
+      });
+    });
+    if (lineItems.length > 0) setItems(lineItems);
+    // Prefill informational notes so user knows source.
+    setNotes(
+      (prev) =>
+        prev ||
+        `Auto-generated from shipment ${
+          (ship as unknown as { consignment_no?: string; id: string })
+            .consignment_no || ship.id.slice(0, 8)
+        }.`,
+    );
+  }, [fromShipmentId, shipments]);
 
   const selectedParty = useMemo(
     () => parties.find((p) => p.id === partyId) || null,
@@ -386,15 +448,34 @@ export default function NewInvoiceScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.label}>Rate</Text>
-                    <View style={styles.rateBox}>
+                    <View
+                      style={[
+                        styles.rateBox,
+                        // Fix B (Phase 7) · Highlight missing rate when
+                        // prefilled from a shipment — signals to the
+                        // operator that the catalog didn't have a rate.
+                        fromShipmentId && !(Number(it.rate) > 0) && {
+                          borderColor: colors.danger,
+                          borderWidth: 1.5,
+                        },
+                      ]}
+                    >
                       <Text style={styles.ratePrefix}>{ccySym(it.currency)}</Text>
                       <TextInput
                         style={styles.rateInput}
                         value={it.rate}
                         onChangeText={(v) => updateItem(it.key, { rate: v })}
                         keyboardType="decimal-pad"
-                        placeholder="0"
-                        placeholderTextColor={colors.textDim}
+                        placeholder={
+                          fromShipmentId && !(Number(it.rate) > 0)
+                            ? "Rate daalna zaroori hai"
+                            : "0"
+                        }
+                        placeholderTextColor={
+                          fromShipmentId && !(Number(it.rate) > 0)
+                            ? colors.danger
+                            : colors.textDim
+                        }
                       />
                     </View>
                     <View style={styles.pillRow}>

@@ -32,8 +32,17 @@ type Item = {
   unit?: string;
   buying_price?: number;
   selling_price?: number;
+  buy_currency?: "INR" | "THB";
+  sell_currency?: "INR" | "THB";
+  stock_qty?: number;
+  parent_category?: string;
+  sub_category?: string;
+  variant?: string;
   notes?: string | null;
 };
+
+// Fix Phase 8 · Stock-level filter chips
+type StockFilter = "all" | "in_stock" | "low_stock" | "out_of_stock";
 
 export default function ItemsScreen() {
   const { token } = useAuth();
@@ -42,6 +51,7 @@ export default function ItemsScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [stockFilter, setStockFilter] = useState<StockFilter>("all");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,13 +73,27 @@ export default function ItemsScreen() {
   const filtered = useMemo(() => {
     const list = items || [];
     const q = query.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(
-      (i) =>
-        (i.name || "").toLowerCase().includes(q) ||
-        (i.unit || "").toLowerCase().includes(q),
-    );
-  }, [items, query]);
+    let out = list;
+    if (q) {
+      out = out.filter(
+        (i) =>
+          (i.name || "").toLowerCase().includes(q) ||
+          (i.unit || "").toLowerCase().includes(q) ||
+          (i.parent_category || "").toLowerCase().includes(q) ||
+          (i.sub_category || "").toLowerCase().includes(q),
+      );
+    }
+    // Fix Phase 8 · stock-level filter
+    if (stockFilter !== "all") {
+      out = out.filter((i) => {
+        const qty = Number(i.stock_qty ?? 0);
+        if (stockFilter === "out_of_stock") return qty <= 0;
+        if (stockFilter === "low_stock") return qty > 0 && qty <= 5;
+        return qty > 5; // in_stock
+      });
+    }
+    return out;
+  }, [items, query, stockFilter]);
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
@@ -83,6 +107,15 @@ export default function ItemsScreen() {
           <Text style={styles.title}>Catalog</Text>
           <Text style={styles.subtitle}>{items?.length ?? 0} items · Cost, price, margin</Text>
         </View>
+        {/* Phase 8 · Add new item */}
+        <TouchableOpacity
+          style={styles.addBtn}
+          onPress={() => router.push("/items/new" as never)}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="add" size={18} color={colors.bg} />
+          <Text style={styles.addBtnText}>Item Jodo</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.searchWrap}>
@@ -97,6 +130,34 @@ export default function ItemsScreen() {
           autoCorrect={false}
           returnKeyType="search"
         />
+      </View>
+
+      {/* Phase 8 · Stock-level filter chips */}
+      <View style={styles.filterRow}>
+        {(
+          [
+            { key: "all", label: "All" },
+            { key: "in_stock", label: "In Stock" },
+            { key: "low_stock", label: "Low Stock" },
+            { key: "out_of_stock", label: "Out of Stock" },
+          ] as { key: StockFilter; label: string }[]
+        ).map((f) => {
+          const active = stockFilter === f.key;
+          return (
+            <TouchableOpacity
+              key={f.key}
+              activeOpacity={0.8}
+              onPress={() => setStockFilter(f.key)}
+              style={[styles.filterChip, active && styles.filterChipActive]}
+            >
+              <Text
+                style={[styles.filterChipText, active && styles.filterChipTextActive]}
+              >
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {items === null && loading ? (
@@ -145,25 +206,49 @@ function ItemRow({ item }: { item: Item }) {
   const margin = price - cost;
   const marginPct = cost > 0 ? Math.round((margin / cost) * 100) : 0;
   const positive = margin >= 0;
+  const stockQty = Number(item.stock_qty ?? 0);
+  const stockLabel =
+    stockQty <= 0 ? "Out of Stock" : stockQty <= 5 ? "Low Stock" : "In Stock";
+  const stockTint =
+    stockQty <= 0 ? colors.danger : stockQty <= 5 ? colors.warn : colors.brand;
+  const breadcrumb = [item.parent_category, item.sub_category, item.variant]
+    .filter(Boolean)
+    .join(" › ");
   return (
     <View style={styles.row}>
       <View style={styles.rowIcon}>
         <Ionicons name="pricetag" size={16} color={colors.brand} />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.name} numberOfLines={1}>
-          {item.name}
+        <View style={styles.itemHeaderLine}>
+          <Text style={styles.name} numberOfLines={1}>
+            {item.name}
+          </Text>
+          <Pill
+            label={stockLabel}
+            tint={stockTint}
+            soft={colors.brandSoft}
+            size="sm"
+          />
+        </View>
+        {breadcrumb ? (
+          <Text style={styles.breadcrumb} numberOfLines={1}>
+            {breadcrumb}
+          </Text>
+        ) : null}
+        <Text style={styles.rowSub}>
+          Unit: {item.unit || "—"}
+          {stockQty > 0 ? `  ·  Stock: ${stockQty}` : ""}
         </Text>
-        <Text style={styles.rowSub}>Unit: {item.unit || "—"}</Text>
         <View style={styles.priceLine}>
           <Text style={styles.priceLabel}>Cost</Text>
           <Text style={[styles.priceValue, { color: colors.debit }]}>
-            {fmtCurrency(cost, "INR")}
+            {fmtCurrency(cost, item.buy_currency || "INR")}
           </Text>
           <Text style={styles.priceLabel}>→</Text>
           <Text style={styles.priceLabel}>Price</Text>
           <Text style={[styles.priceValue, { color: colors.credit }]}>
-            {fmtCurrency(price, "INR")}
+            {fmtCurrency(price, item.sell_currency || "INR")}
           </Text>
         </View>
       </View>
@@ -201,6 +286,53 @@ const styles = StyleSheet.create({
   },
   title: { color: colors.text, fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
   subtitle: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+  // Phase 8 · Add Item button
+  addBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.brand,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  addBtnText: { color: colors.bg, fontSize: 12, fontWeight: "800" },
+  // Phase 8 · Filter chips row
+  filterRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    flexWrap: "wrap",
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+  },
+  filterChipActive: {
+    backgroundColor: colors.brandSoft,
+    borderColor: colors.brand,
+  },
+  filterChipText: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
+  filterChipTextActive: { color: colors.brand },
+  // Phase 8 · Item card refinements
+  itemHeaderLine: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  },
+  breadcrumb: {
+    color: colors.textDim,
+    fontSize: 10,
+    marginTop: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
   searchWrap: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.sm,

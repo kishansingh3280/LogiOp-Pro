@@ -98,7 +98,8 @@ const NAV_ITEMS: NavItem[] = [
     href: "/ledger",
     icon: "book-outline",
     iconActive: "book",
-    matchPrefixes: ["/ledger"],
+    // Fix G · /party/[id] is ledger-centric — light up Ledger tab.
+    matchPrefixes: ["/ledger", "/party"],
   },
   {
     key: "trips",
@@ -114,7 +115,7 @@ const NAV_ITEMS: NavItem[] = [
     href: "/more",
     icon: "menu-outline",
     iconActive: "menu",
-    matchPrefixes: ["/more", "/reports", "/items", "/admin", "/parties", "/party"],
+    matchPrefixes: ["/more", "/reports", "/items", "/admin", "/parties"],
   },
 ];
 

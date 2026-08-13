@@ -51,7 +51,13 @@ const ITEMS: DockItem[] = [
     title: "Ledger",
     route: "/ledger",
     icons: { active: "book", inactive: "book-outline" },
-    matches: (p) => !!p && (p === "/ledger" || p.startsWith("/ledger")),
+    // Fix G · /party/[id] should light up "Ledger" (party detail
+    // pages are ledger-centric). /parties list stays under More.
+    matches: (p) =>
+      !!p &&
+      (p === "/ledger" ||
+        p.startsWith("/ledger") ||
+        p.startsWith("/party/")),
   },
   {
     key: "invoices",
@@ -71,7 +77,6 @@ const ITEMS: DockItem[] = [
       (p === "/more" ||
         p.startsWith("/more") ||
         p.startsWith("/parties") ||
-        p.startsWith("/party") ||
         p.startsWith("/trips") ||
         p.startsWith("/bullion")),
   },

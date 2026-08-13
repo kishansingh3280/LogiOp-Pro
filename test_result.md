@@ -3879,3 +3879,153 @@ agent_communication:
         (5) invoice/new.tsx Formal save opens the custom Modal
             (visible on web preview) with Hinglish buttons.
 
+
+##====================================================================================================
+## PHASE 7 · FIXES H/G/D/E/F/I/A/B/C + PHASE 8 CATALOG — MEGA BATCH (2026-08-13)
+##====================================================================================================
+
+backend:
+  - task: "Fix H · Ledger latest-first"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Post-response DESC sort by date/created_at on GET /api/ledger/entries. Verified 44 entries returned latest-first."
+
+  - task: "Fix D · Informal mode filter + mode=all"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Rewrote proxy filter: formal=explicit+untagged (legacy); informal=explicit only; all=skip filter. Same rules applied to /api/trips and /api/bullion/trips."
+
+  - task: "Fix E · Trip allocated_kg from remote shipments"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "/api/trips enriched with allocated_kg + linked_bags aggregated from local + remote (proxy) shipments. Bag-carrier match. Verified allocation=98.0 for shared carrier."
+
+  - task: "Fix F · Party company_name meta overlay"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    needs_retesting: true
+    priority: "medium"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "PartyMeta model + party proxy overlay both extended with company_name."
+
+frontend:
+  - task: "Fix G · Ledger dock/sidebar highlight on /party"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/global-bottom-dock.tsx, /app/frontend/src/lib/global-sidebar.tsx"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "/party/[id] now highlights Ledger tab in dock + sidebar; /parties stays under More."
+
+  - task: "Fix F · Party form Company Name field + GST auto-fill"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/components/party-form.tsx"
+    needs_retesting: true
+    priority: "medium"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "New Company Name input; verified GSTIN also auto-fills the field; meta PUT extended with company_name."
+
+  - task: "Fix I · Auto-fetch rates helper"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/party-rates.ts, /app/frontend/app/shipments/new.tsx, /app/frontend/app/trips/new.tsx"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "New shared fetchPartyRates/computeCarrierCharge helpers. Shipment bags now auto-fill freight on customer pick + carrier charge on carrier pick/weight change. Trips form uses same helper."
+
+  - task: "Fix A · Parent customer + per-bag date + collapsible description"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/shipments/new.tsx"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "New Parent Customer picker at shipment level. Per-bag bag_date field (defaults today). Description toggles between preview/edit."
+
+  - task: "Fix B · Shipment → Invoice 1-click prefill"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/shipments/new.tsx, /app/frontend/app/invoice/new.tsx"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Save + Invoice combo button on shipment form. Invoice/new reads ?from_shipment=<id>, prefills party/mode/company/items. Missing rate cells red-highlighted."
+
+  - task: "Fix C · Invoice → Shipment packing UI"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/invoice/[id]/pack.tsx, /app/frontend/app/invoice/[id]/index.tsx, /app/frontend/src/lib/invoice-detail-view.tsx"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "New /invoice/[id]/pack.tsx full-page packing workflow. Progress bar, item→bag chip assignment, add/remove bags, weight per bag, confirm → creates linked shipment. Old [id].tsx moved to [id]/index.tsx to allow nested routing."
+
+  - task: "Phase 8 · Catalog redesign + Add/Edit form"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/items/index.tsx, /app/frontend/app/items/new.tsx"
+    needs_retesting: true
+    priority: "medium"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Catalog now: search + filter chips (All/In Stock/Low/Out) + '+ Item Jodo' button + breadcrumb + stock pill. New /items/new form with parent_category, sub_category, variant, unit pills, buy/sell + currency, auto margin %, stock qty, notes. Mode+Company block at top."
+
+metadata:
+  test_sequence: 89
+  run_ui: true
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      All 10 fixes complete (H, G, D, E, F, I, A, B, C + Phase 8).
+      Zero lint errors. Backend + expo restarted successfully. Live
+      rates scheduler still ticking. Preview home rendered. Request
+      testing_agent to run the full regression suite.

@@ -501,6 +501,21 @@ export function InvoiceDetailView({ id }: { id: string }) {
               {pdfBusy ? "PDF ban raha hai…" : "PDF Banao (1-click)"}
             </Text>
           </TouchableOpacity>
+
+          {/* Fix C (Phase 7) · 1-click Invoice → Shipment Packing */}
+          {invoice.shipment_id ? null : (
+            <TouchableOpacity
+              style={styles.packBtn}
+              onPress={() =>
+                router.push(`/invoice/${invoice.id}/pack` as never)
+              }
+              activeOpacity={0.85}
+            >
+              <Ionicons name="cube" size={16} color={colors.bg} />
+              <Text style={styles.packBtnText}>📦 Shipment Banao</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity style={styles.secondaryBtn} onPress={handleShare} activeOpacity={0.8}>
             <Ionicons name="share-outline" size={16} color={colors.brand} />
             <Text style={styles.secondaryBtnText}>Share text summary</Text>
@@ -625,6 +640,18 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   primaryBtnText: { color: colors.bg, fontSize: 14, fontWeight: "800", letterSpacing: 0.3 },
+  // Fix C (Phase 7) · Invoice → Shipment packing button.
+  packBtn: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.info || colors.brand,
+    borderRadius: radii.pill,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  packBtnText: { color: colors.bg, fontSize: 13, fontWeight: "800", letterSpacing: 0.2 },
   secondaryBtn: {
     marginTop: spacing.sm,
     borderRadius: radii.pill,

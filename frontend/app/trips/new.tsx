@@ -20,6 +20,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { useCompany } from "@/src/lib/company-context";
+import { fetchPartyRates } from "@/src/lib/party-rates";
 import {
   ModeCompanyBlock,
   type FormCompany,
@@ -69,15 +70,13 @@ export default function NewTripScreen() {
       setRatesLoaded(false);
       return;
     }
-    // Pull the carrier's saved rates from the party_meta overlay.
-    apiGet<{ carrier_rates?: {
-      per_kg?: string; per_baht?: string; per_1000_usd?: string;
-    } }>(`/api/parties/${carrierId}/meta`)
-      .then((m) => {
-        const r = m?.carrier_rates || {};
-        if (r.per_kg) setPerKgRate(String(r.per_kg));
-        if (r.per_baht) setPerBahtRate(String(r.per_baht));
-        if (r.per_1000_usd) setPer1000UsdRate(String(r.per_1000_usd));
+    // Fix I (Phase 7) · Use shared fetchPartyRates helper — one
+    // canonical rate contract shared with the shipment form.
+    fetchPartyRates(carrierId)
+      .then((r) => {
+        if (r.per_kg !== undefined) setPerKgRate(String(r.per_kg));
+        if (r.gold_per_baht !== undefined) setPerBahtRate(String(r.gold_per_baht));
+        if (r.currency_per_1000 !== undefined) setPer1000UsdRate(String(r.currency_per_1000));
         setRatesLoaded(true);
       })
       .catch(() => setRatesLoaded(true));
