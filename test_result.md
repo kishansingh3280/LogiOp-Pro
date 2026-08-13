@@ -3555,3 +3555,53 @@ agent_communication:
           Tap New → /invoice/new. Informal keeps no GST fields;
           Formal reveals Company + GSTIN + HSN + Tax %.
 
+
+##====================================================================================================
+## PHASE 7 · BATCH C-1 (partial) — GLOBAL DOCK + TRIPS IN MORE (2026-08-13)
+##====================================================================================================
+
+frontend:
+  - task: "Phase 7 Fix 1 — Global bottom dock persistence"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/global-bottom-dock.tsx (NEW), /app/frontend/app/_layout.tsx, /app/frontend/app/(tabs)/_layout.tsx, /app/frontend/app/(tabs)/more.tsx"
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Extracted mobile bottom bar into a standalone
+          `<GlobalBottomDock>` component and mounted it at the ROOT
+          layout so it persists on every mobile screen — tab pages,
+          stack detail routes (/party/[id], /shipment/[id],
+          /invoice/[id]), and create-forms (/shipments/new,
+          /invoice/new, /trips/new, /ledger/new-entry).
+          Dock order (final, locked): Overview · Shipments · Ledger ·
+          Invoices · More. Trips is intentionally removed from the
+          dock and now surfaces in the More tab as a module row
+          ("diamond" icon, subtitle "Carrier flights & vault",
+          routes to /bullion). Active-state uses expo-router's
+          usePathname() with prefix matching so party/[id],
+          shipment/[id], and the various create forms correctly
+          highlight their parent tab. Auth-guarded (only renders
+          when a token exists) and hidden on tablet (≥900px) where
+          the sidebar takes over. Verified with screenshots on
+          Overview and on /party/{deepak_adavani} — dock visible +
+          correct tab highlighted in both cases.
+          (tabs)/_layout.tsx now sets `tabBar={() => null}` and the
+          legacy FloatingBottomBar + associated styles have been
+          removed to keep the file clean.
+
+metadata:
+  test_sequence: 85
+  run_ui: true
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      Phase 7 Batch C-1 partial — Fix 1 (global dock) done and
+      screenshot-verified. Fix 2 (shipment redesign, bags-only,
+      catalog dropdown) and Fix 3 (trip capacity progress bar +
+      bag→trip pipeline) are next; they need a fresh conversation
+      turn due to context budget. Catalog backend also needs to be
+      built for Fix 2's item dropdown.
+

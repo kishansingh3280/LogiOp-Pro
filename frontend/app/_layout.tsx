@@ -22,6 +22,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AmbientBackground } from "@/src/lib/ambient-background";
 import { apiPost } from "@/src/lib/api";
+import { GlobalBottomDock } from "@/src/lib/global-bottom-dock";
 import { AuthProvider, useAuth } from "@/src/lib/auth-context";
 import { CompanyProvider } from "@/src/lib/company-context";
 import { ErrorBoundary } from "@/src/lib/error-boundary";
@@ -90,6 +91,14 @@ export default function RootLayout() {
                 animation: "slide_from_right",
               }}
             />
+
+            {/* Fix 1 (Phase 7 · Batch C-1) · Global persistent
+                bottom dock. Renders at ROOT so it's visible on every
+                mobile screen — tab pages AND stack detail pages
+                (party/[id], shipment/[id], invoice/new, trips/new,
+                bullion, etc.). Auth-guarded and tablet-hidden
+                inside the component itself. */}
+            {!isTablet ? <GlobalBottomDock /> : null}
 
             {/* Floating OPSI orb — sits over every screen. */}
             <OpsiOrb />

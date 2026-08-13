@@ -43,6 +43,14 @@ const MENU: MenuItem[] = [
     route: "/parties",
   },
   {
+    // Fix 1 (Phase 7 · Batch C-1) · Trips module now surfaced in More.
+    key: "trips",
+    title: "Trips",
+    subtitle: "Carrier flights & vault",
+    icon: "diamond",
+    route: "/bullion",
+  },
+  {
     key: "bags",
     title: "Bags",
     subtitle: "Every bag across every shipment, per-carrier",
