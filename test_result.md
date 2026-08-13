@@ -3768,3 +3768,114 @@ agent_communication:
       "PDF Banao (1-click)" button that generates a PDF on
       press. Fix 6 (Live Rates Scrapers) will follow.
 
+##====================================================================================================
+## PHASE 7 · BATCH C-2 (Fix 5.b + Fix 6) — MODAL SWAP + LIVE RATES SCRAPERS (2026-08-13)
+##====================================================================================================
+
+backend:
+  - task: "Phase 7 Fix 6 — Live Rates scrapers + APScheduler + endpoint"
+    implemented: true
+    working: true
+    file: "/app/backend/live_rates.py, /app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          NEW module /app/backend/live_rates.py implements four
+          async scrapers using httpx + BeautifulSoup4:
+            (1) sln_bullion — India gold (24K/22K/18K per gram +
+                silver per kg) via goodreturns.in (SLN Bullion
+                homepage is login-gated so GoodReturns is used as
+                the canonical public India gold source).
+            (2) intergold_th — Thai gold bar+ornament buy/sell in
+                THB via api.chnwt.dev JSON mirror of
+                goldtraders.or.th (Thai Gold Traders Assn).
+            (3) superrich_th — INR/USD/EUR/SGD/AED/GBP → THB from
+                grandsuperrich.com (Super Rich Thailand's main
+                site is an Angular SPA behind an auth API — Grand
+                Super Rich is a sister brand with SSR HTML).
+            (4) xe — mid-market USD_INR, INR_THB, USD_THB via
+                xe.com/currencyconverter.
+          APScheduler AsyncIOScheduler polls all four in parallel
+          every 60 s and upserts results into MongoDB collection
+          `live_rates`. Started from an @app.on_event("startup")
+          hook; gracefully shut down on app shutdown.
+          NEW endpoint GET /api/live-rates returns
+          {sources: {sln_bullion|intergold_th|superrich_th|xe:
+          {rates, fetched_at, ok, error, is_stale}}, fetched_at}.
+          is_stale flips true if last successful fetch is older
+          than 300 s. Verified in preview: all 4 sources OK with
+          real live values (24K ₹15,360/g, gold bar ฿68,550,
+          INR→THB ฿0.325 buy, 1 USD = ₹95.42).
+
+frontend:
+  - task: "Phase 7 Fix 5.b — Alert.alert → cross-platform <Modal>"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/invoice/new.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Replaced Alert.alert("Formal Entry Confirm karein?"…) with
+          a proper <Modal transparent animationType="fade"> that
+          renders on both native AND react-native-web (Alert.alert
+          with buttons is a no-op on web). Modal has: shield-check
+          icon in a brandSoft circle, Hinglish title
+          "Formal Entry Confirm karein?", body text, and two action
+          buttons — "Wapas Jao" (cancel, secondary) and
+          "Haan, Save Karo" (primary → doSave()). Tapping the
+          backdrop dismisses. Zero lint errors.
+
+  - task: "Phase 7 Fix 6 — bullion.tsx live-rates polling (60 s)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/bullion.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Added LiveRatesResponse type + polling useEffect that
+          calls /api/live-rates immediately on mount and then
+          every 60 s (setInterval + cleanup). New LiveRateCard
+          component renders 4 cards under a new "LIVE MARKET
+          RATES" section: India Gold Sell, Thai Gold Buy, Super
+          Rich Thailand, XE.com Mid-Market. Each card shows a
+          time-ago freshness pill (e.g. "17s ago") or a STALE
+          badge when is_stale=true. Screenshot-verified: cards
+          rendered with real values (24K ₹15,360/g, Bar ฿68,550,
+          etc.). Zero lint errors.
+
+metadata:
+  test_sequence: 88
+  run_ui: true
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      Phase 7 · Fix 5.b (Modal swap) + Fix 6 (Live Rates
+      Scrapers) complete. Backend: /app/backend/live_rates.py
+      module + APScheduler 60 s job + /api/live-rates endpoint,
+      all 4 scrapers verified OK in preview with real values.
+      Frontend: bullion.tsx polls /api/live-rates every 60 s and
+      renders 4 LiveRateCards; invoice/new.tsx uses a custom
+      <Modal> instead of Alert.alert for the Formal-save confirm.
+      Zero lint errors. Requesting testing_agent to verify:
+        (1) GET /api/live-rates returns 4 sources each with
+            {rates, fetched_at, ok, error, is_stale};
+        (2) is_stale=false immediately after startup;
+        (3) scheduler tick observable in logs every 60 s;
+        (4) bullion.tsx renders "LIVE MARKET RATES" section
+            with 4 cards and the LIVE · 60s pill;
+        (5) invoice/new.tsx Formal save opens the custom Modal
+            (visible on web preview) with Hinglish buttons.
+

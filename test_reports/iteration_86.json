@@ -1,0 +1,48 @@
+{
+  "summary": "Phase 7 · Batch C-2 · Fix 5.b + Fix 6 — FINAL verification pass. All 8 acceptance items PASS on both backend and frontend. BACKEND (6/6 pytest green in 66s) — GET /api/live-rates returns 200 with shape {sources:{sln_bullion,intergold_th,superrich_th,xe}, fetched_at}; every source doc has required keys (rates dict, fetched_at iso, ok bool, error, is_stale bool); at post-startup+wait ALL 4 SOURCES currently return ok:true and is_stale:false (exceeds '>=2 fresh' requirement); scheduler proven ticking — two calls 65s apart showed all four fetched_at timestamps advanced (each source ran a fresh scrape in the window); no-data-yet placeholder path is in code (live_rates.py:357-368) and would produce {rates:{},ok:false,error:'no_data_yet',is_stale:true}; endpoint never 500s across 5 back-to-back hits. FRONTEND (mobile 390x844, kishan admin) — /bullion screen renders section header 'LIVE MARKET RATES' + green LIVE · 60s pill (green dot + text) and, below the existing 'LIVE RATES' card, 4 LiveRateCards: India Gold Sell (SLN Bullion / GoodReturns; 24K ₹15,360/g, 22K ₹14,080/g, Silver ₹2,55,000/kg), Thai Gold Buy (InterGold / Gold Traders Assn; Bar Buy ฿68,550 / Sell ฿68,750 / Ornament Sell ฿69,550), Super Rich Thailand (grandsuperrich.com; INR→THB ฿0.3250 / USD→THB ฿33.07 / SGD→THB ฿29.35), XE.com Mid-Market (1 USD ₹95.42 / 1 INR ฿0.3478) — each with a GREEN '36s ago' freshness pill (is_stale=false). Fix 5.b Formal-save Modal fully working on WEB PREVIEW: /invoice/new default mode Formal → title 'New GST Invoice', GSTIN pill '09AAAAA0000A1Z5' visible, filled description + rate → tapping 'Save GST Invoice' opens custom cross-platform <Modal> with shield-checkmark icon, title 'Formal Entry Confirm karein?', body 'Yeh ek formal GST entry hai jo government records mein jaayegi. / Kya aap confirm karte hain?', two buttons ('Wapas Jao' [cancel] + 'Haan, Save Karo' [primary]); 'Wapas Jao' dismisses without POST; 'Haan, Save Karo' POSTs to /api/invoices → creates invoice 2529c89c-9173-43cb-be4a-2537e3c18c81 → navigates to invoice detail with PDF Banao (1-click) button. Informal mode: toggling to Informal renames title to 'New Cash Receipt' and button to 'Save Cash Receipt'; tapping Save Cash Receipt POSTs immediately (NO modal shown) → invoice 78664dee created. Regression — Overview, Shipments, Invoices, Ledger all load, global bottom dock (Overview/Shipments/Ledger/Invoices/More) present on every screen; Ledger hero cards render (INSE LENA HAI ₹85,906 / INHE DENA HAI ₹75,428.78 / THB rows). Deprecated packages: NONE. React Native red screens: NONE. Only console warnings observed: 'shadow* deprecated' + 'useNativeDriver missing (web)' — both are benign RN-web platform noise, not defects.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "GlassCard / general (shadow*)",
+        "issue": "react-native-web console warning: 'shadow*' style props are deprecated. Use 'boxShadow'. Cosmetic-only for web preview; native builds unaffected. Reference: multiple screens (bullion.tsx and others use shadow-based GlassCard styles)."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase7_batchC2_live_rates.py",
+    "/app/test_reports/pytest/iter86_live_rates.xml"
+  ],
+  "action_items": [
+    "NO-OP for main agent — Phase 7 Batch C-2 (Fix 5.b + Fix 6) is functionally complete and verified end-to-end on both web preview and backend. Ship it.",
+    "OPTIONAL (low priority) — Sweep for `shadow*` StyleSheet props across bullion.tsx / GlassCard and swap to `boxShadow` per rn-web deprecation notice; non-blocking cosmetic cleanup.",
+    "OPTIONAL — Add testID props to LiveRateCard, formal-save Modal buttons ('Wapas Jao' / 'Haan, Save Karo'), and MODE / COMPANY toggle chips in invoice/new.tsx so future automated tests can target them without relying on i18n-brittle text selectors."
+  ],
+  "critical_code_review_comments": [
+    "live_rates.py — Clean module design: 4 independent async scrapers behind a small router (_SCRAPERS map), APScheduler AsyncIOScheduler with max_instances=1 + coalesce=True + misfire_grace_time=45s prevents job pileups, next_run_time=+3s ensures first fetch fires shortly after startup. _run_one() catches all exceptions and keeps prior rates payload while flagging ok=false — good resilience. build_response() always returns all 4 SOURCES via setdefault placeholder for the no_data_yet case.",
+    "live_rates.py:88-123 (scrape_sln_bullion) — uses GoodReturns as canonical source because the actual SLN Bullion homepage is auth-gated; the comment explicitly documents this substitution. Rates parsed via regex per karat + auto-computed per-10g. Silver extracted separately. If any regex misses (upstream markup change), function returns None and the module gracefully retains the last-good doc.",
+    "live_rates.py:127-180 (scrape_intergold_th) — Primary JSON mirror (chnwt.dev) with HTML fallback to goldtraders.or.th. Good defensive coding; both paths return same schema. Only concern: chnwt.dev is a community mirror — if it disappears the fallback HTML regex will kick in but might miss Thai character prefix.",
+    "live_rates.py:388-397 — Scheduler args=[db] captures the async motor client at startup; no per-request DB churn. Verified live: all 4 fetched_at timestamps advanced within a 65s window during the pytest run.",
+    "invoice/new.tsx:168-189 + 620-667 — Alert.alert with buttons replaced by custom <Modal> as instructed. Modal uses transparent+fade animation, Pressable backdrop for tap-to-dismiss, inner Pressable with stopPropagation to prevent bubbling. Both button paths (Wapas Jao → setShowFormalConfirm(false), Haan Save Karo → setShowFormalConfirm(false); doSave()) verified end-to-end on web preview. Formal-only gating (formMode === 'formal') preserves Informal fast-save path.",
+    "bullion.tsx:388-540 — LiveRatesResponse type + 60s polling via useEffect + setInterval + apiGet('/api/live-rates'); LiveRateCard component memoises timeAgo string on fetchedAt change. Freshness pill correctly toggles between green (Ns ago / Nm ago) when !is_stale and orange STALE when is_stale — verified live.",
+    "server.py:5599-5614 — _startup_live_rates_scheduler wraps start_scheduler(db) in try/except to prevent boot failures if APScheduler ever misbehaves. Shutdown handler cleanly calls stop_scheduler()."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase7_batchC2_live_rates.py (NEW — 6 pytest tests: endpoint shape, all-4-sources present, per-source key contract, >=2 fresh+ok assertion, 65s timestamp-advance proof that APScheduler is ticking, 5x no-500 loop)"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 pytest — endpoint shape + all sources contract + >=2 fresh/ok + scheduler 60s tick verified + no-500 loop)",
+    "frontend": "100% — Fix 6 bullion Live Market Rates section + LIVE · 60s pill + 4 LiveRateCards + green freshness pills verified visually; Fix 5.b custom cross-platform <Modal> for Formal save confirms with Wapas Jao dismissal and Haan Save Karo → POST /api/invoices → invoice-detail nav; Informal fast-save (no modal) confirmed; regression tabs all pass"
+  },
+  "seed_data_creation": "Two test invoices created via authorized POST /api/invoices during frontend verification: 2529c89c-9173-43cb-be4a-2537e3c18c81 (Formal, party Abhishek Singh, ₹1,000, description 'Test formal invoice line') and 78664dee-9c29-47ea-953e-cd13d93e3c17 (Informal / cash receipt, same party, ₹500, description 'Informal cash line'). Both are in DRAFT status — main agent can delete via DELETE /api/invoices/{id} if cleanup needed, but they double as regression fixtures for future PDF/detail tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 7 Batch C-2 is fully signed off. The web-preview no-op Alert.alert limitation from iteration_85 is RESOLVED — invoice/new.tsx now uses a proper cross-platform <Modal> (see /app/frontend/app/invoice/new.tsx:624). Confirm-flow selectors that work on web: page.get_by_text('Save GST Invoice', exact=True), then page.get_by_text('Haan, Save Karo', exact=True) or page.get_by_text('Wapas Jao', exact=True). Live-rates endpoint: shape is {sources:{sln_bullion,intergold_th,superrich_th,xe}, fetched_at}; each source has {rates,fetched_at,ok,error,is_stale}. Scheduler ticks every 60s (APScheduler AsyncIOScheduler, id='live_rates_poll'). If you need to force a fresh scrape for a test, restart backend (sudo supervisorctl restart backend) — the first job fires 3s after startup. Auth token JSON key remains `access_token` on /api/auth/login.",
+  "rca_of_issue": "N/A — no bugs found in Phase 7 Batch C-2 · Fix 5.b + Fix 6. All acceptance criteria met; only note is the benign react-native-web `shadow*` deprecation warning, which does not affect functionality on any platform."
+}

@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -93,6 +94,9 @@ export default function NewInvoiceScreen() {
   const [items, setItems] = useState<LineItem[]>([newLine()]);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  // Fix 5.b (Phase 7 · Batch C-2) — cross-platform Formal-save confirm
+  // (Alert.alert with buttons is a no-op on react-native-web).
+  const [showFormalConfirm, setShowFormalConfirm] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -175,16 +179,10 @@ export default function NewInvoiceScreen() {
     // Fix 5 (Phase 7 · Batch C-2) · Formal-save confirmation popup.
     // Government-facing GST invoices go through this extra confirm
     // step so nothing is committed by accident. Informal saves skip
-    // the popup entirely.
+    // the popup entirely. Uses a custom cross-platform <Modal>
+    // (Alert.alert with buttons does NOT render on react-native-web).
     if (formMode === "formal") {
-      Alert.alert(
-        "Formal Entry Confirm karein?",
-        "Yeh ek formal GST entry hai jo government records mein jaayegi.\nKya aap confirm karte hain?",
-        [
-          { text: "Wapas Jao", style: "cancel" },
-          { text: "Haan, Save Karo", onPress: () => doSave() },
-        ],
-      );
+      setShowFormalConfirm(true);
       return;
     }
     await doSave();
@@ -619,6 +617,54 @@ export default function NewInvoiceScreen() {
           </Pressable>
         </Pressable>
       ) : null}
+
+      {/* Fix 5 (Phase 7 · Batch C-2) — Formal-save confirm Modal
+          Uses <Modal> so it renders on both native and react-native-web
+          (Alert.alert with buttons is a no-op on web). */}
+      <Modal
+        visible={showFormalConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowFormalConfirm(false)}
+      >
+        <Pressable
+          style={styles.confirmBackdrop}
+          onPress={() => setShowFormalConfirm(false)}
+        >
+          <Pressable
+            style={styles.confirmCard}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.confirmIconWrap}>
+              <Ionicons name="shield-checkmark" size={28} color={colors.brand} />
+            </View>
+            <Text style={styles.confirmTitle}>Formal Entry Confirm karein?</Text>
+            <Text style={styles.confirmBody}>
+              Yeh ek formal GST entry hai jo government records mein jaayegi.
+              {"\n"}Kya aap confirm karte hain?
+            </Text>
+            <View style={styles.confirmActions}>
+              <TouchableOpacity
+                style={[styles.confirmBtn, styles.confirmBtnCancel]}
+                onPress={() => setShowFormalConfirm(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.confirmBtnCancelText}>Wapas Jao</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.confirmBtn, styles.confirmBtnPrimary]}
+                onPress={() => {
+                  setShowFormalConfirm(false);
+                  doSave();
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.confirmBtnPrimaryText}>Haan, Save Karo</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -863,4 +909,78 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   pickerDoneText: { color: colors.bgSolid, fontSize: 13, fontWeight: "800" },
+
+  // Fix 5.b — Formal confirm Modal (cross-platform)
+  confirmBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: spacing.lg,
+  },
+  confirmCard: {
+    width: "100%",
+    maxWidth: 380,
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: spacing.lg,
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  confirmIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.brandSoft,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  confirmTitle: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  confirmBody: {
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: "center",
+    marginBottom: spacing.md,
+  },
+  confirmActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    width: "100%",
+  },
+  confirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmBtnCancel: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  confirmBtnCancelText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  confirmBtnPrimary: {
+    backgroundColor: colors.brand,
+  },
+  confirmBtnPrimaryText: {
+    color: colors.bgSolid,
+    fontSize: 13,
+    fontWeight: "800",
+  },
 });

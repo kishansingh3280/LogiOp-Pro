@@ -32,6 +32,11 @@ from auth import (  # noqa: E402
 )
 from lalamove import router as lalamove_router  # noqa: E402
 from routers.companies import router as companies_router  # noqa: E402
+from live_rates import (  # noqa: E402
+    build_response as live_rates_build_response,
+    start_scheduler as live_rates_start_scheduler,
+    stop_scheduler as live_rates_stop_scheduler,
+)
 from bson import ObjectId
 from jwt.exceptions import InvalidTokenError
 
@@ -1010,6 +1015,17 @@ async def bullion_get_rates():
         await db.bullion_rates.insert_one(default.copy())
         return _clean_mongo_id(default)
     return _clean_mongo_id(doc)
+
+
+# ── Fix 6 (Phase 7 · Batch C-2) · Live Rates aggregate endpoint ──
+# Populated every 60 seconds by the APScheduler job started in the
+# app's startup hook (see live_rates.start_scheduler). Each source
+# carries an `is_stale` boolean flag — true when the last successful
+# fetch is older than 5 minutes. Frontend polls this URL every 60 s
+# from /bullion.
+@api_router.get("/live-rates")
+async def live_rates_get():
+    return await live_rates_build_response(db)
 
 
 @api_router.put("/bullion/rates")
@@ -5574,6 +5590,19 @@ async def _startup_ensure_indexes():
         logging.exception("[indexes] failed to ensure indexes: %s", e)
 
 
+# Fix 6 (Phase 7 · Batch C-2) · Live Rates scheduler bootstrap.
+# APScheduler AsyncIOScheduler polls SLN Bullion, InterGold Thailand,
+# Super Rich Thailand and XE.com every 60 seconds and upserts the
+# results into db.live_rates. Must be started from an async startup
+# event so the running asyncio loop is available.
+@app.on_event("startup")
+async def _startup_live_rates_scheduler():
+    try:
+        live_rates_start_scheduler(db)
+    except Exception as e:
+        logging.exception("[live_rates] failed to start scheduler: %s", e)
+
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -5581,6 +5610,10 @@ async def shutdown_db_client():
     global _proxy_client
     if _proxy_client is not None:
         await _proxy_client.aclose()
+    try:
+        live_rates_stop_scheduler()
+    except Exception:
+        pass
 
 
 @app.api_route(

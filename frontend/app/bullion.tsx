@@ -12,7 +12,7 @@
  */
 import { Ionicons } from "@expo/vector-icons";
 import { Stack, useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -76,6 +76,24 @@ type BullionRates = {
   updated_at?: string;
 };
 
+// Fix 6 (Phase 7 · Batch C-2) · Live scraped rates (polled every 60 s).
+type LiveRateSource = {
+  rates: Record<string, number | string>;
+  fetched_at: string | null;
+  ok: boolean;
+  error: string | null;
+  is_stale: boolean;
+};
+type LiveRatesResponse = {
+  sources: {
+    sln_bullion?: LiveRateSource;
+    intergold_th?: LiveRateSource;
+    superrich_th?: LiveRateSource;
+    xe?: LiveRateSource;
+  };
+  fetched_at: string;
+};
+
 // Fix 2 · vault summary shape returned by GET /api/bullion/vault
 type VaultSummary = {
   total_gold_baht: number;
@@ -119,6 +137,8 @@ export default function BullionScreen() {
   const [txns, setTxns] = useState<BullionTxn[] | null>(null);
   const [rates, setRates] = useState<BullionRates | null>(null);
   const [vaultLive, setVaultLive] = useState<VaultSummary | null>(null);
+  // Fix 6 · Live scraped rates (polled every 60 s)
+  const [liveRates, setLiveRates] = useState<LiveRatesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Fix 5 · Add Trip moved to full-page route /trips/new — modal state removed.
@@ -166,6 +186,30 @@ export default function BullionScreen() {
       if (token) load();
     }, [token, load]),
   );
+
+  // Fix 6 (Phase 7 · Batch C-2) · Live rates polling.
+  // Backend scheduler updates /api/live-rates every 60 s; we poll on
+  // the same cadence so a mounted screen sees fresh gold + currency
+  // numbers without a manual refresh. Also fires an immediate fetch
+  // on focus so opening the screen never shows stale data.
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    const fetchLive = async () => {
+      try {
+        const data = await apiGet<LiveRatesResponse>("/api/live-rates");
+        if (!cancelled) setLiveRates(data);
+      } catch {
+        /* silent — endpoint is best-effort */
+      }
+    };
+    fetchLive();
+    const iv = setInterval(fetchLive, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [token]);
 
   // ── Vault snapshot — total gold in vault (open txns) and net currency
   const vault = useMemo(() => {
@@ -341,6 +385,155 @@ export default function BullionScreen() {
           </>
         ) : null}
 
+        {/* Fix 6 (Phase 7 · Batch C-2) · Live scraped rates (60 s polling) */}
+        {liveRates ? (
+          <>
+            <View style={styles.liveRatesHeader}>
+              <Text style={styles.section}>Live market rates</Text>
+              <View style={styles.livePill}>
+                <View style={styles.liveDot} />
+                <Text style={styles.livePillText}>LIVE · 60s</Text>
+              </View>
+            </View>
+
+            {/* India gold — SLN Bullion / GoodReturns */}
+            {liveRates.sources.sln_bullion ? (
+              <LiveRateCard
+                icon="diamond"
+                title="India Gold Sell"
+                source="SLN Bullion / GoodReturns"
+                isStale={liveRates.sources.sln_bullion.is_stale}
+                fetchedAt={liveRates.sources.sln_bullion.fetched_at}
+                rows={[
+                  {
+                    label: "24K Gold",
+                    value:
+                      Number(liveRates.sources.sln_bullion.rates.gold_24k_1g_inr || 0) > 0
+                        ? `₹${Number(liveRates.sources.sln_bullion.rates.gold_24k_1g_inr).toLocaleString("en-IN")} /g`
+                        : "—",
+                  },
+                  {
+                    label: "22K Gold",
+                    value:
+                      Number(liveRates.sources.sln_bullion.rates.gold_22k_1g_inr || 0) > 0
+                        ? `₹${Number(liveRates.sources.sln_bullion.rates.gold_22k_1g_inr).toLocaleString("en-IN")} /g`
+                        : "—",
+                  },
+                  {
+                    label: "Silver",
+                    value:
+                      Number(liveRates.sources.sln_bullion.rates.silver_1kg_inr || 0) > 0
+                        ? `₹${Number(liveRates.sources.sln_bullion.rates.silver_1kg_inr).toLocaleString("en-IN")} /kg`
+                        : "—",
+                  },
+                ]}
+              />
+            ) : null}
+
+            {/* Thai gold — InterGold / Thai Gold Traders Assn */}
+            {liveRates.sources.intergold_th ? (
+              <LiveRateCard
+                icon="diamond-outline"
+                title="Thai Gold Buy"
+                source="InterGold / Gold Traders Assn"
+                isStale={liveRates.sources.intergold_th.is_stale}
+                fetchedAt={liveRates.sources.intergold_th.fetched_at}
+                rows={[
+                  {
+                    label: "Bar · Buy",
+                    value:
+                      Number(liveRates.sources.intergold_th.rates.gold_bar_buy_thb || 0) > 0
+                        ? `฿${Number(liveRates.sources.intergold_th.rates.gold_bar_buy_thb).toLocaleString("en-US")}`
+                        : "—",
+                  },
+                  {
+                    label: "Bar · Sell",
+                    value:
+                      Number(liveRates.sources.intergold_th.rates.gold_bar_sell_thb || 0) > 0
+                        ? `฿${Number(liveRates.sources.intergold_th.rates.gold_bar_sell_thb).toLocaleString("en-US")}`
+                        : "—",
+                  },
+                  {
+                    label: "Ornament · Sell",
+                    value:
+                      Number(liveRates.sources.intergold_th.rates.gold_ornament_sell_thb || 0) > 0
+                        ? `฿${Number(liveRates.sources.intergold_th.rates.gold_ornament_sell_thb).toLocaleString("en-US")}`
+                        : "—",
+                  },
+                ]}
+              />
+            ) : null}
+
+            {/* Super Rich Thailand currency */}
+            {liveRates.sources.superrich_th ? (
+              <LiveRateCard
+                icon="cash"
+                title="Super Rich Thailand"
+                source="grandsuperrich.com"
+                isStale={liveRates.sources.superrich_th.is_stale}
+                fetchedAt={liveRates.sources.superrich_th.fetched_at}
+                rows={[
+                  {
+                    label: "INR → THB (buy)",
+                    value:
+                      Number(liveRates.sources.superrich_th.rates.inr_thb_buy || 0) > 0
+                        ? `฿${Number(liveRates.sources.superrich_th.rates.inr_thb_buy).toFixed(4)}`
+                        : "—",
+                  },
+                  {
+                    label: "USD → THB",
+                    value:
+                      Number(liveRates.sources.superrich_th.rates.usd_thb_buy || 0) > 0
+                        ? `฿${Number(liveRates.sources.superrich_th.rates.usd_thb_buy).toFixed(2)}`
+                        : "—",
+                  },
+                  {
+                    label: "SGD → THB",
+                    value:
+                      Number(liveRates.sources.superrich_th.rates.sgd_thb_buy || 0) > 0
+                        ? `฿${Number(liveRates.sources.superrich_th.rates.sgd_thb_buy).toFixed(2)}`
+                        : "—",
+                  },
+                ]}
+              />
+            ) : null}
+
+            {/* XE.com mid-market */}
+            {liveRates.sources.xe ? (
+              <LiveRateCard
+                icon="globe-outline"
+                title="XE.com Mid-Market"
+                source="xe.com"
+                isStale={liveRates.sources.xe.is_stale}
+                fetchedAt={liveRates.sources.xe.fetched_at}
+                rows={[
+                  {
+                    label: "1 USD",
+                    value:
+                      Number(liveRates.sources.xe.rates.usd_inr || 0) > 0
+                        ? `₹${Number(liveRates.sources.xe.rates.usd_inr).toFixed(2)}`
+                        : "—",
+                  },
+                  {
+                    label: "1 INR",
+                    value:
+                      Number(liveRates.sources.xe.rates.inr_thb || 0) > 0
+                        ? `฿${Number(liveRates.sources.xe.rates.inr_thb).toFixed(4)}`
+                        : "—",
+                  },
+                  {
+                    label: "1 USD → THB",
+                    value:
+                      Number(liveRates.sources.xe.rates.usd_thb || 0) > 0
+                        ? `฿${Number(liveRates.sources.xe.rates.usd_thb).toFixed(2)}`
+                        : "—",
+                  },
+                ]}
+              />
+            ) : null}
+          </>
+        ) : null}
+
         {/* Trips list */}
         <View style={styles.tripsHeader}>
           <View style={{ flex: 1 }}>
@@ -404,6 +597,68 @@ function RateRow({
       <Text style={styles.rateLabel}>{label}</Text>
       <Text style={styles.rateValue}>{value}</Text>
     </View>
+  );
+}
+
+// Fix 6 (Phase 7 · Batch C-2) · Live scraped-rate card
+function LiveRateCard({
+  icon,
+  title,
+  source,
+  isStale,
+  fetchedAt,
+  rows,
+}: {
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  title: string;
+  source: string;
+  isStale: boolean;
+  fetchedAt: string | null;
+  rows: { label: string; value: string }[];
+}) {
+  const timeAgo = React.useMemo(() => {
+    if (!fetchedAt) return "never";
+    try {
+      const diff = (Date.now() - new Date(fetchedAt).getTime()) / 1000;
+      if (diff < 60) return `${Math.max(1, Math.round(diff))}s ago`;
+      if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+      return `${Math.round(diff / 3600)}h ago`;
+    } catch {
+      return "—";
+    }
+  }, [fetchedAt]);
+
+  return (
+    <GlassCard style={styles.liveCard}>
+      <View style={styles.liveCardHeader}>
+        <View style={[styles.rateIcon, { backgroundColor: colors.brandSoft, borderColor: colors.brand }]}>
+          <Ionicons name={icon} size={14} color={colors.brand} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.liveCardTitle}>{title}</Text>
+          <Text style={styles.liveCardSource}>{source}</Text>
+        </View>
+        {isStale ? (
+          <View style={[styles.liveStatePill, { backgroundColor: colors.warnSoft, borderColor: colors.warn }]}>
+            <Ionicons name="time-outline" size={11} color={colors.warn} />
+            <Text style={[styles.liveStateText, { color: colors.warn }]}>STALE</Text>
+          </View>
+        ) : (
+          <View style={[styles.liveStatePill, { backgroundColor: colors.brandSoft, borderColor: colors.brand }]}>
+            <View style={styles.liveDot} />
+            <Text style={[styles.liveStateText, { color: colors.brand }]}>{timeAgo}</Text>
+          </View>
+        )}
+      </View>
+      <View style={styles.liveRowsWrap}>
+        {rows.map((r, idx) => (
+          <View key={idx} style={styles.liveDataRow}>
+            <Text style={styles.liveDataLabel}>{r.label}</Text>
+            <Text style={styles.liveDataValue}>{r.value}</Text>
+          </View>
+        ))}
+      </View>
+    </GlassCard>
   );
 }
 
@@ -722,6 +977,92 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     marginTop: 4,
     textAlign: "right",
+  },
+  // ─ Fix 6 · Live scraped rates
+  liveRatesHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  livePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: colors.brandSoft,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+  },
+  livePillText: {
+    color: colors.brand,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.brand,
+  },
+  liveCard: {
+    marginBottom: spacing.sm,
+  },
+  liveCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: spacing.sm,
+  },
+  liveCardTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  liveCardSource: {
+    color: colors.textDim,
+    fontSize: 10,
+    marginTop: 1,
+  },
+  liveStatePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  liveStateText: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  liveRowsWrap: {
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+    paddingTop: spacing.sm,
+    gap: 6,
+  },
+  liveDataRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  liveDataLabel: {
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  liveDataValue: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.2,
   },
   // ─ Trips
   tripsHeader: {
