@@ -3250,3 +3250,308 @@ frontend:
                to the new detail page which correctly rendered the
                Fix 10 avatar rails.
 
+
+##====================================================================================================
+## PHASE 7 · BATCH A — CORE PLUMBING: ALERTS · DOCK · PERF · MODE-FIRST (2026-08-13)
+##====================================================================================================
+
+frontend:
+  - task: "Phase 7 Fix 1 — Alerts panel right-to-left animation (APK safe)"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/lib/dashboard-widgets.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Root cause of the APK bottom-to-top slide: React Native
+          Modal on Android forces `animationType="slide"` to slide
+          vertically. Refactored NotificationsButton to keep the Modal
+          (for portal/z-index behavior + statusBarTranslucent) but
+          set `animationType="none"` and drive the enter/exit with
+          our own Animated.Value for translateX. Panel width =
+          max(280, 67% of screen); starts at translateX = panelWidth
+          (fully off-screen right), animates to 0 on open (260ms,
+          Easing.out(cubic)) with a parallel backdrop fade. Close
+          reverses the animation before unmounting the Modal so the
+          swipe-off is visible. Verified in preview; APK behavior
+          expected to match now that Modal's own slide is disabled.
+
+  - task: "Phase 7 Fix 2 — Mobile dock Ledger tab"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/_layout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Replaced the previous "New Entry" quick-add slot with a
+          proper "Ledger" navigation tab (book / book-outline icon,
+          routes to /ledger). Active-state now uses expo-router
+          usePathname() so the tab highlights correctly whenever the
+          user is anywhere under /ledger. Dock order verified:
+          Overview · Shipments · Ledger · Invoices · More.
+
+  - task: "Phase 7 Fix 3 — API GET cache (SWR) + AbortController"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/lib/api.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Added a per-URL GET response cache with a 60s TTL and
+          SWR-style behavior: cache-hit within TTL returns the
+          previous value INSTANTLY and kicks off a silent background
+          refresh so the next visit already has fresh data. All
+          mutating verbs (POST/PUT/PATCH/DELETE) invalidate cached
+          GETs that share the same resource prefix so writes never
+          surface stale data on the next read. AbortController with
+          a 30s timeout was already in place and remains untouched.
+
+  - task: "Phase 7 Fix 5 — Universal Mode-First rule"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/mode-company-block.tsx, /app/frontend/app/shipments/new.tsx, /app/frontend/app/ledger/new-entry.tsx, /app/frontend/app/trips/new.tsx, /app/frontend/app/(tabs)/more.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Created reusable `ModeCompanyBlock` component that renders
+          Mode pills at the TOP and, only when Mode = Formal, reveals
+          the Company pills (Awadh / Singh Exp.). Applied to:
+            • /shipments/new — as new Section 1 (Mode), sections
+              shifted 1→2 Basic Info, 2→3 Parties, 3→4 Financials,
+              4→5 Notes.
+            • /ledger/new-entry — as top GlassCard; removed the old
+              bottom-of-form Company + Mode block.
+            • /trips/new — as top GlassCard; company_mode +
+              (Formal-only) company_id now included in POST payload.
+            • /more Business Settings — reordered: Mode row first
+              (Informal / Formal / Master). Company pills row only
+              renders when Mode = Formal. Master resets both.
+          Screenshot verified: switching to Informal removes the
+          Company block entirely from the tree; switching back to
+          Formal re-renders it. Defaults respect activeCompany /
+          activeMode from CompanyContext so any form-level change
+          persists globally on save.
+
+backend:
+  - task: "Phase 7 Fix 3 — MongoDB indexes on startup"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Added an `_startup_ensure_indexes` startup hook that
+          idempotently builds hot-path indexes:
+            • shipments        : (company_id, mode, status)
+            • ledger_entries   : (party_id, company_id)
+            • ledger_meta      : (entry_id) UNIQUE
+            • parties          : (role)
+            • trips            : (carrier_id, status)
+            • party_meta       : (party_id) UNIQUE
+            • now_brief_cache  : (key) UNIQUE
+          All calls use `background=True` to avoid blocking the
+          reload loop on cold collections. Startup log line
+          `[indexes] ensured hot-path indexes on startup` confirms
+          creation on every server boot (verified in logs after
+          restart).
+
+  - task: "Phase 7 Fix 4 — Now Brief MongoDB cache verified"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py, /app/frontend/app/_layout.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Already implemented in Phase 4. Verified the `now_brief_cache`
+          collection is used with 5-min TTL and that the pre-warm
+          POST /api/dashboard/now-brief fires from _layout.tsx on
+          auth-token change. Added an index on `key` (unique) via the
+          new indexes bootstrap.
+
+metadata:
+  test_sequence: 83
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Phase 7 Fix 1 — Alerts panel right-to-left animation (APK safe)"
+    - "Phase 7 Fix 3 — API GET cache (SWR) + AbortController"
+    - "Phase 7 Fix 5 — Universal Mode-First rule"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      Phase 7 Batch A ready for verification. Focus:
+      1. Fix 1 — On any tablet-sized viewport (≥900px) open Alerts
+         panel by tapping the ✓ bell in the sidebar. Panel should
+         slide from the RIGHT edge toward the LEFT (not up from
+         bottom). Backdrop fades in parallel. Tap backdrop or ✕ to
+         reverse-animate closed.
+      3. Fix 3 — Second visit to /shipments should render list
+         instantly (from GET cache), background refresh silently.
+         POST /api/shipments should invalidate the cache and the next
+         GET should re-fetch.
+      5. Fix 5 — Every create form (shipments/new, ledger/new-entry,
+         trips/new) shows Mode first. Selecting Informal hides
+         Company; Formal reveals Awadh/Singh Exp. More tab Business
+         Settings: Mode row first, Company row appears only when
+         Mode = Formal, Master clears both filters.
+
+      Batch B (Fixes 6, 7, 8) will follow — do not test those yet.
+
+
+##====================================================================================================
+## PHASE 7 · BATCH B — OVERVIEW + SHIPMENTS + TRIPS + INVOICES (2026-08-13)
+##====================================================================================================
+
+frontend:
+  - task: "Phase 7 Fix 0 — Overview polish"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/index.tsx, /app/frontend/src/lib/papa-mode.ts"
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Removed the greeting/route GlassCard wrapper — greeting and
+          India↔Thailand line now sit free-floating. Added
+          OverviewGreetHero with typewriter Hinglish greeting
+          (rotates on mount, 45ms/char, blinking cursor that stops on
+          completion) + animated bidirectional 🇮🇳→🇹🇭 route line
+          flipping every 2.5s with 300ms opacity fade. Renamed
+          "Customer will pay" → "Aapko Lena Hai" and "You pay carrier"
+          → "Aapko Dena Hai" in both ENGLISH and PAPA_HINDI voices.
+
+  - task: "Phase 7 Fix 6 — Multiple Customers + Per-Bag pipeline"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/shipments/new.tsx"
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Full Section 3 rewrite: `customerRows[]`, `carrierRows[]`,
+          `bagRows[]` state. "Grahak Jodo" / "Vahak Jodo" / "Bag
+          Jodo" chip buttons open the party picker (parties already
+          added are excluded from suggestions). Each customer/carrier
+          row shows an avatar, name, freight/charge input, INR/THB
+          pill, and ✕ remove. Bags subsection lets user add bag rows
+          with weight, description, and Customer/Carrier chooser
+          pills (only shows the parties already added to THIS form).
+          Financials section now auto-sums to "Total Milna Hai" +
+          "Total Dena Hai" + "Total Weight" from the rows. POST
+          /api/shipments payload adds `customers`, `carriers`, `bags`
+          arrays alongside legacy `party_id` / `carrier_party_id(s)`.
+          Screenshot-verified layout.
+
+  - task: "Phase 7 Fix 7 — Trip auto-calc rates + on-complete ledger post"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/trips/new.tsx, /app/backend/server.py"
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Trip form now fetches carrier's saved rates from
+          /api/parties/{id}/meta on carrier-select. Defaults:
+          ₹200/kg, ₹2500/baht, ₹500/$1000 — all editable inline.
+          Live inline hints (`Bag charge · ₹X`, `Saman charge · ₹Y`,
+          `Currency charge · ₹Z`) below each amount input. Grand
+          "TOTAL CARRY CHARGE" pill in brand-green. Manual carry
+          input auto-populates from total unless user overrides (with
+          a "Restore auto total" link). POST payload includes
+          per_kg_rate / per_baht_rate / per_1000_usd_rate. Added
+          backend endpoint PATCH /api/trips/{id} that:
+            • updates the trip
+            • on `status` transition to "completed" (and no existing
+              ledger_entry_id) auto-creates a ledger entry crediting
+              the carrier (debit) for the total carry charge, and
+              links `ledger_entry_id` back on the trip. Duplicate-
+              guard prevents re-posting. Backend restart log line
+              confirms the endpoint is live.
+
+  - task: "Phase 7 Fix 8 — Invoices Formal (GST) vs Informal (Cash Receipt)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/invoices.tsx, /app/frontend/app/invoice/new.tsx"
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Invoices list gained a second orthogonal filter row:
+          `All Types / Formal (GST) / Informal (Cash)`. Each
+          invoice card now shows a type badge — "GST Invoice"
+          (blue) or "Cash Receipt" (muted) — alongside the status
+          pill. Icon flips between `document-text` (Formal) and
+          `cash` (Informal). Created full-page /invoice/new form
+          with Mode-First block that flips the whole title between
+          "New GST Invoice" and "New Cash Receipt". Informal mode:
+          no Company, no GSTIN, no HSN, no tax %. Formal mode:
+          Awadh/Singh Exp. picker → auto-pre-fills GSTIN
+          (Awadh: 09AAAAA0000A1Z5, Singh Exp.: 09BBBBB1111B2Y6),
+          each line item gets HSN code + Tax % pills (0/5/12/18/28)
+          with auto-computed line + tax total. Multi-currency
+          (INR/THB) pill per line item. Optional shipment linkage.
+          POST /api/invoices payload carries `mode`, `company_mode`,
+          `invoice_type`, `gstin`, `company_id`, `shipment_id`,
+          `items[]` with `hsn`, `tax_percent`, `amount` (post-tax).
+
+metadata:
+  test_sequence: 84
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Phase 7 Fix 6 — Multiple Customers + Per-Bag pipeline"
+    - "Phase 7 Fix 7 — Trip auto-calc rates + on-complete ledger post"
+    - "Phase 7 Fix 8 — Invoices Formal vs Informal"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      Phase 7 Batch B complete. Please verify:
+        • Fix 0 — /overview shows free-floating typewriter Hinglish
+          greeting + flipping India↔Thailand arrow + "Aapko Lena
+          Hai" / "Aapko Dena Hai" widget names.
+        • Fix 6 — /shipments/new Section 3 has Grahak Jodo / Vahak
+          Jodo / Bag Jodo. Adding parties/bags works. Financials
+          auto-sums.
+        • Fix 7 — /trips/new selecting carrier pre-fills rates; kg
+          × per_kg auto-shows bag charge; total pill live-updates.
+          PATCH /api/trips/{id} with status=completed auto-creates a
+          debit ledger entry for that carrier and links it back
+          (verify via `db.ledger_entries.find({trip_id: X})`).
+        • Fix 8 — /invoices list shows type filter row + type badges.
+          Tap New → /invoice/new. Informal keeps no GST fields;
+          Formal reveals Company + GSTIN + HSN + Tax %.
+

@@ -121,12 +121,83 @@ async function request<T>(
   return (await res.text()) as unknown as T;
 }
 
-export const apiGet = <T>(path: string) => request<T>("GET", path);
-export const apiPost = <T>(path: string, body?: unknown) =>
-  request<T>("POST", path, body);
-export const apiPut = <T>(path: string, body?: unknown) =>
-  request<T>("PUT", path, body);
-export const apiPatch = <T>(path: string, body?: unknown) =>
-  request<T>("PATCH", path, body);
-export const apiDelete = <T>(path: string, body?: unknown) =>
-  request<T>("DELETE", path, body);
+export const apiGet = <T>(path: string, opts?: { skipCache?: boolean }) =>
+  cachedGet<T>(path, opts);
+export const apiPost = <T>(path: string, body?: unknown) => {
+  // Invalidate GET cache on any mutation. Best-effort scoping —
+  // clears the same-path GET and any GETs that begin with the
+  // resource prefix (e.g. POST /api/shipments clears cached
+  // /api/shipments and /api/shipments?...&company_id=... entries).
+  invalidateGetCache(path);
+  return request<T>("POST", path, body);
+};
+export const apiPut = <T>(path: string, body?: unknown) => {
+  invalidateGetCache(path);
+  return request<T>("PUT", path, body);
+};
+export const apiPatch = <T>(path: string, body?: unknown) => {
+  invalidateGetCache(path);
+  return request<T>("PATCH", path, body);
+};
+export const apiDelete = <T>(path: string, body?: unknown) => {
+  invalidateGetCache(path);
+  return request<T>("DELETE", path, body);
+};
+
+// ── Fix 3 (Phase 7) · Simple GET cache with SWR semantics ──────────
+// Rationale: list screens (shipments, invoices, ledger, parties) hit
+// the same endpoint on every mount which showed a visible loading
+// spinner even when the data hadn't changed. We now:
+//   1. Cache the last-good body per URL with a 60s TTL.
+//   2. On cache hit within TTL → return cached value INSTANTLY and
+//      kick off a silent background refresh so the next visit sees
+//      the freshest data.
+//   3. On cache miss or expiry → fall through to a normal fetch and
+//      populate the cache once the response resolves.
+//   4. All mutating verbs (POST/PUT/PATCH/DELETE) automatically
+//      invalidate cached GETs that share the same resource prefix
+//      to avoid stale writes.
+type CacheEntry<T> = { at: number; value: T };
+const GET_CACHE_TTL_MS = 60_000;
+const _getCache = new Map<string, CacheEntry<unknown>>();
+
+function invalidateGetCache(mutationPath: string) {
+  const prefix = mutationPath.split("?")[0].split("/").slice(0, 4).join("/");
+  for (const key of _getCache.keys()) {
+    const keyPrefix = key.split("?")[0].split("/").slice(0, 4).join("/");
+    if (keyPrefix === prefix || key.startsWith(mutationPath)) {
+      _getCache.delete(key);
+    }
+  }
+}
+
+async function cachedGet<T>(
+  path: string,
+  opts?: { skipCache?: boolean },
+): Promise<T> {
+  if (opts?.skipCache) {
+    const value = await request<T>("GET", path);
+    _getCache.set(path, { at: Date.now(), value });
+    return value;
+  }
+  const hit = _getCache.get(path) as CacheEntry<T> | undefined;
+  const now = Date.now();
+  if (hit && now - hit.at < GET_CACHE_TTL_MS) {
+    // Fire-and-forget background revalidation so the next call has
+    // fresh data. Failures are silently ignored — the cached value
+    // is still returned to the caller.
+    request<T>("GET", path)
+      .then((v) => _getCache.set(path, { at: Date.now(), value: v }))
+      .catch(() => {
+        /* silent */
+      });
+    return hit.value;
+  }
+  const value = await request<T>("GET", path);
+  _getCache.set(path, { at: now, value });
+  return value;
+}
+
+export function clearApiGetCache() {
+  _getCache.clear();
+}

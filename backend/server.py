@@ -655,6 +655,98 @@ async def trips_create(trip: Trip, request: Request):
     return _clean_mongo_id(doc)
 
 
+# ── Fix 7 (Phase 7 · Batch B) · Trip PATCH + on-complete ledger post ──
+@api_router.patch("/trips/{trip_id}")
+async def trips_patch(trip_id: str, patch: Dict[str, Any], request: Request):
+    """Partial update for a trip.
+
+    Business rule: when `status` transitions to "completed" AND the
+    trip does not yet have a `ledger_entry_id`, auto-create a ledger
+    entry crediting the carrier for the total carry charge. This
+    keeps the payables ledger honest without asking the user to
+    remember a second step.
+    """
+    existing = await db.trips.find_one({"id": trip_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="trip not found")
+
+    updates = dict(patch or {})
+    updates["updated_at"] = datetime.utcnow()
+    # Fix: audit_source may be either "manual" or "manual:<user>"; the
+    # original code called split(":", 1)[1] unconditionally which
+    # raised IndexError for the bare "manual" case.
+    _src = getattr(getattr(request, "state", None), "audit_source", None) or ""
+    updates["modified_by"] = _src.split(":", 1)[1] if ":" in _src else None
+
+    new_status = str(updates.get("status") or "").lower()
+    prev_status = str(existing.get("status") or "").lower()
+    should_post_ledger = (
+        new_status == "completed"
+        and prev_status != "completed"
+        and not existing.get("ledger_entry_id")
+    )
+
+    # Persist the trip update first so the ledger entry can reference
+    # the completed trip metadata.
+    await db.trips.update_one({"id": trip_id}, {"$set": updates})
+
+    if should_post_ledger:
+        carrier_id = existing.get("carrier_id")
+        # Compute the payable amount:
+        #   1. Prefer explicit `carry_charge` if the user set one.
+        #   2. Otherwise recompute from capacity × per_kg + baht × per_baht + usd/1000 × per_1000_usd.
+        merged = {**existing, **updates}
+        explicit = merged.get("carry_charge")
+        if explicit is None or float(explicit or 0) <= 0:
+            kg = float(merged.get("capacity_kg") or 0)
+            baht = float(merged.get("gold_baht") or 0)
+            usd = float(merged.get("currency_amount") or 0)
+            per_kg = float(merged.get("per_kg_rate") or 200)
+            per_baht = float(merged.get("per_baht_rate") or 2500)
+            per_1000 = float(merged.get("per_1000_usd_rate") or 500)
+            explicit = kg * per_kg + baht * per_baht + (usd / 1000.0) * per_1000
+
+        amount = float(explicit or 0)
+        if carrier_id and amount > 0:
+            entry_id = str(uuid.uuid4())
+            entry = {
+                "id": entry_id,
+                "party_id": carrier_id,
+                "type": "debit",
+                "amount": round(amount, 2),
+                "currency": "INR",
+                "description": (
+                    f"Trip payment — {merged.get('flight_number') or ''} "
+                    f"{merged.get('departure_date') or ''}"
+                ).strip(),
+                "date": merged.get("departure_date") or datetime.utcnow().strftime("%Y-%m-%d"),
+                "company_id": merged.get("company_id") or "awadh",
+                "company_mode": merged.get("company_mode") or "formal",
+                "trip_id": trip_id,
+                "auto_generated": True,
+                "created_at": datetime.utcnow(),
+            }
+            try:
+                await db.ledger_entries.insert_one(entry.copy())
+                await db.trips.update_one(
+                    {"id": trip_id},
+                    {"$set": {"ledger_entry_id": entry_id}},
+                )
+                logging.info(
+                    "[trip-complete] auto-posted ledger entry %s for trip %s",
+                    entry_id,
+                    trip_id,
+                )
+            except Exception as e:
+                logging.exception("[trip-complete] failed to post ledger: %s", e)
+
+    updated = await db.trips.find_one({"id": trip_id})
+    return _clean_mongo_id(updated) if updated else {"id": trip_id}
+
+
+
+
+
 # ───────── Bullion vault summary (Fix 3) ─────────────────────────────
 @api_router.get("/bullion/vault")
 async def bullion_vault_summary():
@@ -5302,6 +5394,66 @@ async def _startup_seed_users():
         # Never let a seed error kill the app — log and move on so read
         # paths continue to work while an operator inspects the DB.
         logging.exception("[seed] failed to seed default users: %s", e)
+
+
+# Fix 3 (Phase 7) · MongoDB indexes for hot-path queries.
+# Motivation: list screens (Shipments, Ledger, Parties, Trips) were
+# scanning full collections and occasionally timing out on cold DBs.
+# We build indexes idempotently on startup — Motor’s create_index is
+# a no-op if the same key spec already exists.
+@app.on_event("startup")
+async def _startup_ensure_indexes():
+    try:
+        # Shipments: filtered by company + mode + status on nearly
+        # every list request. Compound index in that field order.
+        await db.shipments.create_index(
+            [("company_id", 1), ("mode", 1), ("status", 1)],
+            name="ix_ship_co_mode_status",
+            background=True,
+        )
+        # Ledger entries — party-scoped queries dominate.
+        await db.ledger_entries.create_index(
+            [("party_id", 1), ("company_id", 1)],
+            name="ix_ledger_party_co",
+            background=True,
+        )
+        # Ledger meta (verified overlay) — direct lookups by entry.
+        await db.ledger_meta.create_index(
+            [("entry_id", 1)],
+            name="ix_ledger_meta_entry",
+            unique=True,
+            background=True,
+        )
+        # Parties by role (customer/carrier splits).
+        await db.parties.create_index(
+            [("role", 1)],
+            name="ix_parties_role",
+            background=True,
+        )
+        # Trips by carrier + status (used by shipments detail + reports).
+        await db.trips.create_index(
+            [("carrier_id", 1), ("status", 1)],
+            name="ix_trips_carrier_status",
+            background=True,
+        )
+        # Party meta overlay lookups by party_id.
+        await db.party_meta.create_index(
+            [("party_id", 1)],
+            name="ix_party_meta_id",
+            unique=True,
+            background=True,
+        )
+        # Now-brief cache single-row keyed lookup.
+        await db.now_brief_cache.create_index(
+            [("key", 1)],
+            name="ix_now_brief_key",
+            unique=True,
+            background=True,
+        )
+        logging.info("[indexes] ensured hot-path indexes on startup")
+    except Exception as e:
+        logging.exception("[indexes] failed to ensure indexes: %s", e)
+
 
 
 @app.on_event("shutdown")

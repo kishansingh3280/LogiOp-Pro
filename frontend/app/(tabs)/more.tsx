@@ -206,54 +206,61 @@ export default function MoreScreen() {
           />
         </GlassCard>
 
-        {/* Fix 1 (Phase 3) · Business Settings — company + mode switcher,
-            moved from sidebar. Master = no filter; All = mode omitted. */}
+        {/* Fix 5 (Phase 7) · Mode-First Business Settings.
+            Mode is now the primary switch — Formal reveals the
+            Company pills, Informal hides them (uses last-picked
+            company implicitly), Master turns off both filters. */}
         <Text style={styles.section}>BUSINESS SETTINGS</Text>
         <GlassCard style={styles.bizCard}>
-          <Text style={styles.bizLabel}>Company</Text>
+          <Text style={styles.bizLabel}>Mode</Text>
           <View style={styles.bizRow}>
             <BizPill
-              label="Awadh Ent."
-              active={activeCompany === "awadh"}
-              onPress={() => setActiveCompany("awadh")}
+              label="Informal"
+              active={activeMode === "informal"}
+              onPress={() => {
+                setActiveMode("informal");
+                // Ensure a company is set (defaults to Awadh) so ledger
+                // + shipment writes still record a company_id even when
+                // the picker is hidden.
+                if (!activeCompany) setActiveCompany("awadh");
+              }}
             />
             <BizPill
-              label="Singh Exp."
-              active={activeCompany === "singh_exports"}
-              onPress={() => setActiveCompany("singh_exports")}
+              label="Formal"
+              active={activeMode === "formal"}
+              onPress={() => {
+                setActiveMode("formal");
+                if (!activeCompany) setActiveCompany("awadh");
+              }}
             />
             <BizPill
               label="Master"
-              active={activeCompany === null}
+              active={activeMode === null}
               onPress={() => {
-                // Master → both filters off so ALL data is visible.
                 setActiveCompany(null);
                 setActiveMode(null);
               }}
             />
           </View>
 
-          <Text style={styles.bizLabel}>Mode</Text>
-          <View style={styles.bizRow}>
-            <BizPill
-              label="Formal"
-              active={activeMode === "formal"}
-              onPress={() => setActiveMode("formal")}
-              disabled={activeCompany === null}
-            />
-            <BizPill
-              label="Informal"
-              active={activeMode === "informal"}
-              onPress={() => setActiveMode("informal")}
-              disabled={activeCompany === null}
-            />
-            <BizPill
-              label="All"
-              active={activeMode === null}
-              onPress={() => setActiveMode(null)}
-              disabled={activeCompany === null}
-            />
-          </View>
+          {/* Company row — visible ONLY when Mode = Formal (Fix 5). */}
+          {activeMode === "formal" ? (
+            <>
+              <Text style={styles.bizLabel}>Company</Text>
+              <View style={styles.bizRow}>
+                <BizPill
+                  label="Awadh Ent."
+                  active={activeCompany === "awadh"}
+                  onPress={() => setActiveCompany("awadh")}
+                />
+                <BizPill
+                  label="Singh Exp."
+                  active={activeCompany === "singh_exports"}
+                  onPress={() => setActiveCompany("singh_exports")}
+                />
+              </View>
+            </>
+          ) : null}
 
           <Text style={styles.bizSummary}>{buildFilterSummary(activeCompany, activeMode)}</Text>
         </GlassCard>

@@ -1,0 +1,41 @@
+{
+  "summary": "Phase 7 · Batch A end-to-end verification (Fixes 1-5). BACKEND — 7/7 pytest passed (list endpoints ≤2s, hot-path indexes confirmed via /var/log/supervisor/backend.err.log '[indexes] ensured hot-path indexes on startup', Now Brief reachable, POST /api/shipments and /api/ledger/entries accept company_mode + company_id payload without 422). FRONTEND — Fix 2 (Ledger dock tab) PASS: bottom dock reads Overview · Shipments · Ledger · Invoices · More; 'New Entry' removed; tapping Ledger routes to /ledger. Fix 5 Mode-First rule PASS across every surface: /shipments/new renders MODE as Section 1 followed by BASIC INFO/PARTIES & CARGO/FINANCIALS/NOTES; toggling Informal removes Awadh|Singh Exp. pills from DOM (count 0), toggling Formal restores them (count 1). /ledger/new-entry has Mode selector at the very top of the first GlassCard with identical Informal/Formal → Awadh|Singh Exp. reveal/hide behaviour. /trips/new places Mode + Company at the top before Carrier/Direction. /more Business Settings shows Mode row first (Informal|Formal|Master) with Company row (Awadh Ent.|Singh Exp.) surfacing only when Formal is active; tapping Master clears both filters and status text becomes 'Showing: All data (Master)'. Fix 3 backend cache (60s SWR + prefix invalidation) covered by the API layer code review and confirmed by no stale list on 2nd load; all three list endpoints responded well under 2s cold + warm. Fix 1 (Alerts panel slide-in) — code review confirms Animated.translateX with animationType='none' + backdrop fade (visual inspection matches spec); APK-only behaviour cannot be validated in preview. NO console errors observed during the whole flow. IMPORTANT PRE-EXISTING NOTE (not new to Phase 7): remote upstream backend does NOT echo company_id / company_mode on shipment GET responses (fields are stamped by the local proxy on write but stripped from responses); filter falls back to defaults awadh/formal so records still surface — but `?company_id=singh_exports&mode=formal` returns [] because the persisted field isn't visible to the local filter. Same behaviour existed pre-Phase 7 and is documented in earlier iterations.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/shipments/{id}",
+        "issue": "Response body does not include `company_id` or `company_mode`. Local proxy stamps them into POST payloads but the upstream backend Pydantic response model doesn't echo them. Consequence: filter `?company_id=singh_exports&mode=formal` currently returns [] even after successful POSTs with those tags. Pre-existing behaviour, not introduced by Phase 7 — but worth surfacing to remote backend team."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase7_batchA.py",
+    "/app/test_reports/pytest/iter83_phase7.xml"
+  ],
+  "action_items": [
+    "MAIN AGENT — Optional follow-up (not blocking): coordinate with the remote/upstream backend to add company_id + company_mode to the shipment / ledger response schema so client-side filters and detail screens can rely on them. Today the local proxy stamps them on write but they are invisible on read."
+  ],
+  "critical_code_review_comments": [
+    "Fix 3 API cache in /app/frontend/src/lib/api.ts is a clean SWR implementation: 60s TTL, background revalidate, prefix-based invalidation on POST/PUT/PATCH/DELETE. `invalidateGetCache` correctly resets both exact-path and prefix (path.split('/').slice(0,4)) cached keys so `POST /api/shipments` also clears `/api/shipments?company_id=...` variants. Good.",
+    "ModeCompanyBlock uses useMemo(mode==='formal') and conditionally renders Company pills — hides via unmount (removes from DOM tree), not opacity, exactly per spec. Reused across shipments/new, ledger/new-entry, trips/new.",
+    "/more Business Settings correctly gates Company row on activeMode==='formal' and Master resets both to null. `buildFilterSummary(null, null)` → 'Showing: All data (Master)' confirmed.",
+    "Fix 2 dock: FloatingBottomBar injects synthetic 'Ledger' item right after Shipments via router.push('/ledger'); Parties has href:null so it stays out of the dock; New Entry / quick-add is gone. Icon set is book/book-outline per spec.",
+    "Backend indexes at /app/backend/server.py:5313 (_startup_ensure_indexes) create compound indexes on shipments(company_id, mode, status), ledger_entries(party_id, company_id), parties(role, name), trips(company_id, mode), party_meta(party_id unique), now_brief_cache(scope_key unique). Idempotent (Motor create_index) — safe on repeated restarts."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase7_batchA.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (Fix 2, Fix 5 across /shipments/new + /ledger/new-entry + /trips/new + /more; Fix 3 cache verified via code + observed instant 2nd-load; Fix 1 verified via code review only — APK inspection out of scope for preview)"},
+  "seed_data_creation": "Created 2 test shipments via TestModeCompanyPersist: informal/awadh (CN-1009) and formal/singh_exports (CN-1010). Also created 1 ledger entry TEST_phase7_ledger. All under existing party 6e8d9483-ebf8-4b12-9d54-6f5b29e78f07 (Abhishek Singh). Safe to retain — small footprint, TEST_-prefixed descriptions.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 7 Batch A is green. The only outstanding item is the pre-existing remote-backend limitation where company_id / company_mode aren't echoed on GET (documented in iteration_83 backend_issues.minor). If a future iteration needs the tags on the response, it requires upstream schema work — not solvable from the local proxy alone. Backend tests live at /app/backend/tests/test_phase7_batchA.py and can be reused; auth uses JSON key `access_token` (not `token`).",
+  "rca_of_issue": "N/A — no bugs found in Phase 7 Batch A. The single minor item (company_* not on GET response) is a pre-existing upstream schema gap, not caused by these fixes."
+}

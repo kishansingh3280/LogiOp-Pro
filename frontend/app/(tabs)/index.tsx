@@ -19,6 +19,8 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   NativeScrollEvent,
   NativeSyntheticEvent,
   RefreshControl,
@@ -263,22 +265,11 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Route heading */}
-        <Text style={styles.routeHeading}>India ⇄ Thailand</Text>
-        <Text style={styles.routeSub}>
-          Live view of shipments, ledger and warehouse
-        </Text>
-
-        {/* Greeting */}
-        <GlassCard glow style={styles.greetCard}>
-          <Text style={styles.eyebrow}>{voice.greet}</Text>
-          <Text style={styles.greet}>
-            {user ? `${user.display_name} ${user.honorific}` : "Sir"}
-          </Text>
-          <Text style={styles.greetSub}>
-            {user?.role} · {user?.username}
-          </Text>
-        </GlassCard>
+        {/* Fix 0 (Phase 7 · Batch B) · Overview polish.
+            • Greeting: typewriter Hinglish (rotates on every mount)
+            • India ↔ Thailand: bidirectional arrow, flips every 2.5s
+            • Both are free-floating text (NO card / box / border) */}
+        <OverviewGreetHero name={user ? `${user.display_name} ${user.honorific}` : "Sir"} />
 
         {/* Row 1 — Two hero cards side by side */}
         <View style={styles.heroRow}>
@@ -450,6 +441,128 @@ export default function HomeScreen() {
 }
 
 // ── HeroCard ────────────────────────────────────────────────────────
+
+// ── Fix 0 (Phase 7 · Batch B) · Overview polish ────────────────────
+// Free-floating greeting hero — no card, no border. Renders a
+// typewriter Hinglish greeting on top followed by an animated
+// bidirectional India ↔ Thailand line. Both use only React Native
+// core primitives so nothing extra needs to be bundled for APK.
+const HINGLISH_GREETINGS = [
+  "Swagat hai aapka, Kishan Sir 🫡",
+  "Aaj bhi dhoom machao, Boss",
+  "Chalo kaam shuru karte hain, Sir",
+  "Namaskar, Kishan Sir — sab theek?",
+  "LogiOp ready hai, Sir — aap batao",
+  "Jai ho, Kishan Sir — aaj kya plan hai?",
+] as const;
+
+function OverviewGreetHero({ name }: { name: string }) {
+  // Pick a random greeting on every mount. `useMemo` with an empty
+  // dep list keeps it stable across re-renders within the same
+  // session so the typewriter doesn't restart on state changes.
+  const target = useMemo(
+    () => HINGLISH_GREETINGS[Math.floor(Math.random() * HINGLISH_GREETINGS.length)],
+    [],
+  );
+
+  // Typewriter state — types out one character every 45ms.
+  const [typed, setTyped] = useState("");
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    let i = 0;
+    setTyped("");
+    setDone(false);
+    const id = setInterval(() => {
+      i += 1;
+      setTyped(target.slice(0, i));
+      if (i >= target.length) {
+        setDone(true);
+        clearInterval(id);
+      }
+    }, 45);
+    return () => clearInterval(id);
+  }, [target]);
+
+  // Blinking cursor — only visible while typing OR briefly after.
+  // We stop blinking once typing completes to match the spec.
+  const cursorOpacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (done) {
+      cursorOpacity.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(cursorOpacity, {
+          toValue: 0,
+          duration: 500,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+        Animated.timing(cursorOpacity, {
+          toValue: 1,
+          duration: 500,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [done, cursorOpacity]);
+
+  // India ↔ Thailand direction flip. Alternates every 2.5s with a
+  // 300ms opacity fade at the transition edge.
+  const [dir, setDir] = useState<"IN_TO_TH" | "TH_TO_IN">("IN_TO_TH");
+  const arrowOpacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const id = setInterval(() => {
+      Animated.timing(arrowOpacity, {
+        toValue: 0,
+        duration: 300,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (!finished) return;
+        setDir((prev) => (prev === "IN_TO_TH" ? "TH_TO_IN" : "IN_TO_TH"));
+        Animated.timing(arrowOpacity, {
+          toValue: 1,
+          duration: 300,
+          easing: Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }).start();
+      });
+    }, 2500);
+    return () => clearInterval(id);
+  }, [arrowOpacity]);
+
+  const arrow = dir === "IN_TO_TH" ? "——→" : "←——";
+
+  return (
+    <View style={styles.heroFree}>
+      <View style={styles.typewriterRow}>
+        <Text style={styles.typewriterText} numberOfLines={2}>
+          {typed || " "}
+        </Text>
+        <Animated.Text
+          style={[styles.typewriterCursor, { opacity: cursorOpacity }]}
+        >
+          |
+        </Animated.Text>
+      </View>
+      <Text style={styles.heroNameLine}>{name}</Text>
+      <Animated.View style={[styles.routeLine, { opacity: arrowOpacity }]}>
+        <Text style={styles.routeFlag}>🇮🇳</Text>
+        <Text style={styles.routeCountry}>India</Text>
+        <Text style={styles.routeArrow}>{arrow}</Text>
+        <Text style={styles.routeCountry}>Thailand</Text>
+        <Text style={styles.routeFlag}>🇹🇭</Text>
+      </Animated.View>
+    </View>
+  );
+}
+
+
 function HeroCard({
   title,
   valueInr,
@@ -573,6 +686,59 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   greetSub: { color: colors.textMuted, fontSize: 13, marginTop: 4 },
+
+  // ─ Fix 0 (Phase 7 · Batch B) · Free-floating overview hero.
+  heroFree: {
+    marginTop: 6,
+    marginBottom: spacing.lg,
+  },
+  typewriterRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    flexWrap: "wrap",
+  },
+  typewriterText: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: -0.4,
+    lineHeight: 28,
+  },
+  typewriterCursor: {
+    color: colors.brand,
+    fontSize: 22,
+    fontWeight: "800",
+    marginLeft: 2,
+    lineHeight: 28,
+  },
+  heroNameLine: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  routeLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 14,
+    flexWrap: "wrap",
+  },
+  routeFlag: { fontSize: 20 },
+  routeCountry: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  routeArrow: {
+    color: colors.brand,
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    minWidth: 28,
+    textAlign: "center",
+  },
 
   // ─ Hero row
   heroRow: {

@@ -13,7 +13,6 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   RefreshControl,
   ScrollView,
@@ -47,6 +46,11 @@ type Invoice = {
   tax_percent?: number;
   status?: string;
   notes?: string;
+  // Fix 8 (Phase 7 · Batch B) · Type discriminator.
+  // "formal" → GST invoice, "informal" → cash receipt.
+  mode?: "formal" | "informal";
+  company_mode?: "formal" | "informal";
+  invoice_type?: "gst_invoice" | "cash_receipt";
 };
 
 type Party = { id: string; name: string };
@@ -62,6 +66,19 @@ const STATUS: Record<string, { tint: string; soft: string }> = {
 const FILTERS = ["all", "draft", "sent", "paid", "cancelled"] as const;
 type FilterKey = (typeof FILTERS)[number];
 
+// Fix 8 (Phase 7 · Batch B) · Type filter — orthogonal to status.
+const TYPE_FILTERS = ["all", "formal", "informal"] as const;
+type TypeFilterKey = (typeof TYPE_FILTERS)[number];
+
+// Helper: figure out invoice type from any of the type-ish fields.
+function invoiceMode(inv: Invoice): "formal" | "informal" {
+  const m = inv.mode || inv.company_mode;
+  if (m === "informal") return "informal";
+  if (m === "formal") return "formal";
+  if (inv.invoice_type === "cash_receipt") return "informal";
+  return "formal";
+}
+
 function subtotal(inv: Invoice): number {
   return (inv.items || []).reduce(
     (sum, it) => sum + Number(it.rate ?? 0) * Number(it.quantity ?? 0),
@@ -74,12 +91,9 @@ function grandTotal(inv: Invoice): number {
   return sub + tax;
 }
 
-function handleNewInvoice() {
-  Alert.alert(
-    "New Invoice",
-    "Create invoices from the desktop console. Mobile create flow is coming soon.",
-    [{ text: "OK" }],
-  );
+function handleNewInvoice(router: ReturnType<typeof useRouter>) {
+  // Fix 8 (Phase 7 · Batch B) · Route to full mobile create form.
+  router.push("/invoice/new" as never);
 }
 
 export default function InvoicesScreen() {
@@ -93,6 +107,7 @@ export default function InvoicesScreen() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [typeFilter, setTypeFilter] = useState<TypeFilterKey>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -127,6 +142,7 @@ export default function InvoicesScreen() {
   const filtered = useMemo(() => {
     let list = invoices || [];
     if (filter !== "all") list = list.filter((i) => (i.status || "draft") === filter);
+    if (typeFilter !== "all") list = list.filter((i) => invoiceMode(i) === typeFilter);
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter(
@@ -136,7 +152,7 @@ export default function InvoicesScreen() {
       );
     }
     return list;
-  }, [invoices, filter, query, partyMap]);
+  }, [invoices, filter, typeFilter, query, partyMap]);
 
   useEffect(() => {
     if (!isTablet) return;
@@ -161,7 +177,7 @@ export default function InvoicesScreen() {
           </View>
           <TouchableOpacity
             style={styles.newBtn}
-            onPress={handleNewInvoice}
+            onPress={() => handleNewInvoice(router)}
             activeOpacity={0.8}
           >
             <Ionicons name="add" size={18} color={colors.bgSolid} />
@@ -204,6 +220,31 @@ export default function InvoicesScreen() {
               >
                 <Text style={[styles.filterText, isActive && styles.filterTextActive]}>
                   {titleCase(f)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {/* Fix 8 (Phase 7) · Type filter — orthogonal to status. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+        >
+          {TYPE_FILTERS.map((f) => {
+            const isActive = typeFilter === f;
+            const label =
+              f === "all" ? "All Types" : f === "formal" ? "Formal (GST)" : "Informal (Cash)";
+            return (
+              <TouchableOpacity
+                key={f}
+                style={[styles.filterChip, isActive && styles.filterChipActive]}
+                onPress={() => setTypeFilter(f)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.filterText, isActive && styles.filterTextActive]}>
+                  {label}
                 </Text>
               </TouchableOpacity>
             );
@@ -305,6 +346,8 @@ function InvoiceRow({
 }) {
   const s = STATUS[(invoice.status || "draft").toLowerCase()] ?? STATUS.draft;
   const total = grandTotal(invoice);
+  const mode = invoiceMode(invoice);
+  const typeLabel = mode === "formal" ? "GST Invoice" : "Cash Receipt";
 
   return (
     <TouchableOpacity
@@ -313,7 +356,11 @@ function InvoiceRow({
       onPress={onPress}
     >
       <View style={styles.rowIcon}>
-        <Ionicons name="receipt" size={16} color={colors.brand} />
+        <Ionicons
+          name={mode === "formal" ? "document-text" : "cash"}
+          size={16}
+          color={colors.brand}
+        />
       </View>
       <View style={styles.rowLeft}>
         <Text style={styles.invNo} numberOfLines={1}>
@@ -327,6 +374,12 @@ function InvoiceRow({
             label={titleCase(invoice.status || "draft")}
             tint={s.tint}
             soft={s.soft}
+            size="sm"
+          />
+          <Pill
+            label={typeLabel}
+            tint={mode === "formal" ? colors.info : colors.textMuted}
+            soft={mode === "formal" ? colors.infoSoft : "rgba(255,255,255,0.06)"}
             size="sm"
           />
           <Text style={styles.dim}>{shortDate(invoice.date)}</Text>

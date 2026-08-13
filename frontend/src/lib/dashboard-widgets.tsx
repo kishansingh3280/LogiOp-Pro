@@ -19,12 +19,15 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 
@@ -403,9 +406,6 @@ export function FyPicker({ collapsed }: { collapsed: boolean }) {
 export function NotificationsButton({ collapsed }: { collapsed: boolean }) {
   const { token } = useAuth();
   const [open, setOpen] = useState(false);
-  // No backend endpoint yet — surface a demo unread count derived from
-  // the number of shipments in transit + pending. This gives the badge
-  // realistic weight without adding a new API.
   const [unread, setUnread] = useState<number>(0);
 
   useEffect(() => {
@@ -420,6 +420,58 @@ export function NotificationsButton({ collapsed }: { collapsed: boolean }) {
       )
       .catch(() => setUnread(0));
   }, [token]);
+
+  // Fix 1 (Phase 7) · Right-to-left slide animation that works
+  // consistently on iOS, Android APK builds, and web. React Native
+  // Modal's built-in `animationType="slide"` on Android always slides
+  // bottom-to-top; we disable it and drive translateX ourselves via
+  // Animated.Value so the panel enters from the right edge on every
+  // platform.
+  const { width: screenWidth } = useWindowDimensions();
+  const panelWidth = Math.max(280, Math.round(screenWidth * 0.67));
+  const backdropWidth = screenWidth - panelWidth;
+  const slide = useRef(new Animated.Value(panelWidth)).current;
+  const backdropFade = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (open) {
+      slide.setValue(panelWidth);
+      backdropFade.setValue(0);
+      Animated.parallel([
+        Animated.timing(slide, {
+          toValue: 0,
+          duration: 260,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(backdropFade, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [open, panelWidth, slide, backdropFade]);
+
+  const close = () => {
+    Animated.parallel([
+      Animated.timing(slide, {
+        toValue: panelWidth,
+        duration: 220,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(backdropFade, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) setOpen(false);
+    });
+  };
 
   return (
     <>
@@ -443,14 +495,30 @@ export function NotificationsButton({ collapsed }: { collapsed: boolean }) {
       <Modal
         visible={open}
         transparent
-        animationType="slide"
-        onRequestClose={() => setOpen(false)}
+        animationType="none"
+        statusBarTranslucent
+        onRequestClose={close}
       >
-        {/* Fix 7 (Phase 5) · Right-side slide-in panel — 33% width.
-            Tap the semi-transparent overlay (left ~67%) to dismiss. */}
-        <View style={styles.notifRightWrap}>
-          <Pressable style={styles.notifRightBackdrop} onPress={() => setOpen(false)} />
-          <View style={styles.notifRightPanel}>
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          <Animated.View
+            style={[
+              styles.notifBackdropAbs,
+              { width: backdropWidth, opacity: backdropFade },
+            ]}
+            pointerEvents="auto"
+          >
+            <Pressable style={StyleSheet.absoluteFill} onPress={close} />
+          </Animated.View>
+          <Animated.View
+            style={[
+              styles.notifPanelAbs,
+              {
+                width: panelWidth,
+                transform: [{ translateX: slide }],
+              },
+            ]}
+            pointerEvents="auto"
+          >
             <View style={styles.notifHeader}>
               <View style={styles.headerIcon}>
                 <Ionicons name="notifications" size={18} color={colors.brand} />
@@ -461,7 +529,7 @@ export function NotificationsButton({ collapsed }: { collapsed: boolean }) {
                   {unread} operational item{unread === 1 ? "" : "s"} to review
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setOpen(false)} style={styles.notifClose}>
+              <TouchableOpacity onPress={close} style={styles.notifClose}>
                 <Ionicons name="close" size={20} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -482,7 +550,7 @@ export function NotificationsButton({ collapsed }: { collapsed: boolean }) {
                 so you always know how many active fronts are open.
               </Text>
             </ScrollView>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
     </>
@@ -729,7 +797,9 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "flex-end",
   },
-  // Fix 7 (Phase 5) · Right-side slide-in wrap + panel.
+  // Fix 7 (Phase 5) · Right-side slide-in wrap + panel. Kept for
+  // reference — the active panel now uses notifBackdropAbs +
+  // notifPanelAbs (Fix 1 · Phase 7) which are absolute-positioned.
   notifRightWrap: {
     flex: 1,
     flexDirection: "row",
@@ -743,6 +813,28 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgSolid,
     borderLeftWidth: 1,
     borderColor: colors.brandBorder,
+  },
+  // Fix 1 (Phase 7) · Absolute-positioned right-slide panel + backdrop.
+  notifBackdropAbs: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  notifPanelAbs: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.bgSolid,
+    borderLeftWidth: 1,
+    borderColor: colors.brandBorder,
+    elevation: 24,
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowOffset: { width: -4, height: 0 },
+    shadowRadius: 12,
   },
   notifPanel: {
     backgroundColor: colors.bgSolid,

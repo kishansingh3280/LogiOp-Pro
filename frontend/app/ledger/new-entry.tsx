@@ -28,6 +28,7 @@ import { useAuth } from "@/src/lib/auth-context";
 import { fmtCurrency } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard } from "@/src/lib/ui";
+import { ModeCompanyBlock } from "@/src/lib/mode-company-block";
 
 type Party = { id: string; name: string; role?: string };
 type Rates = { thb_to_inr: number; inr_to_thb: number };
@@ -149,6 +150,16 @@ export default function NewLedgerEntryScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {/* Mode-First (Phase 7 · Fix 5) · Universal rule at TOP. */}
+        <GlassCard style={styles.card}>
+          <ModeCompanyBlock
+            mode={companyMode}
+            company={company}
+            onModeChange={setCompanyMode}
+            onCompanyChange={setCompany}
+          />
+        </GlassCard>
+
         <GlassCard style={styles.card}>
           {/* Date */}
           <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
@@ -336,62 +347,6 @@ export default function NewLedgerEntryScreen() {
             placeholderTextColor={colors.textDim}
             multiline
           />
-
-          {/* Company */}
-          <Text style={styles.label}>Company</Text>
-          <View style={styles.segment}>
-            {(["awadh", "singh_exports"] as Company[]).map((c) => (
-              <TouchableOpacity
-                key={c}
-                onPress={() => setCompany(c)}
-                activeOpacity={0.75}
-                style={[
-                  styles.segmentBtn,
-                  company === c && {
-                    backgroundColor: colors.brandSoft,
-                    borderColor: colors.brand,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.segmentText,
-                    { color: company === c ? colors.brand : colors.textDim },
-                  ]}
-                >
-                  {c === "singh_exports" ? "Singh Exp." : "Awadh"}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Mode */}
-          <Text style={styles.label}>Mode</Text>
-          <View style={styles.segment}>
-            {(["formal", "informal"] as Mode[]).map((m) => (
-              <TouchableOpacity
-                key={m}
-                onPress={() => setCompanyMode(m)}
-                activeOpacity={0.75}
-                style={[
-                  styles.segmentBtn,
-                  companyMode === m && {
-                    backgroundColor: colors.brandSoft,
-                    borderColor: colors.brand,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.segmentText,
-                    { color: companyMode === m ? colors.brand : colors.textDim },
-                  ]}
-                >
-                  {m === "formal" ? "Formal" : "Informal"}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
         </GlassCard>
 
         <View style={styles.actions}>

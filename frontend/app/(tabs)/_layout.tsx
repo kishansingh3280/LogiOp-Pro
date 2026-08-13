@@ -7,7 +7,7 @@
  */
 import { Ionicons } from "@expo/vector-icons";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { Tabs, useRouter } from "expo-router";
+import { Tabs, useRouter, usePathname } from "expo-router";
 import React from "react";
 import {
   StyleSheet,
@@ -70,6 +70,7 @@ export default function TabsLayout() {
 // ────────────────────────────────────────────────────────────────
 function FloatingBottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const visibleRoutes = state.routes.filter((r) => r.name !== "parties");
   return (
     <View style={styles.bottomBar} pointerEvents="box-none">
@@ -101,16 +102,20 @@ function FloatingBottomBar({ state, descriptors, navigation }: BottomTabBarProps
             />,
           ];
 
-          // Fix 2 (Phase 6) · Insert quick "Add Entry" ledger shortcut
-          // between Shipments and Invoices in the mobile dock.
+          // Fix 2 (Phase 7) · Insert Ledger navigation tab between
+          // Shipments and Invoices in the mobile dock (replaces the
+          // previous "New Entry" quick-add shortcut).
           if (route.name === "shipments") {
+            const focusedLedger =
+              typeof pathname === "string" &&
+              (pathname === "/ledger" || pathname.startsWith("/ledger"));
             items.push(
               <TabItem
-                key="__ledger_new"
-                focused={false}
-                icons={{ active: "add-circle", inactive: "add-circle-outline" }}
-                title="New Entry"
-                onPress={() => router.push("/ledger/new-entry" as any)}
+                key="__ledger"
+                focused={focusedLedger}
+                icons={{ active: "book", inactive: "book-outline" }}
+                title="Ledger"
+                onPress={() => router.push("/ledger" as any)}
               />,
             );
           }

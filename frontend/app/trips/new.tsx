@@ -19,6 +19,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet, apiPost } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { useCompany } from "@/src/lib/company-context";
+import {
+  ModeCompanyBlock,
+  type FormCompany,
+  type FormMode,
+} from "@/src/lib/mode-company-block";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard } from "@/src/lib/ui";
 
@@ -27,6 +33,14 @@ type Party = { id: string; name: string; role?: string };
 export default function NewTripScreen() {
   const router = useRouter();
   const { token } = useAuth();
+  const { activeCompany, activeMode } = useCompany();
+
+  const [formMode, setFormMode] = useState<FormMode>(
+    activeMode === "formal" ? "formal" : "informal",
+  );
+  const [formCompany, setFormCompany] = useState<FormCompany>(
+    (activeCompany as FormCompany) || "awadh",
+  );
 
   const [carriers, setCarriers] = useState<Party[]>([]);
   const [carrierId, setCarrierId] = useState<string | null>(null);
@@ -41,6 +55,63 @@ export default function NewTripScreen() {
   const [currency, setCurrency] = useState("");
   const [carry, setCarry] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Fix 7 (Phase 7 · Batch B) · Editable per-trip rates. Prefilled
+  // from the carrier's party_meta.carrier_rates on carrier-select;
+  // defaults kicked in when the carrier has no saved rates yet.
+  const [perKgRate, setPerKgRate] = useState("200");
+  const [perBahtRate, setPerBahtRate] = useState("2500");
+  const [per1000UsdRate, setPer1000UsdRate] = useState("500");
+  const [ratesLoaded, setRatesLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!carrierId) {
+      setRatesLoaded(false);
+      return;
+    }
+    // Pull the carrier's saved rates from the party_meta overlay.
+    apiGet<{ carrier_rates?: {
+      per_kg?: string; per_baht?: string; per_1000_usd?: string;
+    } }>(`/api/parties/${carrierId}/meta`)
+      .then((m) => {
+        const r = m?.carrier_rates || {};
+        if (r.per_kg) setPerKgRate(String(r.per_kg));
+        if (r.per_baht) setPerBahtRate(String(r.per_baht));
+        if (r.per_1000_usd) setPer1000UsdRate(String(r.per_1000_usd));
+        setRatesLoaded(true);
+      })
+      .catch(() => setRatesLoaded(true));
+  }, [carrierId]);
+
+  // Auto-calculated carry charges.
+  const bagCharge = useMemo(() => {
+    const kg = Number(capacityKg) || 0;
+    const rate = Number(perKgRate) || 0;
+    return kg * rate;
+  }, [capacityKg, perKgRate]);
+  const samanCharge = useMemo(() => {
+    const baht = Number(gold) || 0;
+    const rate = Number(perBahtRate) || 0;
+    return baht * rate;
+  }, [gold, perBahtRate]);
+  const currencyCharge = useMemo(() => {
+    const usd = Number(currency) || 0;
+    const rate = Number(per1000UsdRate) || 0;
+    return (usd / 1000) * rate;
+  }, [currency, per1000UsdRate]);
+  const totalCarry = useMemo(
+    () => bagCharge + samanCharge + currencyCharge,
+    [bagCharge, samanCharge, currencyCharge],
+  );
+
+  // Keep the manual `carry` state synced with auto-total unless the
+  // user has typed an override.
+  const [carryOverride, setCarryOverride] = useState(false);
+  useEffect(() => {
+    if (!carryOverride) {
+      setCarry(totalCarry ? totalCarry.toFixed(0) : "");
+    }
+  }, [totalCarry, carryOverride]);
 
   useEffect(() => {
     if (!token) return;
@@ -77,6 +148,15 @@ export default function NewTripScreen() {
         currency_amount: parseFloat(currency) || undefined,
         carry_charge: parseFloat(carry) || undefined,
         status: "scheduled",
+        // Fix 7 (Phase 7) · Per-trip rates snapshot (can differ from
+        // party defaults if user overrode) — used server-side on
+        // completion to auto-post the ledger entry.
+        per_kg_rate: parseFloat(perKgRate) || undefined,
+        per_baht_rate: parseFloat(perBahtRate) || undefined,
+        per_1000_usd_rate: parseFloat(per1000UsdRate) || undefined,
+        // Mode-First (Phase 7 · Fix 5)
+        company_mode: formMode,
+        company_id: formMode === "formal" ? formCompany : undefined,
       });
       router.back();
     } catch (e) {
@@ -110,6 +190,16 @@ export default function NewTripScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Mode-First (Phase 7 · Fix 5) · Universal rule at TOP. */}
+        <GlassCard style={styles.card}>
+          <ModeCompanyBlock
+            mode={formMode}
+            company={formCompany}
+            onModeChange={setFormMode}
+            onCompanyChange={setFormCompany}
+          />
+        </GlassCard>
+
         <GlassCard style={styles.card}>
           {/* Carrier */}
           <Text style={styles.label}>Carrier</Text>
@@ -224,6 +314,9 @@ export default function NewTripScreen() {
                 placeholder="30"
                 placeholderTextColor={colors.textDim}
               />
+              <Text style={styles.calcHint}>
+                Bag charge · ₹{bagCharge.toLocaleString()}
+              </Text>
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>Saman (baht)</Text>
@@ -235,11 +328,14 @@ export default function NewTripScreen() {
                 placeholder="10"
                 placeholderTextColor={colors.textDim}
               />
+              <Text style={styles.calcHint}>
+                Saman charge · ₹{samanCharge.toLocaleString()}
+              </Text>
             </View>
           </View>
           <View style={styles.row}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Currency amount</Text>
+              <Text style={styles.label}>Currency amount ($)</Text>
               <TextInput
                 style={styles.input}
                 value={currency}
@@ -248,18 +344,79 @@ export default function NewTripScreen() {
                 placeholder="50000"
                 placeholderTextColor={colors.textDim}
               />
+              <Text style={styles.calcHint}>
+                Currency charge · ₹{currencyCharge.toLocaleString()}
+              </Text>
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>Carry charge (INR)</Text>
               <TextInput
                 style={styles.input}
                 value={carry}
-                onChangeText={setCarry}
+                onChangeText={(v) => {
+                  setCarry(v);
+                  setCarryOverride(true);
+                }}
                 keyboardType="decimal-pad"
                 placeholder="8000"
                 placeholderTextColor={colors.textDim}
               />
+              {!carryOverride ? (
+                <Text style={styles.calcHint}>Auto · edit to override</Text>
+              ) : (
+                <TouchableOpacity onPress={() => setCarryOverride(false)}>
+                  <Text style={[styles.calcHint, { color: colors.brand }]}>
+                    Restore auto total
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
+          </View>
+
+          {/* Fix 7 (Phase 7) · Rates block — pre-filled from
+              party_meta.carrier_rates, editable per trip. */}
+          <View style={styles.ratesBlock}>
+            <Text style={styles.ratesHead}>
+              CARRIER RATES {ratesLoaded ? "" : "· defaults"}
+            </Text>
+            <View style={styles.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Per kg (₹)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={perKgRate}
+                  onChangeText={setPerKgRate}
+                  keyboardType="decimal-pad"
+                  placeholderTextColor={colors.textDim}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Saman per baht (₹)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={perBahtRate}
+                  onChangeText={setPerBahtRate}
+                  keyboardType="decimal-pad"
+                  placeholderTextColor={colors.textDim}
+                />
+              </View>
+            </View>
+            <Text style={styles.label}>Per $1,000 (₹)</Text>
+            <TextInput
+              style={styles.input}
+              value={per1000UsdRate}
+              onChangeText={setPer1000UsdRate}
+              keyboardType="decimal-pad"
+              placeholderTextColor={colors.textDim}
+            />
+          </View>
+
+          {/* Grand total */}
+          <View style={styles.grandTotal}>
+            <Text style={styles.grandTotalLabel}>TOTAL CARRY CHARGE</Text>
+            <Text style={styles.grandTotalValue}>
+              ₹{totalCarry.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </Text>
           </View>
         </GlassCard>
 
@@ -375,6 +532,54 @@ const styles = StyleSheet.create({
   },
   segmentText: { fontSize: 12, fontWeight: "700" },
   dim: { color: colors.textDim, fontSize: 12 },
+  // ── Fix 7 (Phase 7) · Rates + auto-calc styles ──
+  calcHint: {
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "600",
+    marginTop: 3,
+    letterSpacing: 0.2,
+  },
+  ratesBlock: {
+    marginTop: spacing.md,
+    padding: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: "rgba(0,255,136,0.04)",
+    gap: 10,
+  },
+  ratesHead: {
+    color: colors.textMuted,
+    fontSize: 10,
+    letterSpacing: 0.8,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  grandTotal: {
+    marginTop: spacing.md,
+    padding: 14,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    backgroundColor: colors.brandSoft,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  grandTotalLabel: {
+    color: colors.brand,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+  },
+  grandTotalValue: {
+    color: colors.brand,
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: -0.4,
+  },
   actions: {
     flexDirection: "row",
     gap: spacing.md,

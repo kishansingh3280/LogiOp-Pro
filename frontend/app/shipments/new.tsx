@@ -32,6 +32,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { useCompany } from "@/src/lib/company-context";
+import { ModeCompanyBlock } from "@/src/lib/mode-company-block";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard } from "@/src/lib/ui";
 
@@ -39,7 +40,6 @@ type Party = { id: string; name: string; role?: string };
 type Direction = "IN_TO_TH" | "TH_TO_IN";
 type Mode = "air" | "sea" | "land" | "hand_carry";
 type Currency = "INR" | "THB";
-type CarrierChargeType = "flat" | "per_kg";
 type Company = "awadh" | "singh_exports";
 type CompanyMode = "informal" | "formal";
 
@@ -85,13 +85,25 @@ export default function NewShipmentScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [direction]);
 
-  // ─── Section 2 · Parties & Cargo ──────────────────────────────
+  // ─── Section 3 · Parties & Cargo (Fix 6 · Phase 7 Batch B) ───
+  // Multiple customers, multiple carriers, per-bag pipeline.
   const [allParties, setAllParties] = useState<Party[]>([]);
   const [partiesLoading, setPartiesLoading] = useState(false);
-  const [customerId, setCustomerId] = useState<string>("");
-  const [carrierIds, setCarrierIds] = useState<string[]>([]); // multi
-  const [weight, setWeight] = useState<string>("");
-  const [bags, setBags] = useState<string>("1");
+
+  type CustomerRow = { party_id: string; freight: string; currency: Currency };
+  type CarrierRow = { party_id: string; charge: string; currency: Currency };
+  type BagRow = {
+    key: string; // local UI key
+    bag_no: number;
+    weight_kg: string;
+    description: string;
+    customer_party_id: string;
+    carrier_party_id: string;
+  };
+
+  const [customerRows, setCustomerRows] = useState<CustomerRow[]>([]);
+  const [carrierRows, setCarrierRows] = useState<CarrierRow[]>([]);
+  const [bagRows, setBagRows] = useState<BagRow[]>([]);
   const [goods, setGoods] = useState<string>("");
   const [pickerOpen, setPickerOpen] = useState<null | "customer" | "carrier">(null);
   const [partySearch, setPartySearch] = useState("");
@@ -113,36 +125,126 @@ export default function NewShipmentScreen() {
     () => allParties.filter((p) => (p.role || "").toLowerCase() === "carrier"),
     [allParties],
   );
-
-  const selectedCustomer = useMemo(
-    () => customers.find((p) => p.id === customerId) || null,
-    [customers, customerId],
-  );
-  const selectedCarriers = useMemo(
-    () => carriers.filter((p) => carrierIds.includes(p.id)),
-    [carriers, carrierIds],
-  );
+  const partyById = useMemo(() => {
+    const m: Record<string, Party> = {};
+    allParties.forEach((p) => (m[p.id] = p));
+    return m;
+  }, [allParties]);
 
   const pickerList = useMemo(() => {
     const base = pickerOpen === "customer" ? customers : pickerOpen === "carrier" ? carriers : [];
     const q = partySearch.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter((p) => p.name.toLowerCase().includes(q));
-  }, [pickerOpen, customers, carriers, partySearch]);
+    // Exclude parties already added to the corresponding row set.
+    const excluded =
+      pickerOpen === "customer"
+        ? new Set(customerRows.map((r) => r.party_id))
+        : new Set(carrierRows.map((r) => r.party_id));
+    const filtered = base.filter((p) => !excluded.has(p.id));
+    if (!q) return filtered;
+    return filtered.filter((p) => p.name.toLowerCase().includes(q));
+  }, [pickerOpen, customers, carriers, partySearch, customerRows, carrierRows]);
 
-  const toggleCarrier = (id: string) => {
-    setCarrierIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+  const addCustomer = (id: string) => {
+    setCustomerRows((prev) => [
+      ...prev,
+      { party_id: id, freight: "", currency: "INR" },
+    ]);
+    setPickerOpen(null);
+  };
+  const addCarrier = (id: string) => {
+    setCarrierRows((prev) => [
+      ...prev,
+      { party_id: id, charge: "", currency: "INR" },
+    ]);
+    setPickerOpen(null);
+  };
+  const removeCustomer = (id: string) => {
+    setCustomerRows((prev) => prev.filter((r) => r.party_id !== id));
+    // Also clear any bag references to this customer.
+    setBagRows((prev) =>
+      prev.map((b) =>
+        b.customer_party_id === id ? { ...b, customer_party_id: "" } : b,
+      ),
     );
   };
+  const removeCarrier = (id: string) => {
+    setCarrierRows((prev) => prev.filter((r) => r.party_id !== id));
+    setBagRows((prev) =>
+      prev.map((b) =>
+        b.carrier_party_id === id ? { ...b, carrier_party_id: "" } : b,
+      ),
+    );
+  };
+  const updateCustomer = (id: string, patch: Partial<CustomerRow>) => {
+    setCustomerRows((prev) =>
+      prev.map((r) => (r.party_id === id ? { ...r, ...patch } : r)),
+    );
+  };
+  const updateCarrier = (id: string, patch: Partial<CarrierRow>) => {
+    setCarrierRows((prev) =>
+      prev.map((r) => (r.party_id === id ? { ...r, ...patch } : r)),
+    );
+  };
+  const addBag = () => {
+    setBagRows((prev) => [
+      ...prev,
+      {
+        key: `bag-${Date.now()}-${prev.length}`,
+        bag_no: prev.length + 1,
+        weight_kg: "",
+        description: "",
+        customer_party_id: customerRows[0]?.party_id || "",
+        carrier_party_id: carrierRows[0]?.party_id || "",
+      },
+    ]);
+  };
+  const removeBag = (key: string) => {
+    setBagRows((prev) =>
+      prev
+        .filter((b) => b.key !== key)
+        .map((b, i) => ({ ...b, bag_no: i + 1 })),
+    );
+  };
+  const updateBag = (key: string, patch: Partial<BagRow>) => {
+    setBagRows((prev) => prev.map((b) => (b.key === key ? { ...b, ...patch } : b)));
+  };
 
-  // ─── Section 3 · Financials ───────────────────────────────────
-  const [freight, setFreight] = useState<string>("");
-  const [freightCcy, setFreightCcy] = useState<Currency>("INR");
+  // Auto-totals for the Financials section.
+  const totalReceivableInr = useMemo(
+    () =>
+      customerRows
+        .filter((r) => r.currency === "INR")
+        .reduce((s, r) => s + (Number(r.freight) || 0), 0),
+    [customerRows],
+  );
+  const totalReceivableThb = useMemo(
+    () =>
+      customerRows
+        .filter((r) => r.currency === "THB")
+        .reduce((s, r) => s + (Number(r.freight) || 0), 0),
+    [customerRows],
+  );
+  const totalPayableInr = useMemo(
+    () =>
+      carrierRows
+        .filter((r) => r.currency === "INR")
+        .reduce((s, r) => s + (Number(r.charge) || 0), 0),
+    [carrierRows],
+  );
+  const totalPayableThb = useMemo(
+    () =>
+      carrierRows
+        .filter((r) => r.currency === "THB")
+        .reduce((s, r) => s + (Number(r.charge) || 0), 0),
+    [carrierRows],
+  );
+  const totalWeight = useMemo(
+    () => bagRows.reduce((s, b) => s + (Number(b.weight_kg) || 0), 0),
+    [bagRows],
+  );
+
+  // ─── Section 4 · Financials (forex only — freight came from rows) ─
   const [forexRate, setForexRate] = useState<string>("");
-  const [carrierCharge, setCarrierCharge] = useState<string>("");
-  const [carrierCcy, setCarrierCcy] = useState<Currency>("INR");
-  const [carrierChargeType, setCarrierChargeType] = useState<CarrierChargeType>("flat");
 
   // ─── Section 4 · Meta ─────────────────────────────────────────
   const [notes, setNotes] = useState<string>("");
@@ -164,16 +266,25 @@ export default function NewShipmentScreen() {
   const [saving, setSaving] = useState(false);
 
   const validate = (): string | null => {
-    if (!customerId) return "Please select a Customer.";
+    if (customerRows.length === 0) return "Please add at least one Customer.";
     if (!direction) return "Please choose a Direction.";
-    if (!weight.trim()) return "Please enter Weight (kg).";
-    const w = Number(weight);
-    if (!Number.isFinite(w) || w <= 0) return "Weight must be a positive number.";
-    const b = Number(bags || "0");
-    if (!Number.isFinite(b) || b < 0) return "Bag count must be zero or more.";
-    if (freight.trim()) {
-      const f = Number(freight);
-      if (!Number.isFinite(f) || f < 0) return "Freight must be a non-negative number.";
+    for (const r of customerRows) {
+      const f = Number(r.freight);
+      if (r.freight.trim() && (!Number.isFinite(f) || f < 0)) {
+        return "Freight amounts must be non-negative numbers.";
+      }
+    }
+    for (const r of carrierRows) {
+      const c = Number(r.charge);
+      if (r.charge.trim() && (!Number.isFinite(c) || c < 0)) {
+        return "Carrier charges must be non-negative numbers.";
+      }
+    }
+    for (const b of bagRows) {
+      const w = Number(b.weight_kg);
+      if (b.weight_kg.trim() && (!Number.isFinite(w) || w < 0)) {
+        return "Bag weight must be a non-negative number.";
+      }
     }
     return null;
   };
@@ -186,17 +297,50 @@ export default function NewShipmentScreen() {
     }
     setSaving(true);
     try {
+      // Fix 6 (Phase 7 · Batch B) — payload now carries `customers` and
+      // `bags` arrays. `party_id` / `carrier_party_id(s)` are set from
+      // the FIRST row of each collection so legacy consumers still see
+      // the primary customer/carrier.
+      const bagPayload = bagRows.map((b) => ({
+        bag_no: b.bag_no,
+        weight_kg: Number(b.weight_kg) || 0,
+        description: b.description.trim() || undefined,
+        customer_party_id: b.customer_party_id || undefined,
+        carrier_party_id: b.carrier_party_id || undefined,
+      }));
+      const customersPayload = customerRows.map((r) => ({
+        party_id: r.party_id,
+        freight: Number(r.freight) || 0,
+        currency: r.currency,
+      }));
+      const carriersPayload = carrierRows.map((r) => ({
+        party_id: r.party_id,
+        charge: Number(r.charge) || 0,
+        currency: r.currency,
+      }));
+
+      const primaryCustomer = customerRows[0];
       const payload: Record<string, unknown> = {
         direction,
         mode,
         origin: origin || null,
         destination: destination || null,
         goods: goods.trim() || null,
-        bag_count: Number(bags || "0") || 0,
-        weight_kg: Number(weight),
-        freight: freight.trim() ? Number(freight) : 0,
-        freight_currency: freightCcy,
-        party_id: customerId,
+        bag_count: bagRows.length,
+        weight_kg: totalWeight,
+        party_id: primaryCustomer?.party_id,
+        party_ids: customerRows.map((r) => r.party_id),
+        customers: customersPayload,
+        carriers: carriersPayload,
+        bags: bagPayload,
+        // Freight fields kept for legacy consumers — use primary
+        // customer's freight or fall back to sum of all customer
+        // freights (rough total).
+        freight:
+          primaryCustomer && primaryCustomer.freight.trim()
+            ? Number(primaryCustomer.freight) || 0
+            : totalReceivableInr + totalReceivableThb,
+        freight_currency: primaryCustomer?.currency || "INR",
         dispatch_date: dispatchDate || null,
         notes: notes.trim() || null,
         company_id: formCompany,
@@ -205,20 +349,19 @@ export default function NewShipmentScreen() {
       };
       if (consignmentNo.trim()) payload.consignment_no = consignmentNo.trim();
       if (forexRate.trim()) payload.forex_rate = Number(forexRate);
-      if (carrierIds[0]) payload.carrier_party_id = carrierIds[0];
-      if (carrierIds.length > 1) payload.carrier_party_ids = carrierIds;
-      if (carrierCharge.trim()) {
-        payload.carrier_charge = Number(carrierCharge);
-        payload.carrier_currency = carrierCcy;
-        payload.carrier_charge_type = carrierChargeType;
+      if (carrierRows[0]) payload.carrier_party_id = carrierRows[0].party_id;
+      if (carrierRows.length > 1) {
+        payload.carrier_party_ids = carrierRows.map((r) => r.party_id);
+      }
+      if (carrierRows[0]?.charge.trim()) {
+        payload.carrier_charge = Number(carrierRows[0].charge) || 0;
+        payload.carrier_currency = carrierRows[0].currency;
+        payload.carrier_charge_type = "flat";
       }
 
       const res = await apiPost<{ id?: string }>("/api/shipments", payload);
-      // Persist the form's chosen company/mode to the global context so
-      // subsequent screens honor the user's selection.
       if (formCompany !== activeCompany) setActiveCompany(formCompany);
       if (formMode !== activeMode) setActiveMode(formMode);
-      // Route to the freshly created shipment (or list if id missing).
       if (res?.id) {
         router.replace(`/shipment/${res.id}` as never);
       } else {
@@ -260,8 +403,23 @@ export default function NewShipmentScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          {/* ── 0 · Mode-First (Phase 7 · Fix 5) ─────────────
+              Universal rule: transaction Mode selector shown FIRST.
+              If Formal → Company field appears. Defaults: Informal +
+              (hidden) Awadh. */}
+          <SectionHeader index={1} title="Mode" />
+          <GlassCard>
+            <ModeCompanyBlock
+              mode={formMode}
+              company={formCompany}
+              onModeChange={setFormMode}
+              onCompanyChange={setFormCompany}
+              showLabel={false}
+            />
+          </GlassCard>
+
           {/* ── 1 · Basic Info ─────────────────────────────── */}
-          <SectionHeader index={1} title="Basic Info" />
+          <SectionHeader index={2} title="Basic Info" />
           <GlassCard>
             <Label>Direction</Label>
             <View style={styles.pillRow}>
@@ -344,81 +502,261 @@ export default function NewShipmentScreen() {
             </View>
           </GlassCard>
 
-          {/* ── 2 · Parties & Cargo ────────────────────────── */}
-          <SectionHeader index={2} title="Parties & Cargo" />
+          {/* ── 3 · Parties & Cargo (Fix 6 · Phase 7 Batch B) ── */}
+          <SectionHeader index={3} title="Parties & Cargo" />
           <GlassCard>
-            <Label>Customer</Label>
-            <TouchableOpacity
-              style={styles.pickerBtn}
-              onPress={() => {
-                setPickerOpen("customer");
-                setPartySearch("");
-              }}
-              activeOpacity={0.75}
-            >
-              <Ionicons name="person" size={16} color={colors.brand} />
-              <Text
-                style={[
-                  styles.pickerBtnText,
-                  { color: selectedCustomer ? colors.text : colors.textDim },
-                ]}
-                numberOfLines={1}
+            {/* Customers (multiple) */}
+            <View style={styles.subheadRow}>
+              <Text style={styles.subhead}>Customers · Grahak</Text>
+              <TouchableOpacity
+                style={styles.addChipBtn}
+                activeOpacity={0.75}
+                onPress={() => {
+                  setPickerOpen("customer");
+                  setPartySearch("");
+                }}
               >
-                {selectedCustomer ? selectedCustomer.name : "Select customer…"}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color={colors.textDim} />
-            </TouchableOpacity>
-
-            <Label style={{ marginTop: 14 }}>Carrier(s)</Label>
-            <TouchableOpacity
-              style={styles.pickerBtn}
-              onPress={() => {
-                setPickerOpen("carrier");
-                setPartySearch("");
-              }}
-              activeOpacity={0.75}
-            >
-              <Ionicons name="airplane" size={16} color={colors.brand} />
-              <Text
-                style={[
-                  styles.pickerBtnText,
-                  { color: selectedCarriers.length ? colors.text : colors.textDim },
-                ]}
-                numberOfLines={1}
-              >
-                {selectedCarriers.length
-                  ? selectedCarriers.map((c) => c.name).join(", ")
-                  : "Add carriers…"}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color={colors.textDim} />
-            </TouchableOpacity>
-
-            <View style={styles.rowSplit}>
-              <View style={{ flex: 1 }}>
-                <Label>Weight (kg)</Label>
-                <TextInput
-                  style={styles.input}
-                  value={weight}
-                  onChangeText={setWeight}
-                  keyboardType="decimal-pad"
-                  placeholder="0"
-                  placeholderTextColor={colors.textDim}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Label>Bag count</Label>
-                <TextInput
-                  style={styles.input}
-                  value={bags}
-                  onChangeText={setBags}
-                  keyboardType="number-pad"
-                  placeholder="1"
-                  placeholderTextColor={colors.textDim}
-                />
-              </View>
+                <Ionicons name="add-circle" size={14} color={colors.brand} />
+                <Text style={styles.addChipText}>Grahak Jodo</Text>
+              </TouchableOpacity>
             </View>
+            {customerRows.length === 0 ? (
+              <Text style={styles.emptyRow}>No customers yet — tap “Grahak Jodo”.</Text>
+            ) : (
+              customerRows.map((row) => {
+                const p = partyById[row.party_id];
+                return (
+                  <View key={row.party_id} style={styles.partyRow}>
+                    <View style={[styles.avatarSm, styles.avatarCust]}>
+                      <Text style={styles.avatarSmText}>
+                        {(p?.name || "?").slice(0, 1).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1, marginRight: 6 }}>
+                      <Text style={styles.partyRowName} numberOfLines={1}>
+                        {p?.name || "—"}
+                      </Text>
+                      <View style={styles.miniAmountRow}>
+                        <Text style={styles.miniPrefix}>{ccySym(row.currency)}</Text>
+                        <TextInput
+                          style={styles.miniAmountInput}
+                          value={row.freight}
+                          onChangeText={(v) => updateCustomer(row.party_id, { freight: v })}
+                          keyboardType="decimal-pad"
+                          placeholder="Freight"
+                          placeholderTextColor={colors.textDim}
+                        />
+                        <View style={styles.ccyToggle}>
+                          {(["INR", "THB"] as Currency[]).map((c) => (
+                            <TouchableOpacity
+                              key={c}
+                              onPress={() => updateCustomer(row.party_id, { currency: c })}
+                              style={[
+                                styles.miniPill,
+                                row.currency === c ? styles.pillActive : styles.pillIdle,
+                              ]}
+                              activeOpacity={0.75}
+                            >
+                              <Text
+                                style={
+                                  row.currency === c
+                                    ? styles.pillTextActive
+                                    : styles.pillTextIdle
+                                }
+                              >
+                                {c}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => removeCustomer(row.party_id)}
+                      style={styles.removeBtn}
+                      activeOpacity={0.75}
+                    >
+                      <Ionicons name="close" size={16} color={colors.danger} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
 
-            <Label style={{ marginTop: 14 }}>Goods (optional)</Label>
+            {/* Carriers (multiple) */}
+            <View style={[styles.subheadRow, { marginTop: 18 }]}>
+              <Text style={styles.subhead}>Carriers · Vahak</Text>
+              <TouchableOpacity
+                style={styles.addChipBtn}
+                activeOpacity={0.75}
+                onPress={() => {
+                  setPickerOpen("carrier");
+                  setPartySearch("");
+                }}
+              >
+                <Ionicons name="add-circle" size={14} color={colors.brand} />
+                <Text style={styles.addChipText}>Vahak Jodo</Text>
+              </TouchableOpacity>
+            </View>
+            {carrierRows.length === 0 ? (
+              <Text style={styles.emptyRow}>No carriers yet — tap “Vahak Jodo”.</Text>
+            ) : (
+              carrierRows.map((row) => {
+                const p = partyById[row.party_id];
+                return (
+                  <View key={row.party_id} style={styles.partyRow}>
+                    <View style={[styles.avatarSm, styles.avatarCarr]}>
+                      <Ionicons name="airplane" size={12} color={colors.brand} />
+                    </View>
+                    <View style={{ flex: 1, marginRight: 6 }}>
+                      <Text style={styles.partyRowName} numberOfLines={1}>
+                        {p?.name || "—"}
+                      </Text>
+                      <View style={styles.miniAmountRow}>
+                        <Text style={styles.miniPrefix}>{ccySym(row.currency)}</Text>
+                        <TextInput
+                          style={styles.miniAmountInput}
+                          value={row.charge}
+                          onChangeText={(v) => updateCarrier(row.party_id, { charge: v })}
+                          keyboardType="decimal-pad"
+                          placeholder="Charge"
+                          placeholderTextColor={colors.textDim}
+                        />
+                        <View style={styles.ccyToggle}>
+                          {(["INR", "THB"] as Currency[]).map((c) => (
+                            <TouchableOpacity
+                              key={c}
+                              onPress={() => updateCarrier(row.party_id, { currency: c })}
+                              style={[
+                                styles.miniPill,
+                                row.currency === c ? styles.pillActive : styles.pillIdle,
+                              ]}
+                              activeOpacity={0.75}
+                            >
+                              <Text
+                                style={
+                                  row.currency === c
+                                    ? styles.pillTextActive
+                                    : styles.pillTextIdle
+                                }
+                              >
+                                {c}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => removeCarrier(row.party_id)}
+                      style={styles.removeBtn}
+                      activeOpacity={0.75}
+                    >
+                      <Ionicons name="close" size={16} color={colors.danger} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })
+            )}
+
+            {/* Bags subsection */}
+            <View style={[styles.subheadRow, { marginTop: 18 }]}>
+              <Text style={styles.subhead}>Bags</Text>
+              <TouchableOpacity
+                style={styles.addChipBtn}
+                activeOpacity={0.75}
+                onPress={addBag}
+                disabled={customerRows.length === 0 && carrierRows.length === 0}
+              >
+                <Ionicons name="add-circle" size={14} color={colors.brand} />
+                <Text style={styles.addChipText}>Bag Jodo</Text>
+              </TouchableOpacity>
+            </View>
+            {bagRows.length === 0 ? (
+              <Text style={styles.emptyRow}>
+                No bags yet — add customers / carriers, then “Bag Jodo”.
+              </Text>
+            ) : (
+              bagRows.map((b) => (
+                <View key={b.key} style={styles.bagCard}>
+                  <View style={styles.bagHead}>
+                    <Text style={styles.bagNo}>Bag #{b.bag_no}</Text>
+                    <TouchableOpacity
+                      onPress={() => removeBag(b.key)}
+                      style={styles.removeBtnSmall}
+                      activeOpacity={0.75}
+                    >
+                      <Ionicons name="close" size={14} color={colors.danger} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.rowSplit}>
+                    <View style={{ flex: 1 }}>
+                      <Label>Weight (kg)</Label>
+                      <TextInput
+                        style={styles.input}
+                        value={b.weight_kg}
+                        onChangeText={(v) => updateBag(b.key, { weight_kg: v })}
+                        keyboardType="decimal-pad"
+                        placeholder="0"
+                        placeholderTextColor={colors.textDim}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Label>Description</Label>
+                      <TextInput
+                        style={styles.input}
+                        value={b.description}
+                        onChangeText={(v) => updateBag(b.key, { description: v })}
+                        placeholder="e.g. Gold, docs"
+                        placeholderTextColor={colors.textDim}
+                      />
+                    </View>
+                  </View>
+                  <Label style={{ marginTop: 10 }}>Customer</Label>
+                  <View style={styles.pillRow}>
+                    {customerRows.map((r) => {
+                      const p = partyById[r.party_id];
+                      const active = b.customer_party_id === r.party_id;
+                      return (
+                        <TouchableOpacity
+                          key={r.party_id}
+                          onPress={() => updateBag(b.key, { customer_party_id: r.party_id })}
+                          activeOpacity={0.75}
+                          style={activePill(active)}
+                        >
+                          <Text style={activePillText(active)}>{p?.name || "—"}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {customerRows.length === 0 ? (
+                      <Text style={styles.emptyMini}>Add a customer first</Text>
+                    ) : null}
+                  </View>
+                  <Label style={{ marginTop: 10 }}>Carrier</Label>
+                  <View style={styles.pillRow}>
+                    {carrierRows.map((r) => {
+                      const p = partyById[r.party_id];
+                      const active = b.carrier_party_id === r.party_id;
+                      return (
+                        <TouchableOpacity
+                          key={r.party_id}
+                          onPress={() => updateBag(b.key, { carrier_party_id: r.party_id })}
+                          activeOpacity={0.75}
+                          style={activePill(active)}
+                        >
+                          <Text style={activePillText(active)}>{p?.name || "—"}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {carrierRows.length === 0 ? (
+                      <Text style={styles.emptyMini}>Add a carrier first</Text>
+                    ) : null}
+                  </View>
+                </View>
+              ))
+            )}
+
+            <Label style={{ marginTop: 14 }}>Goods (overall description)</Label>
             <TextInput
               style={styles.input}
               value={goods}
@@ -428,33 +766,36 @@ export default function NewShipmentScreen() {
             />
           </GlassCard>
 
-          {/* ── 3 · Financials ─────────────────────────────── */}
-          <SectionHeader index={3} title="Financials" />
+          {/* ── 4 · Financials · Auto-summed from customer/carrier rows */}
+          <SectionHeader index={4} title="Financials" />
           <GlassCard>
-            <Label>Freight (customer will pay)</Label>
-            <View style={styles.amountRow}>
-              <View style={styles.ccyPickerGroup}>
-                {(["INR", "THB"] as Currency[]).map((c) => (
-                  <TouchableOpacity
-                    key={c}
-                    onPress={() => setFreightCcy(c)}
-                    activeOpacity={0.75}
-                    style={activePill(freightCcy === c)}
-                  >
-                    <Text style={activePillText(freightCcy === c)}>{c}</Text>
-                  </TouchableOpacity>
-                ))}
+            <View style={styles.totalsRow}>
+              <View style={styles.totalsCol}>
+                <Text style={styles.totalsLabel}>Total Milna Hai</Text>
+                <Text style={[styles.totalsValue, { color: colors.credit }]}>
+                  ₹{totalReceivableInr.toLocaleString()}
+                </Text>
+                {totalReceivableThb > 0 ? (
+                  <Text style={[styles.totalsSub, { color: colors.credit }]}>
+                    ฿{totalReceivableThb.toLocaleString()}
+                  </Text>
+                ) : null}
               </View>
-              <View style={styles.amountBox}>
-                <Text style={styles.amountPrefix}>{ccySym(freightCcy)}</Text>
-                <TextInput
-                  style={styles.amountInput}
-                  value={freight}
-                  onChangeText={setFreight}
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={colors.textDim}
-                />
+              <View style={styles.totalsCol}>
+                <Text style={styles.totalsLabel}>Total Dena Hai</Text>
+                <Text style={[styles.totalsValue, { color: colors.debit }]}>
+                  ₹{totalPayableInr.toLocaleString()}
+                </Text>
+                {totalPayableThb > 0 ? (
+                  <Text style={[styles.totalsSub, { color: colors.debit }]}>
+                    ฿{totalPayableThb.toLocaleString()}
+                  </Text>
+                ) : null}
+              </View>
+              <View style={styles.totalsCol}>
+                <Text style={styles.totalsLabel}>Total Weight</Text>
+                <Text style={styles.totalsValue}>{totalWeight.toFixed(1)} kg</Text>
+                <Text style={styles.totalsSub}>{bagRows.length} bag(s)</Text>
               </View>
             </View>
 
@@ -467,51 +808,10 @@ export default function NewShipmentScreen() {
               placeholder="e.g. 2.4"
               placeholderTextColor={colors.textDim}
             />
-
-            <Label style={{ marginTop: 14 }}>Carrier charge (you will pay)</Label>
-            <View style={styles.amountRow}>
-              <View style={styles.ccyPickerGroup}>
-                {(["INR", "THB"] as Currency[]).map((c) => (
-                  <TouchableOpacity
-                    key={c}
-                    onPress={() => setCarrierCcy(c)}
-                    activeOpacity={0.75}
-                    style={activePill(carrierCcy === c)}
-                  >
-                    <Text style={activePillText(carrierCcy === c)}>{c}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <View style={styles.amountBox}>
-                <Text style={styles.amountPrefix}>{ccySym(carrierCcy)}</Text>
-                <TextInput
-                  style={styles.amountInput}
-                  value={carrierCharge}
-                  onChangeText={setCarrierCharge}
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={colors.textDim}
-                />
-              </View>
-            </View>
-            <View style={[styles.pillRow, { marginTop: 8 }]}>
-              {(["flat", "per_kg"] as CarrierChargeType[]).map((t) => (
-                <TouchableOpacity
-                  key={t}
-                  onPress={() => setCarrierChargeType(t)}
-                  activeOpacity={0.75}
-                  style={activePill(carrierChargeType === t)}
-                >
-                  <Text style={activePillText(carrierChargeType === t)}>
-                    {t === "flat" ? "Flat" : "Per kg"}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
           </GlassCard>
 
           {/* ── 4 · Meta ──────────────────────────────────── */}
-          <SectionHeader index={4} title="Notes & Company" />
+          <SectionHeader index={5} title="Notes" />
           <GlassCard>
             <Label>Notes (optional)</Label>
             <TextInput
@@ -522,42 +822,6 @@ export default function NewShipmentScreen() {
               placeholder="Anything important to remember for this shipment…"
               placeholderTextColor={colors.textDim}
             />
-
-            <Label style={{ marginTop: 14 }}>Company</Label>
-            <View style={styles.pillRow}>
-              <TouchableOpacity
-                onPress={() => setFormCompany("awadh")}
-                activeOpacity={0.75}
-                style={activePill(formCompany === "awadh")}
-              >
-                <Text style={activePillText(formCompany === "awadh")}>Awadh</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setFormCompany("singh_exports")}
-                activeOpacity={0.75}
-                style={activePill(formCompany === "singh_exports")}
-              >
-                <Text style={activePillText(formCompany === "singh_exports")}>Singh Exports</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Label style={{ marginTop: 14 }}>Mode</Label>
-            <View style={styles.pillRow}>
-              <TouchableOpacity
-                onPress={() => setFormMode("informal")}
-                activeOpacity={0.75}
-                style={activePill(formMode === "informal")}
-              >
-                <Text style={activePillText(formMode === "informal")}>Informal</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setFormMode("formal")}
-                activeOpacity={0.75}
-                style={activePill(formMode === "formal")}
-              >
-                <Text style={activePillText(formMode === "formal")}>Formal</Text>
-              </TouchableOpacity>
-            </View>
           </GlassCard>
 
           <TouchableOpacity
@@ -604,37 +868,17 @@ export default function NewShipmentScreen() {
                 </Text>
               ) : (
                 pickerList.map((p) => {
-                  const isSelected =
-                    pickerOpen === "customer"
-                      ? customerId === p.id
-                      : carrierIds.includes(p.id);
                   return (
                     <TouchableOpacity
                       key={p.id}
-                      style={[styles.pickerRow, isSelected && styles.pickerRowActive]}
+                      style={styles.pickerRow}
                       onPress={() => {
-                        if (pickerOpen === "customer") {
-                          setCustomerId(p.id);
-                          setPickerOpen(null);
-                        } else {
-                          toggleCarrier(p.id);
-                        }
+                        if (pickerOpen === "customer") addCustomer(p.id);
+                        else addCarrier(p.id);
                       }}
                       activeOpacity={0.75}
                     >
-                      <Ionicons
-                        name={
-                          pickerOpen === "customer"
-                            ? isSelected
-                              ? "radio-button-on"
-                              : "radio-button-off"
-                            : isSelected
-                            ? "checkbox"
-                            : "square-outline"
-                        }
-                        size={18}
-                        color={isSelected ? colors.brand : colors.textDim}
-                      />
+                      <Ionicons name="add-circle" size={18} color={colors.brand} />
                       <Text style={styles.pickerRowText}>{p.name}</Text>
                     </TouchableOpacity>
                   );
@@ -774,6 +1018,188 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   pickerBtnText: { flex: 1, fontSize: 14, fontWeight: "700" },
+
+  // ── Fix 6 (Phase 7 · Batch B) · Multi-party + bag styles ──
+  subheadRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  subhead: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  addChipBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    backgroundColor: colors.brandSoft,
+  },
+  addChipText: {
+    color: colors.brand,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  emptyRow: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontStyle: "italic",
+    paddingVertical: 8,
+  },
+  partyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  avatarSm: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  avatarCust: {
+    backgroundColor: "rgba(0,200,255,0.14)",
+    borderColor: "rgba(0,200,255,0.4)",
+  },
+  avatarCarr: {
+    backgroundColor: colors.brandSoft,
+    borderColor: colors.brandBorder,
+  },
+  avatarSmText: {
+    color: "#00C8FF",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  partyRowName: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  miniAmountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
+  },
+  miniPrefix: {
+    color: colors.brand,
+    fontSize: 12,
+    fontWeight: "800",
+    minWidth: 12,
+  },
+  miniAmountInput: {
+    flex: 1,
+    minWidth: 60,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "700",
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.sm,
+    backgroundColor: colors.card,
+  },
+  ccyToggle: {
+    flexDirection: "row",
+    gap: 4,
+  },
+  miniPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  removeBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: "rgba(255,68,68,0.55)",
+  },
+  removeBtnSmall: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: "rgba(255,68,68,0.55)",
+  },
+  bagCard: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+  },
+  bagHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  bagNo: {
+    color: colors.brand,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  emptyMini: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontStyle: "italic",
+  },
+  totalsRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  totalsCol: {
+    flex: 1,
+    padding: 10,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+    alignItems: "flex-start",
+  },
+  totalsLabel: {
+    color: colors.textDim,
+    fontSize: 9,
+    letterSpacing: 0.5,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  totalsValue: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  totalsSub: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 2,
+  },
 
   amountRow: {
     flexDirection: "row",
