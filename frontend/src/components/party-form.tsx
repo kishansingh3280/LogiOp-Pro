@@ -13,7 +13,7 @@
  */
 import { Ionicons } from "@expo/vector-icons";
 import { Stack, useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -26,7 +26,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiPatch, apiPost, apiPut } from "@/src/lib/api";
+import { apiGet, apiPatch, apiPost, apiPut } from "@/src/lib/api";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard } from "@/src/lib/ui";
 
@@ -40,6 +40,7 @@ export type PartyFormValues = {
   lng?: string;
   notes?: string;
   photo_url?: string | null;
+  gstin?: string;
 };
 
 const ROLES: { key: string; label: string }[] = [
@@ -69,8 +70,57 @@ export function PartyForm({
   const [lng, setLng] = useState(initial?.lng ? String(initial.lng) : "");
   const [notes, setNotes] = useState(initial?.notes || "");
   const [saving, setSaving] = useState(false);
+  // Fix 4 (Phase 7 · Batch C-2) · GSTIN + auto-lookup state.
+  const [gstin, setGstin] = useState(initial?.gstin || "");
+  const [gstStatus, setGstStatus] = useState<
+    "idle" | "checking" | "verified" | "invalid"
+  >("idle");
+  const [gstLegalName, setGstLegalName] = useState<string>("");
 
   const canSubmit = useMemo(() => name.trim().length > 0 && !saving, [name, saving]);
+
+  // Fix 4 (Phase 7 · Batch C-2) · Debounced GSTIN auto-lookup.
+  // When user types a 15-char GSTIN we ping the backend which relays
+  // to the RapidAPI GST-verification service and returns the legal
+  // name + address. Successful lookups auto-fill `name` (only if
+  // still blank) + `address` (only if blank). Fails silently — user
+  // can always fill in manually.
+  useEffect(() => {
+    const g = gstin.trim().toUpperCase();
+    if (g.length === 0) {
+      setGstStatus("idle");
+      setGstLegalName("");
+      return;
+    }
+    if (g.length !== 15) {
+      setGstStatus("invalid");
+      setGstLegalName("");
+      return;
+    }
+    setGstStatus("checking");
+    const handle = setTimeout(() => {
+      apiGet<{ valid: boolean; legal_name?: string; address?: string; state?: string }>(
+        `/api/parties/lookup-gstin?gstin=${g}`,
+      )
+        .then((r) => {
+          if (r?.valid && r.legal_name) {
+            setGstStatus("verified");
+            setGstLegalName(r.legal_name);
+            if (!name.trim()) setName(r.legal_name);
+            if (!address.trim() && r.address) setAddress(r.address);
+          } else {
+            setGstStatus("invalid");
+            setGstLegalName("");
+          }
+        })
+        .catch(() => {
+          setGstStatus("invalid");
+          setGstLegalName("");
+        });
+    }, 500);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gstin]);
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -81,6 +131,7 @@ export function PartyForm({
         role,
         phone: phone.trim() || null,
         address: address.trim() || null,
+        gstin: gstin.trim() || null,
         // Upstream schema stores lat/lng as strings — send as-is.
         lat: lat.trim() || null,
         lng: lng.trim() || null,
@@ -185,6 +236,31 @@ export function PartyForm({
             placeholderTextColor={colors.textDim}
             keyboardType="phone-pad"
           />
+
+          {/* Fix 4 (Phase 7 · Batch C-2) · GSTIN auto-lookup */}
+          <Text style={styles.label}>GSTIN (optional)</Text>
+          <TextInput
+            style={styles.input}
+            value={gstin}
+            onChangeText={(v) => setGstin(v.toUpperCase())}
+            placeholder="15-digit GSTIN (auto-fetches company details)"
+            placeholderTextColor={colors.textDim}
+            autoCapitalize="characters"
+            maxLength={15}
+          />
+          {gstStatus === "checking" ? (
+            <Text style={[styles.label, { color: colors.textDim, marginTop: 4 }]}>
+              Verifying GSTIN…
+            </Text>
+          ) : gstStatus === "verified" ? (
+            <Text style={[styles.label, { color: "#00C853", marginTop: 4 }]}>
+              ✓ GST Verified · {gstLegalName}
+            </Text>
+          ) : gstStatus === "invalid" && gstin.length >= 15 ? (
+            <Text style={[styles.label, { color: "#E53935", marginTop: 4 }]}>
+              ✗ Invalid GSTIN or not found
+            </Text>
+          ) : null}
 
           {/* Address */}
           <Text style={styles.label}>Address</Text>

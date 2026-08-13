@@ -172,6 +172,25 @@ export default function NewInvoiceScreen() {
       Alert.alert("Missing info", err);
       return;
     }
+    // Fix 5 (Phase 7 · Batch C-2) · Formal-save confirmation popup.
+    // Government-facing GST invoices go through this extra confirm
+    // step so nothing is committed by accident. Informal saves skip
+    // the popup entirely.
+    if (formMode === "formal") {
+      Alert.alert(
+        "Formal Entry Confirm karein?",
+        "Yeh ek formal GST entry hai jo government records mein jaayegi.\nKya aap confirm karte hain?",
+        [
+          { text: "Wapas Jao", style: "cancel" },
+          { text: "Haan, Save Karo", onPress: () => doSave() },
+        ],
+      );
+      return;
+    }
+    await doSave();
+  };
+
+  const doSave = async () => {
     setSaving(true);
     try {
       const isFormal = formMode === "formal";

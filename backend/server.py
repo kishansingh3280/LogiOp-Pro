@@ -391,7 +391,41 @@ async def bullion_list_trips(company: Optional[str] = None):
         prefixed = company if company.startswith("co_") else f"co_{company}"
         query["company"] = {"$in": list({company, short, prefixed})}
     docs = await db.bullion_trips.find(query).sort("date", -1).to_list(500)
-    return [_clean_mongo_id(d) for d in docs]
+    trips = [_clean_mongo_id(d) for d in docs]
+
+    # Fix 3 (Phase 7 · Batch C-1) · Compute allocated_kg per trip by
+    # aggregating bag weights across shipments whose bags reference
+    # each trip's carrier. Only counts bags on non-cancelled shipments.
+    try:
+        carrier_ids = [t.get("carrier_party_id") for t in trips if t.get("carrier_party_id")]
+        if carrier_ids:
+            ship_cursor = db.shipments.find(
+                {
+                    "carrier_party_id": {"$in": carrier_ids},
+                    "status": {"$ne": "cancelled"},
+                },
+                {"carrier_party_id": 1, "bags": 1, "weight_kg": 1, "carrier_party_ids": 1, "id": 1},
+            )
+            allocations: Dict[str, float] = {}
+            async for s in ship_cursor:
+                bags = s.get("bags") or []
+                if bags:
+                    for b in bags:
+                        cid = b.get("carrier_party_id") or s.get("carrier_party_id")
+                        if not cid:
+                            continue
+                        allocations[cid] = allocations.get(cid, 0.0) + float(b.get("weight_kg") or 0)
+                else:
+                    cid = s.get("carrier_party_id")
+                    if cid:
+                        allocations[cid] = allocations.get(cid, 0.0) + float(s.get("weight_kg") or 0)
+            for t in trips:
+                cid = t.get("carrier_party_id")
+                if cid and cid in allocations:
+                    t["allocated_kg"] = round(allocations[cid], 2)
+    except Exception as e:
+        logging.exception("[bullion-trips] allocated_kg compute failed: %s", e)
+    return trips
 
 
 @api_router.post("/bullion/trips")
@@ -559,6 +593,91 @@ async def party_meta_get(party_id: str):
             "carrier_rates": None,
         }
     return _clean_mongo_id(doc)
+
+
+# ── Fix 4 (Phase 7 · Batch C-2) · GSTIN Verification via RapidAPI ──
+_GSTIN_CACHE: Dict[str, Dict[str, Any]] = {}  # in-memory cache
+
+@api_router.get("/parties/lookup-gstin")
+async def lookup_gstin(gstin: str):
+    """Verify a GSTIN and return legal + trade name, address, state.
+
+    Uses the "GST Verification API — Get Profile + Returns Data" on
+    RapidAPI. Key is provided as env var `RAPIDAPI_KEY` at runtime
+    (injected by the Emergent secrets pipeline — do NOT read from
+    .env). Response is normalized so the frontend gets a stable
+    `{valid, legal_name, trade_name, address, state}` shape.
+    Cached in-memory for the process lifetime to keep the free-tier
+    call quota healthy across form re-renders.
+    """
+    gstin = (gstin or "").upper().strip()
+    if len(gstin) != 15:
+        return {"valid": False, "reason": "invalid_format"}
+    if gstin in _GSTIN_CACHE:
+        return _GSTIN_CACHE[gstin]
+    key = os.environ.get("RAPIDAPI_KEY")
+    if not key:
+        return {"valid": False, "reason": "no_api_key_configured"}
+    host = "gst-verification-api-get-profile-returns-data.p.rapidapi.com"
+    url = f"https://{host}/v1/gstin/{gstin}/return/2024-25"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "x-rapidapi-key": key,
+                    "x-rapidapi-host": host,
+                    "accept": "application/json",
+                },
+            )
+        if resp.status_code != 200:
+            logging.warning("[gstin] upstream %s: %s", resp.status_code, resp.text[:200])
+            return {"valid": False, "reason": f"upstream_{resp.status_code}"}
+        payload = resp.json() or {}
+        # RapidAPI shapes vary — try common paths.
+        data = payload.get("data") or payload.get("result") or payload
+        legal = (
+            data.get("legalName")
+            or data.get("legal_name")
+            or data.get("lgnm")
+            or data.get("tradeNam")
+        )
+        trade = data.get("tradeName") or data.get("trade_name") or data.get("tradeNam")
+        state = data.get("state") or data.get("stateJurisdiction") or data.get("stj")
+        # Address might be under `principalPlaceOfBusiness` or similar.
+        addr_obj = (
+            data.get("principalPlaceOfBusiness")
+            or data.get("pradr")
+            or data.get("address")
+            or {}
+        )
+        if isinstance(addr_obj, dict):
+            parts = [
+                addr_obj.get("bno") or addr_obj.get("buildingNumber"),
+                addr_obj.get("bnm") or addr_obj.get("buildingName"),
+                addr_obj.get("st") or addr_obj.get("street"),
+                addr_obj.get("loc") or addr_obj.get("location"),
+                addr_obj.get("city"),
+                addr_obj.get("stcd") or addr_obj.get("state"),
+                addr_obj.get("pncd") or addr_obj.get("pincode"),
+            ]
+            address = ", ".join([str(p) for p in parts if p])
+        else:
+            address = str(addr_obj)
+        result = {
+            "valid": bool(legal),
+            "legal_name": legal,
+            "trade_name": trade,
+            "address": address or None,
+            "state": state,
+            "raw": data if os.environ.get("GSTIN_DEBUG") else None,
+        }
+        _GSTIN_CACHE[gstin] = result
+        return result
+    except Exception as e:
+        logging.exception("[gstin] lookup failed: %s", e)
+        return {"valid": False, "reason": "network_error"}
+
 
 
 @api_router.get("/ledger/verified")

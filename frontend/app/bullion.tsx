@@ -40,6 +40,9 @@ type BullionTrip = {
   origin?: string;
   destination?: string;
   available_weight_kg?: number;
+  // Fix 3 (Phase 7 · Batch C-1) · allocated weight aggregated from
+  // bags linked to this trip. Populated server-side.
+  allocated_kg?: number;
   carrier_name?: string;
   carrier_party_id?: string;
   airline?: string;
@@ -442,8 +445,7 @@ function TripRow({ trip }: { trip: BullionTrip }) {
           ) : null}
           {trip.gold_baht ? (
             <Text style={[styles.dim, { color: colors.brand }]}>
-              · {trip.gold_baht} baht gold
-            </Text>
+              · {trip.gold_baht} baht gold            </Text>
           ) : null}
           {trip.carry_charge_inr ? (
             <Text style={[styles.dim, { color: colors.debit }]}>
@@ -451,6 +453,55 @@ function TripRow({ trip }: { trip: BullionTrip }) {
             </Text>
           ) : null}
         </View>
+
+        {/* Fix 3 (Phase 7) · Capacity progress bar — green under
+            80%, orange from 80-100%, red on overflow. */}
+        {(() => {
+          const capacity = Number(trip.available_weight_kg || 0);
+          const allocated = Number(trip.allocated_kg || 0);
+          if (!capacity && !allocated) return null;
+          const pct = capacity > 0 ? (allocated / capacity) * 100 : 0;
+          const overflow = allocated > capacity;
+          const barColor = overflow
+            ? colors.debit
+            : pct >= 80
+            ? "#FFB74D"
+            : colors.credit;
+          const fillPct = Math.min(100, Math.max(0, pct));
+          const remaining = Math.max(0, capacity - allocated);
+          const extra = Math.max(0, allocated - capacity);
+          return (
+            <View style={{ marginTop: 8, gap: 4 }}>
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    { width: `${fillPct}%`, backgroundColor: barColor },
+                  ]}
+                />
+              </View>
+              <View style={styles.tripMeta}>
+                <Text
+                  style={[
+                    styles.dim,
+                    { color: overflow ? colors.debit : colors.text, fontWeight: "700" },
+                  ]}
+                >
+                  {allocated}/{capacity} kg
+                </Text>
+                {overflow ? (
+                  <Text style={[styles.dim, { color: colors.debit }]}>
+                    · {extra} kg extra
+                  </Text>
+                ) : (
+                  <Text style={styles.dim}>
+                    · {Math.round(pct)}% · {remaining} kg free
+                  </Text>
+                )}
+              </View>
+            </View>
+          );
+        })()}
       </View>
     </View>
   );
@@ -714,6 +765,17 @@ const styles = StyleSheet.create({
   },
   tripFlight: { color: colors.text, fontSize: 13, fontWeight: "700", marginTop: 2 },
   tripCarrier: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  // Fix 3 (Phase 7) · Capacity progress bar.
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 3,
+  },
   tripMeta: {
     flexDirection: "row",
     flexWrap: "wrap",

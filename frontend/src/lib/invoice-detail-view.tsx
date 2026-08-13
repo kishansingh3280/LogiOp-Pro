@@ -9,10 +9,14 @@
  * PDF module required.
  */
 import { Ionicons } from "@expo/vector-icons";
+import * as Print from "expo-print";
 import { useRouter } from "expo-router";
+import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Platform,
   RefreshControl,
   ScrollView,
   Share,
@@ -182,6 +186,147 @@ export function InvoiceDetailView({ id }: { id: string }) {
     }
   }, [invoice, buildShareText]);
 
+  // Fix 5 (Phase 7 · Batch C-2) · Professional GST invoice PDF.
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const buildInvoiceHTML = useCallback((): string => {
+    if (!invoice) return "";
+    const esc = (s: unknown) =>
+      String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    const cur = invoice.currency || "INR";
+    const isFormal =
+      invoice.mode === "formal" ||
+      invoice.company_mode === "formal" ||
+      invoice.invoice_type === "gst_invoice";
+    const companyName = invoice.company
+      ? COMPANY_LABELS[invoice.company] || invoice.company
+      : "LogiOp Pro";
+    const rowsHTML = (invoice.items || [])
+      .map((it, i) => {
+        const line = Number(it.quantity ?? 0) * Number(it.rate ?? 0);
+        const taxPct = Number((it as any).tax_percent || 0);
+        const taxAmt = (line * taxPct) / 100;
+        const cgst = taxAmt / 2;
+        const sgst = taxAmt / 2;
+        const total = line + taxAmt;
+        return `<tr>
+            <td>${i + 1}</td>
+            <td>${esc(it.description)}</td>
+            <td>${esc((it as any).hsn || "")}</td>
+            <td class="n">${esc(it.quantity)}</td>
+            <td class="n">${esc(fmtCurrency(it.rate, cur))}</td>
+            <td class="n">${taxPct}%</td>
+            <td class="n">${esc(fmtCurrency(cgst, cur))}</td>
+            <td class="n">${esc(fmtCurrency(sgst, cur))}</td>
+            <td class="n b">${esc(fmtCurrency(total, cur))}</td>
+          </tr>`;
+      })
+      .join("");
+    const subtotal = totals.subtotal;
+    const totalTax = totals.tax;
+    const grand = totals.total;
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<style>
+  @page { margin: 22px; }
+  body { font-family: -apple-system,"Helvetica Neue",Arial,sans-serif; color:#111; font-size:11px; }
+  .head { display:flex; justify-content:space-between; border-bottom:2px solid #00C853; padding-bottom:8px; }
+  .head h1 { margin:0; font-size:16px; }
+  .brand { color:#00C853; font-weight:800; font-size:13px; }
+  .sub { color:#666; font-size:10px; }
+  .title { text-align:center; margin: 14px 0 6px; font-size:14px; font-weight:800; letter-spacing:.4px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin: 10px 0; }
+  .box { border:1px solid #ddd; padding:8px; border-radius:4px; }
+  .box .lbl { color:#888; font-size:9px; text-transform:uppercase; letter-spacing:.5px; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; }
+  th,td { border:1px solid #ccc; padding:5px 6px; }
+  th { background:#F0F0F0; font-size:10px; }
+  td.n { text-align:right; }
+  td.b { font-weight:800; }
+  tfoot td { font-weight:800; }
+  .terms { margin-top:14px; font-size:9px; color:#666; }
+  .sig { margin-top:22px; text-align:right; }
+</style></head>
+<body>
+  <div class="head">
+    <div>
+      <div class="brand">${esc(companyName)}</div>
+      ${invoice.gstin ? `<div class="sub">GSTIN: ${esc(invoice.gstin)}</div>` : ""}
+    </div>
+    <div style="text-align:right">
+      <h1>${isFormal ? "TAX INVOICE" : "CASH RECEIPT"}</h1>
+      <div class="sub">${esc(invoice.number)}</div>
+      <div class="sub">Date: ${esc(longDate(invoice.date))}</div>
+    </div>
+  </div>
+  <div class="title">${isFormal ? "GST Invoice — as per CGST Rules, 2017" : "Informal Cash Receipt"}</div>
+  <div class="grid">
+    <div class="box">
+      <div class="lbl">Bill To</div>
+      <div style="font-weight:800; font-size:12px">${esc(party?.name || invoice.party_id)}</div>
+      ${party?.gstin ? `<div class="sub">GSTIN: ${esc(party.gstin)}</div>` : ""}
+      ${party?.address ? `<div class="sub">${esc(party.address)}</div>` : ""}
+    </div>
+    <div class="box">
+      <div class="lbl">Meta</div>
+      <div class="sub">Status: ${esc((invoice.status || "draft").toUpperCase())}</div>
+      ${invoice.due_date ? `<div class="sub">Due: ${esc(longDate(invoice.due_date))}</div>` : ""}
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>#</th><th>Description</th><th>HSN</th><th>Qty</th><th>Rate</th>
+      <th>Tax%</th><th>CGST</th><th>SGST</th><th>Total</th>
+    </tr></thead>
+    <tbody>${rowsHTML}</tbody>
+    <tfoot>
+      <tr><td colspan="8" class="n">Subtotal</td><td class="n">${esc(fmtCurrency(subtotal, cur))}</td></tr>
+      ${isFormal ? `<tr><td colspan="8" class="n">Total Tax</td><td class="n">${esc(fmtCurrency(totalTax, cur))}</td></tr>` : ""}
+      <tr><td colspan="8" class="n" style="background:#F0FFF3">Grand Total</td><td class="n" style="background:#F0FFF3">${esc(fmtCurrency(grand, cur))}</td></tr>
+    </tfoot>
+  </table>
+  ${invoice.notes ? `<div class="terms"><b>Notes:</b> ${esc(invoice.notes)}</div>` : ""}
+  <div class="terms">This is a computer-generated invoice — signature not required.</div>
+  <div class="sig">
+    <div style="font-weight:800">For ${esc(companyName)}</div>
+    <div class="sub" style="margin-top:24px">Authorized Signatory</div>
+  </div>
+</body></html>`;
+  }, [invoice, party, totals]);
+
+  const handlePdf = useCallback(async () => {
+    if (!invoice || pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const html = buildInvoiceHTML();
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      if (Platform.OS === "web") {
+        try {
+          window.open(uri, "_blank");
+        } catch {
+          /* silent */
+        }
+        return;
+      }
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          mimeType: "application/pdf",
+          dialogTitle: `Invoice ${invoice.number}`,
+          UTI: "com.adobe.pdf",
+        });
+      } else {
+        Alert.alert("PDF ready", `Saved for ${invoice.number}`);
+      }
+    } catch (e) {
+      Alert.alert("PDF failed", (e as Error).message || "Could not build PDF.");
+    } finally {
+      setPdfBusy(false);
+    }
+  }, [invoice, pdfBusy, buildInvoiceHTML]);
+
   return (
     <ScrollView
       contentContainerStyle={styles.scroll}
@@ -345,13 +490,25 @@ export function InvoiceDetailView({ id }: { id: string }) {
             ) : null}
           </GlassCard>
 
-          <TouchableOpacity style={styles.primaryBtn} onPress={handleShare} activeOpacity={0.8}>
-            <Ionicons name="share-outline" size={18} color={colors.bg} />
-            <Text style={styles.primaryBtnText}>Share invoice · Save as PDF</Text>
+          <TouchableOpacity
+            style={[styles.primaryBtn, pdfBusy && { opacity: 0.6 }]}
+            onPress={handlePdf}
+            activeOpacity={0.8}
+            disabled={pdfBusy}
+          >
+            <Ionicons name="document-text-outline" size={18} color={colors.bg} />
+            <Text style={styles.primaryBtnText}>
+              {pdfBusy ? "PDF ban raha hai…" : "PDF Banao (1-click)"}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.secondaryBtn} onPress={handleShare} activeOpacity={0.8}>
+            <Ionicons name="share-outline" size={16} color={colors.brand} />
+            <Text style={styles.secondaryBtnText}>Share text summary</Text>
           </TouchableOpacity>
           <Text style={styles.tipText}>
-            Tip: from the share sheet, pick <Text style={styles.tipStrong}>Print</Text> and
-            choose <Text style={styles.tipStrong}>Save as PDF</Text> on Android.
+            Tip: <Text style={styles.tipStrong}>PDF Banao</Text> generates a
+            professional GST-ready PDF instantly. Formal invoices include HSN, tax
+            columns and signatory block.
           </Text>
         </>
       ) : null}
@@ -468,6 +625,19 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   primaryBtnText: { color: colors.bg, fontSize: 14, fontWeight: "800", letterSpacing: 0.3 },
+  secondaryBtn: {
+    marginTop: spacing.sm,
+    borderRadius: radii.pill,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    backgroundColor: colors.brandSoft,
+  },
+  secondaryBtnText: { color: colors.brand, fontSize: 13, fontWeight: "700" },
   tipText: {
     color: colors.textDim,
     fontSize: 11,

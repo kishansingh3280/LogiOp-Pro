@@ -3605,3 +3605,166 @@ agent_communication:
       turn due to context budget. Catalog backend also needs to be
       built for Fix 2's item dropdown.
 
+
+##====================================================================================================
+## PHASE 7 · BATCH C-1 (Fix 2 + Fix 3) — SHIPMENT REDESIGN + TRIP PROGRESS (2026-08-13)
+##====================================================================================================
+
+frontend:
+  - task: "Phase 7 Fix 2 — Shipment form bags-only redesign"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/shipments/new.tsx"
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Removed the top-level "Customers · Grahak" and
+          "Carriers · Vahak" sections entirely. New Section 3 is
+          Bags-only: each bag embeds its own End Customer picker
+          (with per-bag freight + INR/THB currency), Carrier picker
+          (with per-bag carrier_charge + INR/THB currency), Items
+          sub-list (with Catalog dropdown from /api/items), Weight
+          (kg), and Description. Auto-fetch logic: on carrier
+          select via `applyCarrierRates()` — pulls carrier_rates.
+          per_kg from /api/parties/{id}/meta, multiplies by bag
+          weight, and pre-fills carrier_charge (editable override).
+          Financials Section now auto-sums from BAGS: Total Bags,
+          Total Items, Total Milna Hai (INR+THB), Total Dena Hai
+          (INR+THB), Total Weight. Save payload: `bags[]` with
+          full per-bag structure; `party_id/party_ids/
+          carrier_party_id(s)` derived from unique bag references
+          for legacy consumers. Screenshot-verified.
+
+  - task: "Phase 7 Fix 3 — Trip capacity progress bar + bag allocation"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/bullion.tsx, /app/backend/server.py"
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Trip card in Bullion screen now renders a live progress
+          bar showing allocated_kg vs available_weight_kg. Colors:
+          green under 80%, orange 80-100%, red on overflow. Below
+          the bar: "30/55 kg · 55% · 25 kg free" or overflow:
+          "60/55 kg · 5 kg extra" (red). Backend enrichment: GET
+          /api/bullion/trips now aggregates bag weights across all
+          non-cancelled shipments whose carriers match each trip
+          carrier and stamps `allocated_kg` on the trip response.
+          Legacy shipments without `bags[]` count their top-level
+          weight_kg. Screenshot-verified with a live 0/30 kg
+          progress bar rendered on the Thai Airways TG315 trip.
+
+metadata:
+  test_sequence: 86
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      Batch C-1 complete (Fix 1 + Fix 2 + Fix 3). C-2 (Fix 4 GST
+      auto-fetch via RapidAPI, Fix 5 invoice PDF + formal warning,
+      Fix 6 live rates scrapers) awaits go-ahead in a fresh
+      conversation turn.
+
+
+##====================================================================================================
+## PHASE 7 · BATCH C-2 (Fix 4 + Fix 5) — GST LOOKUP + INVOICE PDF (2026-08-13)
+##====================================================================================================
+
+backend:
+  - task: "Phase 7 Fix 4 — GSTIN Verification via RapidAPI"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          New endpoint GET /api/parties/lookup-gstin?gstin=<15 char>
+          added around line 598-680. Reads RAPIDAPI_KEY from env
+          (injected as Emergent secret at runtime; NOT in .env).
+          Returns {valid, legal_name, trade_name, address, state,
+          reason} shape. When no key configured returns
+          {valid:false, reason:"no_api_key_configured"} — verified
+          200 locally in preview. In-memory _GSTIN_CACHE reused.
+
+frontend:
+  - task: "Phase 7 Fix 4 — Party form GSTIN auto-fill"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/components/party-form.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          GSTIN input field (15-char) with debounced lookup that
+          calls /api/parties/lookup-gstin and auto-fills party
+          name when the field is still blank. Status pills:
+          "Verifying GSTIN…", "✗ Invalid GSTIN or not found",
+          success state shows fetched legal/trade name. No lint
+          errors.
+
+  - task: "Phase 7 Fix 5 — Formal Invoice save warning"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/invoice/new.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          When user taps Save on a Formal (GST) invoice, an
+          Alert.alert popup appears — title "Formal Entry Confirm
+          karein?" with two buttons "Wapas Jao" (cancel) and
+          "Haan, Save Karo" (confirm → doSave()). Informal saves
+          skip the popup entirely. Zero lint errors.
+
+  - task: "Phase 7 Fix 5 — 1-click Professional GST PDF button"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/lib/invoice-detail-view.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Added handlePdf() using expo-print's printToFileAsync +
+          expo-sharing.shareAsync. Wired a new primary "PDF Banao
+          (1-click)" button (previously handleShare was the only
+          button). Kept legacy "Share text summary" as a secondary
+          button. buildInvoiceHTML() renders full GST-ready HTML
+          with HSN, tax columns, signatory block for Formal
+          invoices; a lighter layout for Informal. Zero lint
+          errors.
+
+metadata:
+  test_sequence: 87
+  run_ui: true
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      Phase 7 Batch C-2 code injection complete (Fix 4 GSTIN
+      RapidAPI + Fix 5 Formal warning + 1-click PDF button).
+      Zero lint errors. Backend + expo restarted; /api/parties/
+      lookup-gstin returns 200 with graceful no_api_key
+      fallback in preview. Requesting testing_agent to verify:
+      (1) backend /api/parties/lookup-gstin handles missing key,
+      invalid gstin, and valid 15-char gracefully; (2) frontend
+      Party form shows GSTIN field with lookup status pills;
+      (3) Invoice creation with Formal mode triggers confirm
+      popup with Hinglish text; (4) Invoice detail screen shows
+      "PDF Banao (1-click)" button that generates a PDF on
+      press. Fix 6 (Live Rates Scrapers) will follow.
+

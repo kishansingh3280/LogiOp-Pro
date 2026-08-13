@@ -85,35 +85,47 @@ export default function NewShipmentScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [direction]);
 
-  // ─── Section 3 · Parties & Cargo (Fix 6 · Phase 7 Batch B) ───
-  // Multiple customers, multiple carriers, per-bag pipeline.
+  // ─── Section 3 · Bags (Fix 2 · Phase 7 · Batch C-1) ───
+  // Bags-only pipeline. Each bag EMBEDS its own customer + carrier
+  // + items list (no separate top-level Customer/Carrier sections).
   const [allParties, setAllParties] = useState<Party[]>([]);
   const [partiesLoading, setPartiesLoading] = useState(false);
+  const [catalogItems, setCatalogItems] = useState<{ id: string; name: string; unit_price?: number }[]>([]);
 
-  type CustomerRow = { party_id: string; freight: string; currency: Currency };
-  type CarrierRow = { party_id: string; charge: string; currency: Currency };
+  type BagItem = { key: string; item_id: string; item_name: string; pieces: string };
   type BagRow = {
-    key: string; // local UI key
+    key: string;
     bag_no: number;
     weight_kg: string;
     description: string;
+    items: BagItem[];
     customer_party_id: string;
+    freight: string;
+    freight_currency: Currency;
     carrier_party_id: string;
+    carrier_charge: string;
+    carrier_charge_currency: Currency;
   };
 
-  const [customerRows, setCustomerRows] = useState<CustomerRow[]>([]);
-  const [carrierRows, setCarrierRows] = useState<CarrierRow[]>([]);
   const [bagRows, setBagRows] = useState<BagRow[]>([]);
   const [goods, setGoods] = useState<string>("");
-  const [pickerOpen, setPickerOpen] = useState<null | "customer" | "carrier">(null);
+  // Which bag's customer/carrier/item picker is currently open.
+  const [bagPickerOpen, setBagPickerOpen] = useState<
+    null | { bagKey: string; kind: "customer" | "carrier" | "item"; itemKey?: string }
+  >(null);
   const [partySearch, setPartySearch] = useState("");
 
   useEffect(() => {
     if (!token) return;
     setPartiesLoading(true);
-    apiGet<Party[]>(`/api/parties`)
-      .then((rows) => setAllParties(Array.isArray(rows) ? rows : []))
-      .catch(() => setAllParties([]))
+    Promise.all([
+      apiGet<Party[]>(`/api/parties`).catch(() => []),
+      apiGet<{ id: string; name: string; unit_price?: number }[]>(`/api/items`).catch(() => []),
+    ])
+      .then(([parties, items]) => {
+        setAllParties(Array.isArray(parties) ? parties : []);
+        setCatalogItems(Array.isArray(items) ? items : []);
+      })
       .finally(() => setPartiesLoading(false));
   }, [token]);
 
@@ -132,59 +144,25 @@ export default function NewShipmentScreen() {
   }, [allParties]);
 
   const pickerList = useMemo(() => {
-    const base = pickerOpen === "customer" ? customers : pickerOpen === "carrier" ? carriers : [];
+    if (!bagPickerOpen) return [];
+    const base =
+      bagPickerOpen.kind === "customer"
+        ? customers
+        : bagPickerOpen.kind === "carrier"
+        ? carriers
+        : [];
     const q = partySearch.trim().toLowerCase();
-    // Exclude parties already added to the corresponding row set.
-    const excluded =
-      pickerOpen === "customer"
-        ? new Set(customerRows.map((r) => r.party_id))
-        : new Set(carrierRows.map((r) => r.party_id));
-    const filtered = base.filter((p) => !excluded.has(p.id));
-    if (!q) return filtered;
-    return filtered.filter((p) => p.name.toLowerCase().includes(q));
-  }, [pickerOpen, customers, carriers, partySearch, customerRows, carrierRows]);
+    if (!q) return base;
+    return base.filter((p) => p.name.toLowerCase().includes(q));
+  }, [bagPickerOpen, customers, carriers, partySearch]);
 
-  const addCustomer = (id: string) => {
-    setCustomerRows((prev) => [
-      ...prev,
-      { party_id: id, freight: "", currency: "INR" },
-    ]);
-    setPickerOpen(null);
-  };
-  const addCarrier = (id: string) => {
-    setCarrierRows((prev) => [
-      ...prev,
-      { party_id: id, charge: "", currency: "INR" },
-    ]);
-    setPickerOpen(null);
-  };
-  const removeCustomer = (id: string) => {
-    setCustomerRows((prev) => prev.filter((r) => r.party_id !== id));
-    // Also clear any bag references to this customer.
-    setBagRows((prev) =>
-      prev.map((b) =>
-        b.customer_party_id === id ? { ...b, customer_party_id: "" } : b,
-      ),
-    );
-  };
-  const removeCarrier = (id: string) => {
-    setCarrierRows((prev) => prev.filter((r) => r.party_id !== id));
-    setBagRows((prev) =>
-      prev.map((b) =>
-        b.carrier_party_id === id ? { ...b, carrier_party_id: "" } : b,
-      ),
-    );
-  };
-  const updateCustomer = (id: string, patch: Partial<CustomerRow>) => {
-    setCustomerRows((prev) =>
-      prev.map((r) => (r.party_id === id ? { ...r, ...patch } : r)),
-    );
-  };
-  const updateCarrier = (id: string, patch: Partial<CarrierRow>) => {
-    setCarrierRows((prev) =>
-      prev.map((r) => (r.party_id === id ? { ...r, ...patch } : r)),
-    );
-  };
+  const itemPickerList = useMemo(() => {
+    const q = partySearch.trim().toLowerCase();
+    if (!q) return catalogItems;
+    return catalogItems.filter((i) => i.name.toLowerCase().includes(q));
+  }, [catalogItems, partySearch]);
+
+  // ─── Bag helpers ────────────────────────────────────────────────
   const addBag = () => {
     setBagRows((prev) => [
       ...prev,
@@ -193,57 +171,134 @@ export default function NewShipmentScreen() {
         bag_no: prev.length + 1,
         weight_kg: "",
         description: "",
-        customer_party_id: customerRows[0]?.party_id || "",
-        carrier_party_id: carrierRows[0]?.party_id || "",
+        items: [],
+        customer_party_id: "",
+        freight: "",
+        freight_currency: "INR",
+        carrier_party_id: "",
+        carrier_charge: "",
+        carrier_charge_currency: "INR",
       },
     ]);
   };
   const removeBag = (key: string) => {
     setBagRows((prev) =>
-      prev
-        .filter((b) => b.key !== key)
-        .map((b, i) => ({ ...b, bag_no: i + 1 })),
+      prev.filter((b) => b.key !== key).map((b, i) => ({ ...b, bag_no: i + 1 })),
     );
   };
   const updateBag = (key: string, patch: Partial<BagRow>) => {
     setBagRows((prev) => prev.map((b) => (b.key === key ? { ...b, ...patch } : b)));
   };
 
-  // Auto-totals for the Financials section.
-  const totalReceivableInr = useMemo(
-    () =>
-      customerRows
-        .filter((r) => r.currency === "INR")
-        .reduce((s, r) => s + (Number(r.freight) || 0), 0),
-    [customerRows],
-  );
-  const totalReceivableThb = useMemo(
-    () =>
-      customerRows
-        .filter((r) => r.currency === "THB")
-        .reduce((s, r) => s + (Number(r.freight) || 0), 0),
-    [customerRows],
-  );
-  const totalPayableInr = useMemo(
-    () =>
-      carrierRows
-        .filter((r) => r.currency === "INR")
-        .reduce((s, r) => s + (Number(r.charge) || 0), 0),
-    [carrierRows],
-  );
-  const totalPayableThb = useMemo(
-    () =>
-      carrierRows
-        .filter((r) => r.currency === "THB")
-        .reduce((s, r) => s + (Number(r.charge) || 0), 0),
-    [carrierRows],
-  );
+  // Fix 2 · Auto-fetch rates from party_meta when carrier is picked.
+  const applyCarrierRates = async (bagKey: string, carrierPartyId: string) => {
+    updateBag(bagKey, { carrier_party_id: carrierPartyId });
+    try {
+      const meta = await apiGet<{ carrier_rates?: { per_kg?: string; per_kg_ccy?: Currency } }>(
+        `/api/parties/${carrierPartyId}/meta`,
+      );
+      const perKg = Number(meta?.carrier_rates?.per_kg || 0);
+      const ccy = (meta?.carrier_rates?.per_kg_ccy as Currency) || "INR";
+      if (perKg > 0) {
+        const bag = bagRows.find((b) => b.key === bagKey);
+        const w = Number(bag?.weight_kg || 0);
+        if (w > 0) {
+          updateBag(bagKey, {
+            carrier_charge: (perKg * w).toFixed(0),
+            carrier_charge_currency: ccy,
+          });
+        } else {
+          updateBag(bagKey, { carrier_charge_currency: ccy });
+        }
+      }
+    } catch {
+      /* silent — user can enter manually */
+    }
+  };
+
+  const addItemToBag = (bagKey: string) => {
+    setBagRows((prev) =>
+      prev.map((b) =>
+        b.key === bagKey
+          ? {
+              ...b,
+              items: [
+                ...b.items,
+                {
+                  key: `it-${Date.now()}-${b.items.length}`,
+                  item_id: "",
+                  item_name: "",
+                  pieces: "1",
+                },
+              ],
+            }
+          : b,
+      ),
+    );
+  };
+  const updateBagItem = (bagKey: string, itemKey: string, patch: Partial<BagItem>) => {
+    setBagRows((prev) =>
+      prev.map((b) =>
+        b.key === bagKey
+          ? {
+              ...b,
+              items: b.items.map((it) => (it.key === itemKey ? { ...it, ...patch } : it)),
+            }
+          : b,
+      ),
+    );
+  };
+  const removeBagItem = (bagKey: string, itemKey: string) => {
+    setBagRows((prev) =>
+      prev.map((b) =>
+        b.key === bagKey ? { ...b, items: b.items.filter((it) => it.key !== itemKey) } : b,
+      ),
+    );
+  };
+
+  // ─── Totals ────────────────────────────────────────────────────
   const totalWeight = useMemo(
     () => bagRows.reduce((s, b) => s + (Number(b.weight_kg) || 0), 0),
     [bagRows],
   );
+  const totalItems = useMemo(
+    () =>
+      bagRows.reduce(
+        (s, b) => s + b.items.reduce((ss, it) => ss + (Number(it.pieces) || 0), 0),
+        0,
+      ),
+    [bagRows],
+  );
+  const totalReceivableInr = useMemo(
+    () =>
+      bagRows
+        .filter((b) => b.freight_currency === "INR")
+        .reduce((s, b) => s + (Number(b.freight) || 0), 0),
+    [bagRows],
+  );
+  const totalReceivableThb = useMemo(
+    () =>
+      bagRows
+        .filter((b) => b.freight_currency === "THB")
+        .reduce((s, b) => s + (Number(b.freight) || 0), 0),
+    [bagRows],
+  );
+  const totalPayableInr = useMemo(
+    () =>
+      bagRows
+        .filter((b) => b.carrier_charge_currency === "INR")
+        .reduce((s, b) => s + (Number(b.carrier_charge) || 0), 0),
+    [bagRows],
+  );
+  const totalPayableThb = useMemo(
+    () =>
+      bagRows
+        .filter((b) => b.carrier_charge_currency === "THB")
+        .reduce((s, b) => s + (Number(b.carrier_charge) || 0), 0),
+    [bagRows],
+  );
 
-  // ─── Section 4 · Financials (forex only — freight came from rows) ─
+  // ─── Section 4 · Financials (forex only — freight came from bags) ─
   const [forexRate, setForexRate] = useState<string>("");
 
   // ─── Section 4 · Meta ─────────────────────────────────────────
@@ -266,24 +321,15 @@ export default function NewShipmentScreen() {
   const [saving, setSaving] = useState(false);
 
   const validate = (): string | null => {
-    if (customerRows.length === 0) return "Please add at least one Customer.";
+    if (bagRows.length === 0) return "Please add at least one Bag.";
     if (!direction) return "Please choose a Direction.";
-    for (const r of customerRows) {
-      const f = Number(r.freight);
-      if (r.freight.trim() && (!Number.isFinite(f) || f < 0)) {
-        return "Freight amounts must be non-negative numbers.";
-      }
-    }
-    for (const r of carrierRows) {
-      const c = Number(r.charge);
-      if (r.charge.trim() && (!Number.isFinite(c) || c < 0)) {
-        return "Carrier charges must be non-negative numbers.";
-      }
-    }
     for (const b of bagRows) {
       const w = Number(b.weight_kg);
-      if (b.weight_kg.trim() && (!Number.isFinite(w) || w < 0)) {
-        return "Bag weight must be a non-negative number.";
+      if (!b.weight_kg.trim() || !Number.isFinite(w) || w <= 0) {
+        return `Bag #${b.bag_no}: enter a positive weight (kg).`;
+      }
+      if (!b.customer_party_id) {
+        return `Bag #${b.bag_no}: please select an End Customer.`;
       }
     }
     return null;
@@ -297,29 +343,36 @@ export default function NewShipmentScreen() {
     }
     setSaving(true);
     try {
-      // Fix 6 (Phase 7 · Batch B) — payload now carries `customers` and
-      // `bags` arrays. `party_id` / `carrier_party_id(s)` are set from
-      // the FIRST row of each collection so legacy consumers still see
-      // the primary customer/carrier.
+      // Fix 2 (Phase 7 · Batch C-1) · Bags-only payload. Each bag
+      // carries its own customer + carrier + freight + carrier
+      // charge + items. Top-level customer/carrier arrays are
+      // derived from the bags for legacy consumers.
       const bagPayload = bagRows.map((b) => ({
         bag_no: b.bag_no,
         weight_kg: Number(b.weight_kg) || 0,
         description: b.description.trim() || undefined,
-        customer_party_id: b.customer_party_id || undefined,
+        items: b.items
+          .filter((it) => it.item_id || it.item_name)
+          .map((it) => ({
+            item_id: it.item_id || undefined,
+            item_name: it.item_name,
+            pieces: Number(it.pieces) || 0,
+          })),
+        customer_party_id: b.customer_party_id,
+        freight: Number(b.freight) || 0,
+        freight_currency: b.freight_currency,
         carrier_party_id: b.carrier_party_id || undefined,
-      }));
-      const customersPayload = customerRows.map((r) => ({
-        party_id: r.party_id,
-        freight: Number(r.freight) || 0,
-        currency: r.currency,
-      }));
-      const carriersPayload = carrierRows.map((r) => ({
-        party_id: r.party_id,
-        charge: Number(r.charge) || 0,
-        currency: r.currency,
+        carrier_charge: Number(b.carrier_charge) || 0,
+        carrier_charge_currency: b.carrier_charge_currency,
       }));
 
-      const primaryCustomer = customerRows[0];
+      const uniqueCustomerIds = Array.from(
+        new Set(bagRows.map((b) => b.customer_party_id).filter(Boolean)),
+      );
+      const uniqueCarrierIds = Array.from(
+        new Set(bagRows.map((b) => b.carrier_party_id).filter(Boolean)),
+      );
+
       const payload: Record<string, unknown> = {
         direction,
         mode,
@@ -328,19 +381,13 @@ export default function NewShipmentScreen() {
         goods: goods.trim() || null,
         bag_count: bagRows.length,
         weight_kg: totalWeight,
-        party_id: primaryCustomer?.party_id,
-        party_ids: customerRows.map((r) => r.party_id),
-        customers: customersPayload,
-        carriers: carriersPayload,
+        party_id: uniqueCustomerIds[0],
+        party_ids: uniqueCustomerIds,
+        carrier_party_id: uniqueCarrierIds[0],
+        carrier_party_ids: uniqueCarrierIds.length > 1 ? uniqueCarrierIds : undefined,
         bags: bagPayload,
-        // Freight fields kept for legacy consumers — use primary
-        // customer's freight or fall back to sum of all customer
-        // freights (rough total).
-        freight:
-          primaryCustomer && primaryCustomer.freight.trim()
-            ? Number(primaryCustomer.freight) || 0
-            : totalReceivableInr + totalReceivableThb,
-        freight_currency: primaryCustomer?.currency || "INR",
+        freight: totalReceivableInr + totalReceivableThb,
+        freight_currency: bagRows[0]?.freight_currency || "INR",
         dispatch_date: dispatchDate || null,
         notes: notes.trim() || null,
         company_id: formCompany,
@@ -349,15 +396,6 @@ export default function NewShipmentScreen() {
       };
       if (consignmentNo.trim()) payload.consignment_no = consignmentNo.trim();
       if (forexRate.trim()) payload.forex_rate = Number(forexRate);
-      if (carrierRows[0]) payload.carrier_party_id = carrierRows[0].party_id;
-      if (carrierRows.length > 1) {
-        payload.carrier_party_ids = carrierRows.map((r) => r.party_id);
-      }
-      if (carrierRows[0]?.charge.trim()) {
-        payload.carrier_charge = Number(carrierRows[0].charge) || 0;
-        payload.carrier_currency = carrierRows[0].currency;
-        payload.carrier_charge_type = "flat";
-      }
 
       const res = await apiPost<{ id?: string }>("/api/shipments", payload);
       if (formCompany !== activeCompany) setActiveCompany(formCompany);
@@ -502,171 +540,15 @@ export default function NewShipmentScreen() {
             </View>
           </GlassCard>
 
-          {/* ── 3 · Parties & Cargo (Fix 6 · Phase 7 Batch B) ── */}
-          <SectionHeader index={3} title="Parties & Cargo" />
+          {/* ── 3 · Bags (Fix 2 · Phase 7 · Batch C-1) ── */}
+          <SectionHeader index={3} title="Bags" />
           <GlassCard>
-            {/* Customers (multiple) */}
             <View style={styles.subheadRow}>
-              <Text style={styles.subhead}>Customers · Grahak</Text>
-              <TouchableOpacity
-                style={styles.addChipBtn}
-                activeOpacity={0.75}
-                onPress={() => {
-                  setPickerOpen("customer");
-                  setPartySearch("");
-                }}
-              >
-                <Ionicons name="add-circle" size={14} color={colors.brand} />
-                <Text style={styles.addChipText}>Grahak Jodo</Text>
-              </TouchableOpacity>
-            </View>
-            {customerRows.length === 0 ? (
-              <Text style={styles.emptyRow}>No customers yet — tap “Grahak Jodo”.</Text>
-            ) : (
-              customerRows.map((row) => {
-                const p = partyById[row.party_id];
-                return (
-                  <View key={row.party_id} style={styles.partyRow}>
-                    <View style={[styles.avatarSm, styles.avatarCust]}>
-                      <Text style={styles.avatarSmText}>
-                        {(p?.name || "?").slice(0, 1).toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={{ flex: 1, marginRight: 6 }}>
-                      <Text style={styles.partyRowName} numberOfLines={1}>
-                        {p?.name || "—"}
-                      </Text>
-                      <View style={styles.miniAmountRow}>
-                        <Text style={styles.miniPrefix}>{ccySym(row.currency)}</Text>
-                        <TextInput
-                          style={styles.miniAmountInput}
-                          value={row.freight}
-                          onChangeText={(v) => updateCustomer(row.party_id, { freight: v })}
-                          keyboardType="decimal-pad"
-                          placeholder="Freight"
-                          placeholderTextColor={colors.textDim}
-                        />
-                        <View style={styles.ccyToggle}>
-                          {(["INR", "THB"] as Currency[]).map((c) => (
-                            <TouchableOpacity
-                              key={c}
-                              onPress={() => updateCustomer(row.party_id, { currency: c })}
-                              style={[
-                                styles.miniPill,
-                                row.currency === c ? styles.pillActive : styles.pillIdle,
-                              ]}
-                              activeOpacity={0.75}
-                            >
-                              <Text
-                                style={
-                                  row.currency === c
-                                    ? styles.pillTextActive
-                                    : styles.pillTextIdle
-                                }
-                              >
-                                {c}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => removeCustomer(row.party_id)}
-                      style={styles.removeBtn}
-                      activeOpacity={0.75}
-                    >
-                      <Ionicons name="close" size={16} color={colors.danger} />
-                    </TouchableOpacity>
-                  </View>
-                );
-              })
-            )}
-
-            {/* Carriers (multiple) */}
-            <View style={[styles.subheadRow, { marginTop: 18 }]}>
-              <Text style={styles.subhead}>Carriers · Vahak</Text>
-              <TouchableOpacity
-                style={styles.addChipBtn}
-                activeOpacity={0.75}
-                onPress={() => {
-                  setPickerOpen("carrier");
-                  setPartySearch("");
-                }}
-              >
-                <Ionicons name="add-circle" size={14} color={colors.brand} />
-                <Text style={styles.addChipText}>Vahak Jodo</Text>
-              </TouchableOpacity>
-            </View>
-            {carrierRows.length === 0 ? (
-              <Text style={styles.emptyRow}>No carriers yet — tap “Vahak Jodo”.</Text>
-            ) : (
-              carrierRows.map((row) => {
-                const p = partyById[row.party_id];
-                return (
-                  <View key={row.party_id} style={styles.partyRow}>
-                    <View style={[styles.avatarSm, styles.avatarCarr]}>
-                      <Ionicons name="airplane" size={12} color={colors.brand} />
-                    </View>
-                    <View style={{ flex: 1, marginRight: 6 }}>
-                      <Text style={styles.partyRowName} numberOfLines={1}>
-                        {p?.name || "—"}
-                      </Text>
-                      <View style={styles.miniAmountRow}>
-                        <Text style={styles.miniPrefix}>{ccySym(row.currency)}</Text>
-                        <TextInput
-                          style={styles.miniAmountInput}
-                          value={row.charge}
-                          onChangeText={(v) => updateCarrier(row.party_id, { charge: v })}
-                          keyboardType="decimal-pad"
-                          placeholder="Charge"
-                          placeholderTextColor={colors.textDim}
-                        />
-                        <View style={styles.ccyToggle}>
-                          {(["INR", "THB"] as Currency[]).map((c) => (
-                            <TouchableOpacity
-                              key={c}
-                              onPress={() => updateCarrier(row.party_id, { currency: c })}
-                              style={[
-                                styles.miniPill,
-                                row.currency === c ? styles.pillActive : styles.pillIdle,
-                              ]}
-                              activeOpacity={0.75}
-                            >
-                              <Text
-                                style={
-                                  row.currency === c
-                                    ? styles.pillTextActive
-                                    : styles.pillTextIdle
-                                }
-                              >
-                                {c}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => removeCarrier(row.party_id)}
-                      style={styles.removeBtn}
-                      activeOpacity={0.75}
-                    >
-                      <Ionicons name="close" size={16} color={colors.danger} />
-                    </TouchableOpacity>
-                  </View>
-                );
-              })
-            )}
-
-            {/* Bags subsection */}
-            <View style={[styles.subheadRow, { marginTop: 18 }]}>
-              <Text style={styles.subhead}>Bags</Text>
+              <Text style={styles.subhead}>Bags — sabhi</Text>
               <TouchableOpacity
                 style={styles.addChipBtn}
                 activeOpacity={0.75}
                 onPress={addBag}
-                disabled={customerRows.length === 0 && carrierRows.length === 0}
               >
                 <Ionicons name="add-circle" size={14} color={colors.brand} />
                 <Text style={styles.addChipText}>Bag Jodo</Text>
@@ -674,86 +556,234 @@ export default function NewShipmentScreen() {
             </View>
             {bagRows.length === 0 ? (
               <Text style={styles.emptyRow}>
-                No bags yet — add customers / carriers, then “Bag Jodo”.
+                No bags yet — tap “Bag Jodo” to add one.
               </Text>
             ) : (
-              bagRows.map((b) => (
-                <View key={b.key} style={styles.bagCard}>
-                  <View style={styles.bagHead}>
-                    <Text style={styles.bagNo}>Bag #{b.bag_no}</Text>
+              bagRows.map((b) => {
+                const customer = partyById[b.customer_party_id];
+                const carrier = partyById[b.carrier_party_id];
+                return (
+                  <View key={b.key} style={styles.bagCard}>
+                    <View style={styles.bagHead}>
+                      <Text style={styles.bagNo}>Bag #{b.bag_no}</Text>
+                      <TouchableOpacity
+                        onPress={() => removeBag(b.key)}
+                        style={styles.removeBtnSmall}
+                        activeOpacity={0.75}
+                      >
+                        <Ionicons name="close" size={14} color={colors.danger} />
+                      </TouchableOpacity>
+                    </View>
+
+                    <Label>Weight (kg)</Label>
+                    <TextInput
+                      style={styles.input}
+                      value={b.weight_kg}
+                      onChangeText={(v) => {
+                        updateBag(b.key, { weight_kg: v });
+                        // Recompute carrier charge if carrier + rate known
+                        if (b.carrier_party_id) {
+                          applyCarrierRates(b.key, b.carrier_party_id);
+                        }
+                      }}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.textDim}
+                    />
+
+                    {/* Items */}
+                    <View style={[styles.subheadRow, { marginTop: 12 }]}>
+                      <Text style={[styles.subhead, { fontSize: 11 }]}>Items</Text>
+                      <TouchableOpacity
+                        style={styles.addChipBtn}
+                        activeOpacity={0.75}
+                        onPress={() => addItemToBag(b.key)}
+                      >
+                        <Ionicons name="add-circle" size={12} color={colors.brand} />
+                        <Text style={styles.addChipText}>Item Jodo</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {b.items.length === 0 ? (
+                      <Text style={styles.emptyMini}>No items — optional.</Text>
+                    ) : (
+                      b.items.map((it) => (
+                        <View key={it.key} style={styles.itemRow}>
+                          <TouchableOpacity
+                            style={[styles.pickerBtn, { flex: 2 }]}
+                            activeOpacity={0.75}
+                            onPress={() => {
+                              setBagPickerOpen({
+                                bagKey: b.key,
+                                kind: "item",
+                                itemKey: it.key,
+                              });
+                              setPartySearch("");
+                            }}
+                          >
+                            <Ionicons name="cube-outline" size={14} color={colors.brand} />
+                            <Text
+                              style={[
+                                styles.pickerBtnText,
+                                {
+                                  color: it.item_name ? colors.text : colors.textDim,
+                                  fontSize: 12,
+                                },
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {it.item_name || "Choose item…"}
+                            </Text>
+                          </TouchableOpacity>
+                          <TextInput
+                            style={[styles.input, { flex: 1, textAlign: "center" }]}
+                            value={it.pieces}
+                            onChangeText={(v) => updateBagItem(b.key, it.key, { pieces: v })}
+                            keyboardType="number-pad"
+                            placeholder="Pcs"
+                            placeholderTextColor={colors.textDim}
+                          />
+                          <TouchableOpacity
+                            onPress={() => removeBagItem(b.key, it.key)}
+                            style={styles.removeBtnSmall}
+                            activeOpacity={0.75}
+                          >
+                            <Ionicons name="close" size={12} color={colors.danger} />
+                          </TouchableOpacity>
+                        </View>
+                      ))
+                    )}
+
+                    <Label style={{ marginTop: 12 }}>Description (optional)</Label>
+                    <TextInput
+                      style={styles.input}
+                      value={b.description}
+                      onChangeText={(v) => updateBag(b.key, { description: v })}
+                      placeholder="e.g. Gold, docs"
+                      placeholderTextColor={colors.textDim}
+                    />
+
+                    {/* End Customer */}
+                    <Label style={{ marginTop: 12 }}>End Customer</Label>
                     <TouchableOpacity
-                      onPress={() => removeBag(b.key)}
-                      style={styles.removeBtnSmall}
+                      style={styles.pickerBtn}
                       activeOpacity={0.75}
+                      onPress={() => {
+                        setBagPickerOpen({ bagKey: b.key, kind: "customer" });
+                        setPartySearch("");
+                      }}
                     >
-                      <Ionicons name="close" size={14} color={colors.danger} />
+                      <Ionicons name="person" size={14} color={colors.brand} />
+                      <Text
+                        style={[
+                          styles.pickerBtnText,
+                          { color: customer ? colors.text : colors.textDim },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {customer?.name || "Select customer…"}
+                      </Text>
+                      <Ionicons name="chevron-down" size={14} color={colors.textDim} />
                     </TouchableOpacity>
-                  </View>
-                  <View style={styles.rowSplit}>
-                    <View style={{ flex: 1 }}>
-                      <Label>Weight (kg)</Label>
+                    <View style={[styles.miniAmountRow, { marginTop: 8 }]}>
+                      <Text style={styles.miniPrefix}>{ccySym(b.freight_currency)}</Text>
                       <TextInput
-                        style={styles.input}
-                        value={b.weight_kg}
-                        onChangeText={(v) => updateBag(b.key, { weight_kg: v })}
+                        style={styles.miniAmountInput}
+                        value={b.freight}
+                        onChangeText={(v) => updateBag(b.key, { freight: v })}
                         keyboardType="decimal-pad"
-                        placeholder="0"
+                        placeholder="Freight"
                         placeholderTextColor={colors.textDim}
                       />
+                      <View style={styles.ccyToggle}>
+                        {(["INR", "THB"] as Currency[]).map((c) => (
+                          <TouchableOpacity
+                            key={c}
+                            onPress={() => updateBag(b.key, { freight_currency: c })}
+                            style={[
+                              styles.miniPill,
+                              b.freight_currency === c ? styles.pillActive : styles.pillIdle,
+                            ]}
+                            activeOpacity={0.75}
+                          >
+                            <Text
+                              style={
+                                b.freight_currency === c
+                                  ? styles.pillTextActive
+                                  : styles.pillTextIdle
+                              }
+                            >
+                              {c}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Label>Description</Label>
+
+                    {/* Carrier */}
+                    <Label style={{ marginTop: 12 }}>Carrier</Label>
+                    <TouchableOpacity
+                      style={styles.pickerBtn}
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        setBagPickerOpen({ bagKey: b.key, kind: "carrier" });
+                        setPartySearch("");
+                      }}
+                    >
+                      <Ionicons name="airplane" size={14} color={colors.brand} />
+                      <Text
+                        style={[
+                          styles.pickerBtnText,
+                          { color: carrier ? colors.text : colors.textDim },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {carrier?.name || "Select carrier…"}
+                      </Text>
+                      <Ionicons name="chevron-down" size={14} color={colors.textDim} />
+                    </TouchableOpacity>
+                    <View style={[styles.miniAmountRow, { marginTop: 8 }]}>
+                      <Text style={styles.miniPrefix}>
+                        {ccySym(b.carrier_charge_currency)}
+                      </Text>
                       <TextInput
-                        style={styles.input}
-                        value={b.description}
-                        onChangeText={(v) => updateBag(b.key, { description: v })}
-                        placeholder="e.g. Gold, docs"
+                        style={styles.miniAmountInput}
+                        value={b.carrier_charge}
+                        onChangeText={(v) => updateBag(b.key, { carrier_charge: v })}
+                        keyboardType="decimal-pad"
+                        placeholder="Charge (auto)"
                         placeholderTextColor={colors.textDim}
                       />
+                      <View style={styles.ccyToggle}>
+                        {(["INR", "THB"] as Currency[]).map((c) => (
+                          <TouchableOpacity
+                            key={c}
+                            onPress={() =>
+                              updateBag(b.key, { carrier_charge_currency: c })
+                            }
+                            style={[
+                              styles.miniPill,
+                              b.carrier_charge_currency === c
+                                ? styles.pillActive
+                                : styles.pillIdle,
+                            ]}
+                            activeOpacity={0.75}
+                          >
+                            <Text
+                              style={
+                                b.carrier_charge_currency === c
+                                  ? styles.pillTextActive
+                                  : styles.pillTextIdle
+                              }
+                            >
+                              {c}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
                     </View>
                   </View>
-                  <Label style={{ marginTop: 10 }}>Customer</Label>
-                  <View style={styles.pillRow}>
-                    {customerRows.map((r) => {
-                      const p = partyById[r.party_id];
-                      const active = b.customer_party_id === r.party_id;
-                      return (
-                        <TouchableOpacity
-                          key={r.party_id}
-                          onPress={() => updateBag(b.key, { customer_party_id: r.party_id })}
-                          activeOpacity={0.75}
-                          style={activePill(active)}
-                        >
-                          <Text style={activePillText(active)}>{p?.name || "—"}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    {customerRows.length === 0 ? (
-                      <Text style={styles.emptyMini}>Add a customer first</Text>
-                    ) : null}
-                  </View>
-                  <Label style={{ marginTop: 10 }}>Carrier</Label>
-                  <View style={styles.pillRow}>
-                    {carrierRows.map((r) => {
-                      const p = partyById[r.party_id];
-                      const active = b.carrier_party_id === r.party_id;
-                      return (
-                        <TouchableOpacity
-                          key={r.party_id}
-                          onPress={() => updateBag(b.key, { carrier_party_id: r.party_id })}
-                          activeOpacity={0.75}
-                          style={activePill(active)}
-                        >
-                          <Text style={activePillText(active)}>{p?.name || "—"}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                    {carrierRows.length === 0 ? (
-                      <Text style={styles.emptyMini}>Add a carrier first</Text>
-                    ) : null}
-                  </View>
-                </View>
-              ))
+                );
+              })
             )}
 
             <Label style={{ marginTop: 14 }}>Goods (overall description)</Label>
@@ -766,10 +796,15 @@ export default function NewShipmentScreen() {
             />
           </GlassCard>
 
-          {/* ── 4 · Financials · Auto-summed from customer/carrier rows */}
+          {/* ── 4 · Financials · Auto-summed from bag rows ── */}
           <SectionHeader index={4} title="Financials" />
           <GlassCard>
             <View style={styles.totalsRow}>
+              <View style={styles.totalsCol}>
+                <Text style={styles.totalsLabel}>Total Bags</Text>
+                <Text style={styles.totalsValue}>{bagRows.length}</Text>
+                <Text style={styles.totalsSub}>{totalItems} items</Text>
+              </View>
               <View style={styles.totalsCol}>
                 <Text style={styles.totalsLabel}>Total Milna Hai</Text>
                 <Text style={[styles.totalsValue, { color: colors.credit }]}>
@@ -795,7 +830,6 @@ export default function NewShipmentScreen() {
               <View style={styles.totalsCol}>
                 <Text style={styles.totalsLabel}>Total Weight</Text>
                 <Text style={styles.totalsValue}>{totalWeight.toFixed(1)} kg</Text>
-                <Text style={styles.totalsSub}>{bagRows.length} bag(s)</Text>
               </View>
             </View>
 
@@ -809,7 +843,6 @@ export default function NewShipmentScreen() {
               placeholderTextColor={colors.textDim}
             />
           </GlassCard>
-
           {/* ── 4 · Meta ──────────────────────────────────── */}
           <SectionHeader index={5} title="Notes" />
           <GlassCard>
@@ -842,18 +875,22 @@ export default function NewShipmentScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* ── Party picker modal ─────────────────────────────── */}
-      {pickerOpen ? (
-        <Pressable style={styles.pickerBackdrop} onPress={() => setPickerOpen(null)}>
+      {/* ── Bag picker modal (customer / carrier / item) ─────── */}
+      {bagPickerOpen ? (
+        <Pressable style={styles.pickerBackdrop} onPress={() => setBagPickerOpen(null)}>
           <Pressable style={styles.pickerCard} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.pickerTitle}>
-              {pickerOpen === "customer" ? "Select customer" : "Select carrier(s)"}
+              {bagPickerOpen.kind === "customer"
+                ? "Select customer"
+                : bagPickerOpen.kind === "carrier"
+                ? "Select carrier"
+                : "Choose item"}
             </Text>
             <TextInput
               style={styles.input}
               value={partySearch}
               onChangeText={setPartySearch}
-              placeholder="Search by name…"
+              placeholder="Search…"
               placeholderTextColor={colors.textDim}
               autoFocus
             />
@@ -862,35 +899,67 @@ export default function NewShipmentScreen() {
                 <View style={{ padding: 20, alignItems: "center" }}>
                   <ActivityIndicator color={colors.brand} />
                 </View>
-              ) : pickerList.length === 0 ? (
-                <Text style={styles.pickerEmpty}>
-                  No parties found. Add one from the Parties tab first.
-                </Text>
-              ) : (
-                pickerList.map((p) => {
-                  return (
+              ) : bagPickerOpen.kind === "item" ? (
+                itemPickerList.length === 0 ? (
+                  <Text style={styles.pickerEmpty}>
+                    No items found. Add items in Catalog first.
+                  </Text>
+                ) : (
+                  itemPickerList.map((it) => (
                     <TouchableOpacity
-                      key={p.id}
+                      key={it.id}
                       style={styles.pickerRow}
                       onPress={() => {
-                        if (pickerOpen === "customer") addCustomer(p.id);
-                        else addCarrier(p.id);
+                        if (bagPickerOpen.itemKey) {
+                          updateBagItem(bagPickerOpen.bagKey, bagPickerOpen.itemKey, {
+                            item_id: it.id,
+                            item_name: it.name,
+                          });
+                        }
+                        setBagPickerOpen(null);
                       }}
                       activeOpacity={0.75}
                     >
-                      <Ionicons name="add-circle" size={18} color={colors.brand} />
-                      <Text style={styles.pickerRowText}>{p.name}</Text>
+                      <Ionicons name="cube-outline" size={16} color={colors.brand} />
+                      <Text style={styles.pickerRowText}>{it.name}</Text>
                     </TouchableOpacity>
-                  );
-                })
+                  ))
+                )
+              ) : pickerList.length === 0 ? (
+                <Text style={styles.pickerEmpty}>
+                  No parties found. Add one from Parties tab first.
+                </Text>
+              ) : (
+                pickerList.map((p) => (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={styles.pickerRow}
+                    onPress={() => {
+                      if (bagPickerOpen.kind === "customer") {
+                        updateBag(bagPickerOpen.bagKey, { customer_party_id: p.id });
+                      } else {
+                        applyCarrierRates(bagPickerOpen.bagKey, p.id);
+                      }
+                      setBagPickerOpen(null);
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Ionicons
+                      name={bagPickerOpen.kind === "customer" ? "person" : "airplane"}
+                      size={16}
+                      color={colors.brand}
+                    />
+                    <Text style={styles.pickerRowText}>{p.name}</Text>
+                  </TouchableOpacity>
+                ))
               )}
             </ScrollView>
             <TouchableOpacity
               style={styles.pickerDone}
-              onPress={() => setPickerOpen(null)}
+              onPress={() => setBagPickerOpen(null)}
               activeOpacity={0.85}
             >
-              <Text style={styles.pickerDoneText}>Done</Text>
+              <Text style={styles.pickerDoneText}>Cancel</Text>
             </TouchableOpacity>
           </Pressable>
         </Pressable>
@@ -1171,6 +1240,12 @@ const styles = StyleSheet.create({
   totalsRow: {
     flexDirection: "row",
     gap: 8,
+  },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 6,
   },
   totalsCol: {
     flex: 1,
