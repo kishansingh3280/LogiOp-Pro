@@ -38,6 +38,10 @@ type Party = {
   email?: string;
   address?: string;
   gstin?: string;
+  lat?: string | number | null;
+  lng?: string | number | null;
+  notes?: string | null;
+  photo_url?: string | null;
   opening_balance_inr?: number;
   opening_balance_thb?: number;
 };
@@ -64,13 +68,14 @@ type Shipment = {
   direction: "IN_TO_TH" | "TH_TO_IN";
 };
 
+// Fix 3b (Phase 3) · Match parties list palette.
 const ROLE_TINT: Record<string, { tint: string; soft: string }> = {
-  customer: { tint: colors.info, soft: colors.infoSoft },
-  end_customer: { tint: colors.info, soft: colors.infoSoft },
-  supplier: { tint: colors.warn, soft: colors.warnSoft },
-  vendor: { tint: colors.warn, soft: colors.warnSoft },
-  carrier: { tint: colors.brand, soft: colors.brandSoft },
-  other: { tint: colors.textMuted, soft: colors.divider },
+  customer: { tint: "#00FFFF", soft: "rgba(0,255,255,0.15)" },
+  end_customer: { tint: "#FFD700", soft: "rgba(255,215,0,0.15)" },
+  supplier: { tint: "#FFA500", soft: "rgba(255,165,0,0.15)" },
+  vendor: { tint: "#FFA500", soft: "rgba(255,165,0,0.15)" },
+  carrier: { tint: "#8B00FF", soft: "rgba(139,0,255,0.15)" },
+  other: { tint: "#9E9E9E", soft: "rgba(158,158,158,0.15)" },
 };
 
 export default function PartyDetail() {
@@ -138,6 +143,9 @@ export default function PartyDetail() {
 
   const roleKey = (party?.role || "other").toLowerCase();
   const roleTint = ROLE_TINT[roleKey] ?? ROLE_TINT.other;
+
+  // Fix 3b · Only show "Book Lalamove" when party has coordinates.
+  const hasCoords = !!(party?.lat && party?.lng);
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
@@ -217,21 +225,54 @@ export default function PartyDetail() {
               <BalanceBox amount={balance.thb} currency="THB" />
             </View>
 
-            {/* View Statement CTA */}
-            <TouchableOpacity
-              style={styles.statementBtn}
-              onPress={() => router.push(`/party/${id}/statement` as any)}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="document-text" size={18} color={colors.brand} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.statementTitle}>View full statement</Text>
-                <Text style={styles.statementSub}>
-                  Running balance · Debit / Credit · Share as PDF
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
-            </TouchableOpacity>
+            {/* Fix 3b · Action buttons row */}
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => router.push(`/party/${id}/statement` as any)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="document-text" size={16} color={colors.brand} />
+                <Text style={styles.actionText}>View Ledger</Text>
+              </TouchableOpacity>
+              {hasCoords ? (
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/lalamove",
+                      params: { party_id: id },
+                    } as any)
+                  }
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="bicycle" size={16} color={colors.brand} />
+                  <Text style={styles.actionText}>Book Lalamove</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => router.push(`/party/${id}/edit` as any)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="create" size={16} color={colors.brand} />
+                <Text style={styles.actionText}>Edit Party</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Fix 3b · Contact card (phone, address, lat/long) */}
+            <Text style={styles.section}>Contact</Text>
+            <GlassCard>
+              <LabelValueRow label="Phone" value={party.phone || "—"} />
+              <LabelValueRow label="Address" value={party.address || "—"} />
+              {(party.lat || party.lng) ? (
+                <LabelValueRow
+                  label="Lat / Long"
+                  value={`${party.lat || "—"}, ${party.lng || "—"}`}
+                />
+              ) : null}
+              {party.notes ? <LabelValueRow label="Notes" value={party.notes} /> : null}
+            </GlassCard>
 
             {/* Contact / meta */}
             <Text style={styles.section}>Details</Text>
@@ -496,6 +537,28 @@ const styles = StyleSheet.create({
   },
   statementTitle: { color: colors.text, fontSize: 14, fontWeight: "800" },
   statementSub: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+  // Fix 3b · Action buttons row (View Ledger / Book Lalamove / Edit).
+  actionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: spacing.md,
+  },
+  actionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    backgroundColor: colors.brandSoft,
+    flexGrow: 1,
+    justifyContent: "center",
+    minWidth: "30%",
+  },
+  actionText: { color: colors.text, fontSize: 12, fontWeight: "800" },
   loading: {
     flexDirection: "row",
     gap: spacing.sm,

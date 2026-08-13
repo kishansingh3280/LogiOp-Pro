@@ -25,6 +25,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { appendCompanyQuery, useCompany } from "@/src/lib/company-context";
 import { fmtCurrency, shortDate } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard } from "@/src/lib/ui";
@@ -51,6 +52,7 @@ type LedgerSummary = {
 
 export default function LedgerScreen() {
   const { token } = useAuth();
+  const { activeCompany, activeMode } = useCompany();
   const router = useRouter();
   const [summary, setSummary] = useState<LedgerSummary | null>(null);
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
@@ -67,7 +69,9 @@ export default function LedgerScreen() {
     try {
       const [s, e, p, v] = await Promise.all([
         apiGet<LedgerSummary>("/api/dashboard/ledger-summary"),
-        apiGet<LedgerEntry[]>("/api/ledger/entries"),
+        apiGet<LedgerEntry[]>(
+          appendCompanyQuery("/api/ledger/entries", activeCompany, activeMode),
+        ),
         apiGet<Party[]>("/api/parties"),
         apiGet<{ entry_ids: string[] }>("/api/ledger/verified").catch(() => ({ entry_ids: [] })),
       ]);
@@ -82,11 +86,11 @@ export default function LedgerScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeCompany, activeMode]);
 
   useEffect(() => {
     if (token) load();
-  }, [token, load]);
+  }, [token, load, activeCompany, activeMode]);
 
   // Fix 5 · Refresh ledger data whenever the screen regains focus
   //         (e.g. returning from the /ledger/new-entry route).

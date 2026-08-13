@@ -1,0 +1,39 @@
+{
+  "summary": "Phase 2 · All 8 surgical fixes verified end-to-end (backend + frontend). Backend: pytest test_iter76_company_mode_filters.py 7/7 passed — GET /api/shipments?company_id=awadh&mode=formal=5, singh_exports/formal=0, /api/invoices awadh/formal=2, /api/ledger/entries=30, /api/trips=1, awadh/informal=0, legacy records default correctly. Frontend (tablet 1200x800): (1) Sidebar has NO green left rail — computed borderLeft='0px', no child rgba(0,255,136) element with width<=4px. (2) Overview tap cycles rgb(0,255,255) → rgb(0,191,255) → rgb(64,224,208) → back to rgb(0,255,255) — exact palette match. (3) Now Brief auto-loaded with 'Good morning Kishan Sir! ☀️' greeting on tablet within seconds — no timeout/retry needed. (4) Backend counts all match spec. (5) AsyncStorage key 'logiop_company_prefs' persists {\"activeCompany\":\"singh_exports\",\"activeMode\":\"informal\"} across page reload, then restored to awadh/formal also persisted. (6) Two pill rows above FY selector: Awadh|Singh Exp., Formal|Informal. Active pill uses currentl nav color — cyan rgb(0,255,255) with black text weight 800 on Overview; switches to purple rgb(139,0,255) when on Shipments route. Inactive pills use rgba(255,255,255,0.08) with white text weight 600. (7) Switching Awadh→Singh Exp. via sidebar pill triggers /shipments refetch — visible list transitions to 'No shipments yet' empty state with 'No shipment selected' on right pane. Switching back restores Awadh rows. (8) Dashboard header chip 'Awadh · Formal' present directly below LIVE pill with background rgba(255,255,255,0.12), fontSize 11px, color white, borderRadius 10px — exact spec match. Chip only renders on Overview route (spec-compliant). Deprecated packages / RN warnings unchanged from prior iterations (shadow*, pointerEvents, useNativeDriver JS fallback — all non-blocking).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "GlobalSidebar brandDot / general shadow usage", "issue": "Multiple 'shadow*' style props deprecated — use 'boxShadow'. Reference: /app/frontend/src/lib/global-sidebar.tsx:549-553 and other files across app."},
+      {"component": "GlobalSidebar ParticleLayer / shipments ShipmentRow", "issue": "props.pointerEvents is deprecated — use style.pointerEvents. Reference: /app/frontend/src/lib/global-sidebar.tsx:405 (View pointerEvents=\"none\"), /app/frontend/app/(tabs)/shipments.tsx:289."},
+      {"component": "Animated.loop (ParticleLayer)", "issue": "useNativeDriver: true has no effect on web preview — warning: 'RCTAnimation module missing, falling back to JS-based animation'. Reference: /app/frontend/src/lib/global-sidebar.tsx:420-430. Non-blocking; only affects web preview."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter76_company_mode_filters.py",
+    "/app/test_reports/pytest/iter76_results.xml"
+  ],
+  "action_items": [
+    "(Non-blocking, pre-existing) Migrate `pointerEvents=\"none\"` on <View> in global-sidebar.tsx:405 (ParticleLayer) and `pointerEvents=\"box-only\"` in shipments.tsx:289 to style-level `pointerEvents`.",
+    "(Non-blocking, pre-existing) Replace legacy shadowColor/shadowOffset/shadowOpacity/shadowRadius across sidebar brandDot and shared button styles with the unified `boxShadow` string.",
+    "(Optional) Consider suppressing/guarding `useNativeDriver: true` on web builds inside ParticleLayer to remove console noise.",
+    "No functional action items — all 8 Phase 2 fixes work exactly per spec."
+  ],
+  "critical_code_review_comments": [
+    "company-context.tsx correctly hydrates from AsyncStorage before flipping ready=true and defensively falls back to defaults on corrupt JSON — good.",
+    "global-sidebar.tsx activeNavColor useMemo depends on [pathname, colorCycle] with eslint-disable — safe because NAV_ITEMS is a module constant.",
+    "Now Brief AbortController timeout is set to 25s per spec — greeting resolved <5s in test, so premature abort is not triggered. Confirmed via visible 'Good morning...' greeting.",
+    "isActive() for non-overview items uses startsWith on multiple prefixes — could match unintended paths, but current NAV_ITEMS prefixes are disjoint so no collision. Fine for now."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter76_company_mode_filters.py (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7 pytest)", "frontend": "100% (8/8 fixes verified)"},
+  "seed_data_creation": "None — used existing seeded shipments/invoices/ledger/trips. Verified defaults via curl.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 2 (8 surgical fixes) fully verified. Use tablet width 1200x800 for sidebar/pill/chip tests. Dashboard header chip only renders on '/' route by design. AsyncStorage key is 'logiop_company_prefs' (JSON). Backend host localhost:8001 for pytest, public URL https://opsi-complete.preview.emergentagent.com for browser tests. Auto-login persists via expo-secure-store. Pre-existing RN deprecation warnings (shadow*, pointerEvents, useNativeDriver) remain and are non-blocking.",
+  "rca_of_issue": "N/A — no bugs found. All Phase 2 fixes work as specified."
+}

@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/lib/auth-context";
+import { useCompany } from "@/src/lib/company-context";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard, Pill } from "@/src/lib/ui";
 
@@ -84,9 +85,76 @@ const MENU: MenuItem[] = [
   },
 ];
 
+// Fix 1 (Phase 3) · pill + summary helpers for BUSINESS SETTINGS section.
+function BizPill({
+  label,
+  active,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.75}
+      style={[
+        stylesBiz.pill,
+        active
+          ? { backgroundColor: "#00FF88" }
+          : { backgroundColor: "rgba(255,255,255,0.08)" },
+        disabled && { opacity: 0.35 },
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={active ? { selected: true } : {}}
+    >
+      <Text
+        style={[
+          stylesBiz.pillText,
+          { color: active ? "#000" : "#FFFFFF", fontWeight: active ? "800" : "600" },
+        ]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function buildFilterSummary(
+  activeCompany: "awadh" | "singh_exports" | null,
+  activeMode: "formal" | "informal" | null,
+): string {
+  if (activeCompany === null) return "Showing: All data (Master)";
+  const cName = activeCompany === "singh_exports" ? "Singh Exp." : "Awadh Ent.";
+  const mName =
+    activeMode === null ? "All" : activeMode === "informal" ? "Informal" : "Formal";
+  return `Showing: ${cName} · ${mName}`;
+}
+
+const stylesBiz = StyleSheet.create({
+  pill: {
+    flex: 1,
+    minHeight: 32,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pillText: { fontSize: 12, letterSpacing: 0.2 },
+});
+
 export default function MoreScreen() {
   const { user, authError } = useAuth();
   const router = useRouter();
+  const { activeCompany, activeMode, setActiveCompany, setActiveMode } =
+    useCompany();
 
   const visible = MENU.filter((m) => !m.adminOnly || user?.role === "Admin");
 
@@ -129,6 +197,58 @@ export default function MoreScreen() {
           />
         </GlassCard>
 
+        {/* Fix 1 (Phase 3) · Business Settings — company + mode switcher,
+            moved from sidebar. Master = no filter; All = mode omitted. */}
+        <Text style={styles.section}>BUSINESS SETTINGS</Text>
+        <GlassCard style={styles.bizCard}>
+          <Text style={styles.bizLabel}>Company</Text>
+          <View style={styles.bizRow}>
+            <BizPill
+              label="Awadh Ent."
+              active={activeCompany === "awadh"}
+              onPress={() => setActiveCompany("awadh")}
+            />
+            <BizPill
+              label="Singh Exp."
+              active={activeCompany === "singh_exports"}
+              onPress={() => setActiveCompany("singh_exports")}
+            />
+            <BizPill
+              label="Master"
+              active={activeCompany === null}
+              onPress={() => {
+                // Master → both filters off so ALL data is visible.
+                setActiveCompany(null);
+                setActiveMode(null);
+              }}
+            />
+          </View>
+
+          <Text style={styles.bizLabel}>Mode</Text>
+          <View style={styles.bizRow}>
+            <BizPill
+              label="Formal"
+              active={activeMode === "formal"}
+              onPress={() => setActiveMode("formal")}
+              disabled={activeCompany === null}
+            />
+            <BizPill
+              label="Informal"
+              active={activeMode === "informal"}
+              onPress={() => setActiveMode("informal")}
+              disabled={activeCompany === null}
+            />
+            <BizPill
+              label="All"
+              active={activeMode === null}
+              onPress={() => setActiveMode(null)}
+              disabled={activeCompany === null}
+            />
+          </View>
+
+          <Text style={styles.bizSummary}>{buildFilterSummary(activeCompany, activeMode)}</Text>
+        </GlassCard>
+
         {/* Menu */}
         <Text style={styles.section}>Modules</Text>
         {visible.map((item) => (
@@ -166,6 +286,30 @@ const styles = StyleSheet.create({
   scroll: { padding: spacing.lg, paddingBottom: 100 },
   title: { color: colors.text, fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
   subtitle: { color: colors.textMuted, fontSize: 12, marginTop: 2, marginBottom: spacing.lg },
+  // Fix 1 (Phase 3) · Business Settings section.
+  bizCard: {
+    padding: spacing.md,
+    gap: 8,
+    marginBottom: spacing.lg,
+  },
+  bizLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginTop: 4,
+  },
+  bizRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  bizSummary: {
+    color: colors.textDim,
+    fontSize: 12,
+    fontStyle: "italic",
+    marginTop: 6,
+  },
   userCard: {
     padding: spacing.md,
     flexDirection: "row",

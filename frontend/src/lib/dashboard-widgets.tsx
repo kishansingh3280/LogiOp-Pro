@@ -16,7 +16,7 @@
  */
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -28,7 +28,7 @@ import {
   View,
 } from "react-native";
 
-import { apiGet, apiPost } from "./api";
+import { apiGet } from "./api";
 import { useAuth } from "./auth-context";
 import { fmtCurrency, shortDate } from "./format";
 import { colors, radii, spacing } from "./theme";
@@ -44,26 +44,51 @@ export function NowBriefCard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fix 3 (Phase 2) · APK-safe fetch:
+  //   • Explicit Authorization: Bearer <token> header (do not rely on
+  //     a global interceptor — some builds strip it).
+  //   • AbortController with hard 25 s ceiling; on abort we surface
+  //     "Tap to retry" instead of a spinner-forever state.
+  //   • Every retry cancels any prior in-flight request.
+  const abortRef = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
-    if (!token) return; // AuthProvider blocks until token exists, but be defensive
+    if (!token) return;
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const timer = setTimeout(() => controller.abort(), 25_000);
     setLoading(true);
     setError(null);
     try {
-      const res = await apiPost<{ brief: string; generated_at?: string }>(
-        "/api/dashboard/now-brief",
-        {},
-      );
-      setBrief(res.brief || "");
-      setAt(res.generated_at || null);
+      const base = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+      const res = await fetch(`${base}/api/dashboard/now-brief`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { brief?: string; generated_at?: string };
+      setBrief(data.brief || "");
+      setAt(data.generated_at || null);
     } catch (e) {
-      setError((e as Error).message);
+      const isAbort = (e as Error).name === "AbortError";
+      setError(isAbort ? "timeout" : (e as Error).message);
     } finally {
+      clearTimeout(timer);
+      if (abortRef.current === controller) abortRef.current = null;
       setLoading(false);
     }
   }, [token]);
 
   useEffect(() => {
     if (token) load();
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
   }, [token, load]);
 
   return (

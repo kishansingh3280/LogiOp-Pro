@@ -33,6 +33,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { useCompany } from "@/src/lib/company-context";
 import { fmtCurrency, shortDate } from "@/src/lib/format";
 import { useUiVoice } from "@/src/lib/papa-mode";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -87,6 +88,7 @@ type Party = { id: string; name: string };
 // ── Screen ─────────────────────────────────────────────────────────
 export default function HomeScreen() {
   const { user, token, authError, refresh } = useAuth();
+  const { activeCompany, activeMode } = useCompany();
   const voice = useUiVoice();
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -233,6 +235,32 @@ export default function HomeScreen() {
             tint={token ? colors.brand : authError ? colors.danger : colors.warn}
             soft={token ? colors.brandSoft : authError ? colors.dangerSoft : colors.warnSoft}
           />
+        </View>
+
+        {/* Fix 8 (Phase 2) · Company + Mode context chip.
+            Fix 2 (Phase 3) · Now tappable — routes to More tab so the
+            user can change Business Settings. Text respects null
+            (Master / All) states. */}
+        <View style={styles.companyChipRow}>
+          <TouchableOpacity
+            onPress={() => router.push("/(tabs)/more" as any)}
+            activeOpacity={0.75}
+            style={styles.companyChip}
+            accessibilityRole="button"
+            accessibilityLabel="Open Business Settings"
+          >
+            <Text style={styles.companyChipText}>
+              {activeCompany === null
+                ? "Master — All Data"
+                : `${activeCompany === "singh_exports" ? "Singh Exp." : "Awadh"} · ${
+                    activeMode === null
+                      ? "All"
+                      : activeMode === "informal"
+                        ? "Informal"
+                        : "Formal"
+                  }`}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Route heading */}
@@ -512,6 +540,23 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 13,
     marginBottom: spacing.lg,
+  },
+  // Fix 8 (Phase 2) · Company + mode context chip below LIVE pill.
+  companyChipRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 6,
+  },
+  companyChip: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  companyChipText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
   },
   greetCard: { padding: spacing.lg, marginBottom: spacing.md },
   eyebrow: {

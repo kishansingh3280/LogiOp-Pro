@@ -31,6 +31,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AmbientBackground } from "@/src/lib/ambient-background";
 import { AuthProvider } from "@/src/lib/auth-context";
+import { CompanyProvider } from "@/src/lib/company-context";
 import { ErrorBoundary } from "@/src/lib/error-boundary";
 import { GlobalSidebar } from "@/src/lib/global-sidebar";
 import { OpsiOrb } from "@/src/lib/opsi-orb";
@@ -95,6 +96,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ErrorBoundary label="root">
           <AuthProvider>
+            <CompanyProvider>
             <StatusBar style="light" />
             <AmbientBackground />
 
@@ -163,6 +165,7 @@ export default function RootLayout() {
 
             {/* Floating OPSI orb — sits over every screen. */}
             <OpsiOrb />
+            </CompanyProvider>
           </AuthProvider>
         </ErrorBoundary>
       </SafeAreaProvider>

@@ -45,6 +45,28 @@ type NavItem = {
   matchPrefixes: string[];
 };
 
+// Fix 2 · Per-item cycling color palettes. Each tap on a nav item
+// advances that item's counter to the next color in its list. When
+// the item is active it uses the current color for icon/text and a
+// soft rgba(color, 0.18) background.
+const ITEM_PALETTES: Record<string, string[]> = {
+  overview: ["#00FFFF", "#00BFFF", "#40E0D0"],
+  shipments: ["#8B00FF", "#9B59B6", "#6A0DAD"],
+  invoices: ["#FFD700", "#FFA500", "#FFEC8B"],
+  ledger: ["#B76E79", "#FF69B4", "#C48B9F"],
+  trips: ["#007AFF", "#0055FF", "#4169E1"],
+  more: ["#FF6B6B", "#FF4500", "#FF7F50"],
+};
+
+// Convert `#RRGGBB` → `rgba(r,g,b,alpha)` for translucent tinting.
+export function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 const NAV_ITEMS: NavItem[] = [
   {
     key: "overview",
@@ -108,6 +130,17 @@ export function GlobalSidebar({
   const pathname = usePathname() || "/";
   const router = useRouter();
 
+  // Fix 2 · Per-item color-cycle counter. Bumped on every tap of that
+  // nav item so the active tint advances through ITEM_PALETTES[key].
+  const [colorCycle, setColorCycle] = useState<Record<string, number>>({
+    overview: 0,
+    shipments: 0,
+    invoices: 0,
+    ledger: 0,
+    trips: 0,
+    more: 0,
+  });
+
   const isActive = (item: NavItem): boolean => {
     // Exact "/" match takes precedence for Overview so "/shipments"
     // doesn't accidentally match Overview's "/" prefix.
@@ -119,10 +152,11 @@ export function GlobalSidebar({
     );
   };
 
+  // Fix 6 removed (Phase 3) — company/mode switcher moved to More tab.
+
   return (
     <View style={[styles.sidebar, { width }]}>
-      {/* Left-edge neon-green glow rail (Fix 3) */}
-      <View pointerEvents="none" style={styles.leftGlowRail} />
+      {/* Fix 1 · Left-edge neon-green glow rail removed. */}
 
       {/* Floating gold + silver particles behind everything */}
       <ParticleLayer />
@@ -144,6 +178,8 @@ export function GlobalSidebar({
         </TouchableOpacity>
       </View>
 
+      {/* Fix 1 (Phase 3) · Company + Mode switcher moved to More tab. */}
+
       {/* FY selector */}
       <View style={{ paddingHorizontal: spacing.md, marginBottom: 4, zIndex: 1 }}>
         <FyPicker collapsed={collapsed} />
@@ -152,28 +188,43 @@ export function GlobalSidebar({
       <View style={styles.sidebarNav}>
         {NAV_ITEMS.map((item) => {
           const active = isActive(item);
+          // Fix 2 · Resolve current cycled color for this item.
+          const palette = ITEM_PALETTES[item.key] || ["#FFFFFF"];
+          const cycleIdx = (colorCycle[item.key] ?? 0) % palette.length;
+          const color = palette[cycleIdx];
+          const activeBg = hexToRgba(color, 0.18);
+          const inactiveText = "rgba(255,255,255,0.45)";
           return (
             <TouchableOpacity
               key={item.key}
-              onPress={() => router.push(item.href as any)}
+              onPress={() => {
+                setColorCycle((prev) => ({
+                  ...prev,
+                  [item.key]: (prev[item.key] ?? 0) + 1,
+                }));
+                router.push(item.href as any);
+              }}
               activeOpacity={0.75}
-              style={[styles.sidebarItem, active && styles.sidebarItemActive]}
+              style={[
+                styles.sidebarItem,
+                active && { backgroundColor: activeBg },
+              ]}
               accessibilityRole="button"
               accessibilityLabel={item.label}
               accessibilityState={active ? { selected: true } : {}}
             >
-              {active ? <View style={styles.sidebarActiveRail} /> : null}
+              {/* Fix 1 + 2 · No left border/rail on any item. */}
               <Ionicons
                 name={active ? item.iconActive : item.icon}
                 size={20}
-                color={active ? colors.brand : colors.textDim}
+                color={active ? color : inactiveText}
                 style={styles.sidebarIcon}
               />
               {!collapsed ? (
                 <Text
                   style={[
                     styles.sidebarLabel,
-                    { color: active ? colors.brand : colors.textMuted },
+                    { color: active ? color : inactiveText },
                   ]}
                   numberOfLines={1}
                 >
@@ -388,20 +439,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
 
-  // Fix 3 · Left-edge neon glow rail
-  leftGlowRail: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 2,
-    backgroundColor: "#00FF88",
-    opacity: 0.6,
-    shadowColor: "#00FF88",
-    shadowOffset: { width: 0, height: 0 },
-    shadowRadius: 8,
-    shadowOpacity: 0.9,
-  },
+  // Fix 1 · leftGlowRail removed (no left border/line on sidebar).
 
   // Fix 3 · Particle layer sits BEHIND every nav item
   particleLayer: {
@@ -459,24 +497,8 @@ const styles = StyleSheet.create({
     gap: 12,
     position: "relative",
   },
-  sidebarItemActive: {
-    backgroundColor: colors.brandSoft,
-    borderWidth: 1,
-    borderColor: colors.brandBorder,
-  },
-  sidebarActiveRail: {
-    position: "absolute",
-    left: -8,
-    top: 8,
-    bottom: 8,
-    width: 3,
-    borderRadius: 2,
-    backgroundColor: colors.brand,
-    shadowColor: colors.brand,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.7,
-    shadowRadius: 4,
-  },
+  // Fix 1 + 2 · sidebarItemActive + sidebarActiveRail removed — active
+  // background + tint are now applied inline from the per-item palette.
   sidebarIcon: { width: 20, textAlign: "center" },
   sidebarLabel: { fontSize: 13, fontWeight: "700", flex: 1 },
   sidebarFooter: {

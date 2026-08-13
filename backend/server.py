@@ -518,6 +518,41 @@ async def ledger_entry_verify(entry_id: str, patch: VerifyEntryPatch, request: R
     return {"ok": True, "entry_id": entry_id, "verified": patch.verified, "verified_at": now_iso}
 
 
+# ───────── Party local meta overlay (Fix 3 · Phase 3) ─────────────
+# Upstream party schema does not store `notes` or `photo_url`. We stash
+# them locally in `party_meta` keyed by party_id and merge into the
+# response inside the catch-all proxy on read. `lat`/`lng` ARE already
+# supported by upstream so we don't overlay those.
+class PartyMeta(BaseModel):
+    party_id: str
+    notes: Optional[str] = None
+    photo_url: Optional[str] = None
+
+
+@api_router.put("/parties/{party_id}/meta")
+async def party_meta_upsert(party_id: str, body: PartyMeta):
+    """Upsert local overlay fields (notes, photo_url) for a party."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "party_id": party_id,
+        "notes": body.notes,
+        "photo_url": body.photo_url,
+        "updated_at": now_iso,
+    }
+    await db.party_meta.update_one(
+        {"party_id": party_id}, {"$set": doc}, upsert=True
+    )
+    return {"ok": True, **doc}
+
+
+@api_router.get("/parties/{party_id}/meta")
+async def party_meta_get(party_id: str):
+    doc = await db.party_meta.find_one({"party_id": party_id})
+    if not doc:
+        return {"party_id": party_id, "notes": None, "photo_url": None}
+    return _clean_mongo_id(doc)
+
+
 @api_router.get("/ledger/verified")
 async def ledger_verified_map(party_id: Optional[str] = None):
     """Return the set of verified ledger entry IDs (optionally filtered
@@ -562,9 +597,21 @@ class Trip(BaseModel):
 
 
 @api_router.get("/trips")
-async def trips_list():
+async def trips_list(company_id: str = "awadh", mode: str = "formal"):
+    """Fix 4 · Company + mode aware trip listing.
+    Records without company_id/company_mode default to awadh/formal so
+    the filter is safe against legacy documents. `mode` query param is
+    stored internally as `company_mode` to avoid clashing with any
+    transport-mode field.
+    """
     docs = await db.trips.find().sort("departure_date", -1).to_list(500)
-    return [_clean_mongo_id(d) for d in docs]
+    out = []
+    for d in docs:
+        d_cid = d.get("company_id") or "awadh"
+        d_mode = d.get("company_mode") or "formal"
+        if d_cid == company_id and d_mode == mode:
+            out.append(_clean_mongo_id(d))
+    return out
 
 
 @api_router.get("/trips/{trip_id}")
@@ -579,6 +626,9 @@ async def trips_get(trip_id: str):
 async def trips_create(trip: Trip, request: Request):
     doc = trip.dict()
     doc.update(audit_stamp(request, creating=True, source=request.state.audit_source))
+    # Fix 4 · Stamp company_id + company_mode from query params (default awadh/formal).
+    doc.setdefault("company_id", request.query_params.get("company_id") or "awadh")
+    doc.setdefault("company_mode", request.query_params.get("mode") or "formal")
     await db.trips.insert_one(doc.copy())
     return _clean_mongo_id(doc)
 
@@ -5256,6 +5306,33 @@ async def proxy_to_remote_backend(path: str, request: Request):
 
     body = await request.body()
 
+    # Fix 4 (Phase 2) · Company + mode filter for read-only list endpoints
+    # that live on the upstream backend. We strip company_id/mode from
+    # the forwarded query (upstream is unaware of them) and apply the
+    # filter to the JSON array response instead. For mutating verbs on
+    # these paths we stamp the fields into the payload so future rows
+    # inherit the tag.
+    #
+    # NOTE: shipments already own a `mode` field with values like
+    # "hand_carry" / "sea_freight" — completely unrelated to our
+    # company mode. We store our filter under `company_mode` internally
+    # but keep the API query param named `mode` as the user specced.
+    _cm_paths = {"shipments", "invoices", "ledger/entries"}
+    company_id_q = request.query_params.get("company_id")
+    mode_q = request.query_params.get("mode")
+    apply_cm_filter = (
+        request.method == "GET"
+        and path in _cm_paths
+        and (company_id_q or mode_q)
+    )
+    fwd_params: Any = request.query_params
+    if apply_cm_filter:
+        fwd_params = [
+            (k, v)
+            for k, v in request.query_params.multi_items()
+            if k not in ("company_id", "mode")
+        ]
+
     # For mutating verbs with JSON bodies, inject audit fields directly into
     # the payload so the remote backend persists them even if it doesn't
     # inspect our custom headers. Silent no-op on malformed / non-JSON.
@@ -5278,6 +5355,17 @@ async def proxy_to_remote_backend(path: str, request: Request):
                 query_company = request.query_params.get("company")
                 if query_company and not payload.get("company"):
                     payload["company"] = query_company
+                # Fix 4 (Phase 2) · Stamp company_id + company_mode on
+                # shipments, invoices, ledger entries create/update so
+                # future filters see the tag. Explicit body value wins
+                # over URL param. We use `company_mode` internally to
+                # avoid clashing with shipments' existing `mode` field
+                # (hand_carry / sea_freight / …).
+                if path in {"shipments", "invoices", "ledger/entries"}:
+                    q_cid = request.query_params.get("company_id") or "awadh"
+                    q_mode = request.query_params.get("mode") or "formal"
+                    payload.setdefault("company_id", q_cid)
+                    payload.setdefault("company_mode", q_mode)
                 body = json.dumps(payload).encode()
                 fwd_headers.pop("content-length", None)
         except (json.JSONDecodeError, ValueError):
@@ -5287,7 +5375,7 @@ async def proxy_to_remote_backend(path: str, request: Request):
         resp = await _proxy_client.request(
             request.method,
             target_url,
-            params=request.query_params,
+            params=fwd_params,
             headers=fwd_headers,
             content=body,
         )
@@ -5310,8 +5398,68 @@ async def proxy_to_remote_backend(path: str, request: Request):
     }
     if request.method == "GET" and path in _cache_paths:
         resp_headers["Cache-Control"] = "public, max-age=30"
+
+    # Fix 4 (Phase 2) · Filter the JSON array response by company_id/mode.
+    # Records missing the tags default to awadh / formal so MVP data
+    # remains visible. We read `company_mode` (see naming rationale
+    # above) but never touch shipments' transport-mode field.
+    resp_content = resp.content
+    if apply_cm_filter and (resp.status_code == 200):
+        try:
+            arr = json.loads(resp_content)
+            if isinstance(arr, list):
+                want_cid = company_id_q or "awadh"
+                want_mode = mode_q or "formal"
+                filtered = [
+                    r
+                    for r in arr
+                    if isinstance(r, dict)
+                    and (r.get("company_id") or "awadh") == want_cid
+                    and (r.get("company_mode") or "formal") == want_mode
+                ]
+                resp_content = json.dumps(filtered).encode()
+                resp_headers.pop("content-length", None)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Fix 3 (Phase 3) · Merge party_meta overlay (notes, photo_url) into
+    # party GET responses so the frontend sees a unified party object.
+    if (
+        request.method == "GET"
+        and (path == "parties" or path.startswith("parties/"))
+        and resp.status_code == 200
+    ):
+        try:
+            data = json.loads(resp_content)
+            if isinstance(data, list):
+                ids = [d.get("id") for d in data if isinstance(d, dict) and d.get("id")]
+                if ids:
+                    metas = await db.party_meta.find({"party_id": {"$in": ids}}).to_list(5000)
+                    m: Dict[str, Dict[str, Any]] = {}
+                    for x in metas:
+                        m[x["party_id"]] = {
+                            "notes": x.get("notes"),
+                            "photo_url": x.get("photo_url"),
+                        }
+                    for d in data:
+                        if isinstance(d, dict):
+                            over = m.get(d.get("id") or "") or {}
+                            d.setdefault("notes", over.get("notes"))
+                            d.setdefault("photo_url", over.get("photo_url"))
+                    resp_content = json.dumps(data).encode()
+                    resp_headers.pop("content-length", None)
+            elif isinstance(data, dict) and data.get("id"):
+                over = await db.party_meta.find_one({"party_id": data["id"]})
+                if over:
+                    data.setdefault("notes", over.get("notes"))
+                    data.setdefault("photo_url", over.get("photo_url"))
+                    resp_content = json.dumps(data).encode()
+                    resp_headers.pop("content-length", None)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
     return Response(
-        content=resp.content,
+        content=resp_content,
         status_code=resp.status_code,
         headers=resp_headers,
         media_type=resp.headers.get("content-type"),

@@ -27,6 +27,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { appendCompanyQuery, useCompany } from "@/src/lib/company-context";
 import { fmtCurrency, shortDate, titleCase } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard, Pill } from "@/src/lib/ui";
@@ -107,6 +108,7 @@ const STATUS: Record<string, { tint: string; soft: string }> = {
 
 export default function BullionScreen() {
   const { token } = useAuth();
+  const { activeCompany, activeMode } = useCompany();
   const router = useRouter();
   const [trips, setTrips] = useState<BullionTrip[] | null>(null);
   const [genericTrips, setGenericTrips] = useState<GenericTrip[] | null>(null);
@@ -123,8 +125,12 @@ export default function BullionScreen() {
     setError(null);
     try {
       const [t, gt, x, r, v, ps] = await Promise.all([
-        apiGet<BullionTrip[]>("/api/bullion/trips"),
-        apiGet<GenericTrip[]>("/api/trips").catch(() => [] as GenericTrip[]),
+        apiGet<BullionTrip[]>(
+          appendCompanyQuery("/api/bullion/trips", activeCompany, activeMode),
+        ),
+        apiGet<GenericTrip[]>(
+          appendCompanyQuery("/api/trips", activeCompany, activeMode),
+        ).catch(() => [] as GenericTrip[]),
         apiGet<BullionTxn[]>("/api/bullion/transactions"),
         apiGet<BullionRates>("/api/bullion/rates").catch(() => null as BullionRates | null),
         apiGet<VaultSummary>("/api/bullion/vault").catch(() => null as VaultSummary | null),
@@ -145,11 +151,11 @@ export default function BullionScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeCompany, activeMode]);
 
   useEffect(() => {
     if (token) load();
-  }, [token, load]);
+  }, [token, load, activeCompany, activeMode]);
 
   // Fix 5 · Refresh trips after returning from /trips/new full-page route.
   useFocusEffect(

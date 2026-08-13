@@ -28,6 +28,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { appendCompanyQuery, useCompany } from "@/src/lib/company-context";
 import { shortDate, titleCase } from "@/src/lib/format";
 import { ShipmentDetailView } from "@/src/lib/shipment-detail-view";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -73,6 +74,7 @@ function handleNewShipment() {
 
 export default function ShipmentsScreen() {
   const { token } = useAuth();
+  const { activeCompany, activeMode } = useCompany();
   const isTablet = useIsTablet();
   const [items, setItems] = useState<Shipment[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -85,7 +87,9 @@ export default function ShipmentsScreen() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiGet<Shipment[]>("/api/shipments");
+      const data = await apiGet<Shipment[]>(
+        appendCompanyQuery("/api/shipments", activeCompany, activeMode),
+      );
       const list = Array.isArray(data) ? data : [];
       setItems(list);
     } catch (e) {
@@ -93,11 +97,11 @@ export default function ShipmentsScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeCompany, activeMode]);
 
   useEffect(() => {
     if (token) load();
-  }, [token, load]);
+  }, [token, load, activeCompany, activeMode]);
 
   const filtered = useMemo(() => {
     let list = items || [];

@@ -28,6 +28,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useIsTablet } from "@/src/hooks/use-is-tablet";
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { appendCompanyQuery, useCompany } from "@/src/lib/company-context";
 import { fmtCurrency, shortDate, titleCase } from "@/src/lib/format";
 import { InvoiceDetailView } from "@/src/lib/invoice-detail-view";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -83,6 +84,7 @@ function handleNewInvoice() {
 
 export default function InvoicesScreen() {
   const { token } = useAuth();
+  const { activeCompany, activeMode } = useCompany();
   const router = useRouter();
   const isTablet = useIsTablet();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
@@ -98,7 +100,9 @@ export default function InvoicesScreen() {
     setError(null);
     try {
       const [invs, ps] = await Promise.all([
-        apiGet<Invoice[]>("/api/invoices"),
+        apiGet<Invoice[]>(
+          appendCompanyQuery("/api/invoices", activeCompany, activeMode),
+        ),
         apiGet<Party[]>("/api/parties"),
       ]);
       setInvoices(Array.isArray(invs) ? invs : []);
@@ -108,11 +112,11 @@ export default function InvoicesScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeCompany, activeMode]);
 
   useEffect(() => {
     if (token) load();
-  }, [token, load]);
+  }, [token, load, activeCompany, activeMode]);
 
   const partyMap = useMemo(() => {
     const m: Record<string, string> = {};

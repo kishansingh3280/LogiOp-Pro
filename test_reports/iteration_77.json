@@ -1,0 +1,29 @@
+{
+  "summary": "Phase 3 · 3 surgical fixes fully verified. Backend: 10/10 pytest passes (party create with lat/lng strings, party_meta overlay upsert + merge on GET, shipments Master/All company_id omission). Frontend: Sidebar has NO Company/Mode pills (only FY selector, nav, shipment stats, JARVIS AURA); More tab shows BUSINESS SETTINGS section with 2 rows of 3 pills each (Awadh Ent. | Singh Exp. | Master and Formal | Informal | All); Master pill toggles null and dims Mode row; italic summary shows 'Showing: Awadh Ent. · Formal' → 'Showing: All data (Master)' on Master click; Dashboard chip renders 'Awadh · Formal'; /(tabs)/parties list has search bar, 5 filter chips, avatar-coloured cards (Customer cyan, Carrier purple), INR balance right-aligned green/red, FAB present bottom-right; /party/new full-page form renders Name*, 4 Role pills, Phone, Address, Latitude, Longitude, Notes, disabled 'Add Photo — Coming Soon' placeholder, Save Party button.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase3_parties.py",
+    "/app/test_reports/pytest/phase3_parties.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "company-context.tsx correctly persists CompanyId|null and CompanyMode|null under AsyncStorage key logiop_company_prefs; appendCompanyQuery helper cleanly omits params when either is null (Fix 1c).",
+    "party_meta overlay in server.py cleanly upserts notes+photo_url and merges them into GET /api/parties/{id} via the catch-all proxy — verified via 4 backend tests.",
+    "BizPill in more.tsx correctly dims (opacity 0.35) Mode pills when activeCompany === null."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase3_parties.py (new — 10 tests)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "3 TEST_ prefixed parties created via backend tests for lat/lng and meta-overlay verification.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All Phase 3 surgical fixes (1a sidebar clean, 1b More tab pills, 1c null-aware fetches, 2 dashboard chip, 3a parties list redesign, 3b detail, 3c new/edit forms, 3d backend party_meta overlay) implemented and verified. Backend test at /app/backend/tests/test_phase3_parties.py can be reused for regression.",
+  "rca_of_issue": "N/A — no issues found."
+}
