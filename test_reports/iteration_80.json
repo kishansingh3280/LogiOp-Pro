@@ -1,0 +1,29 @@
+{
+  "summary": "Phase 5 · FIX 3 (carrier_rates on party_meta) retest — ALL PASS. Backend (5/5 pytest) + frontend UI spot-check on carrier party. Additive $set regression added and passing.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase5_fixes.py",
+    "/app/test_reports/pytest/phase5_carrier_rates_retest.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PartyMeta model now includes `carrier_rates: Optional[Dict[str, Any]]` — verified at server.py:526-531.",
+    "party_meta_upsert uses body.dict(exclude_unset=True) with additive $set — server.py:534-548. Additive regression proven (notes then carrier_rates.per_kg — both persist).",
+    "Proxy merge overlays carrier_rates on GET /api/parties + GET /api/parties/{id} — server.py:5485-5506."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase5_fixes.py (added party detail merge test + additive-$set regression test)"
+  ],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% (edit → save → reload persistence verified)"},
+  "seed_data_creation": "Test-only parties: TEST_CarrierPhase5_* and TEST_AdditivePhase5_* (auto-created per pytest run, safe to leave).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "FIX 3 is complete and green. Backend test file /app/backend/tests/test_phase5_fixes.py contains 5 test cases: PUT persists carrier_rates, GET returns carrier_rates, party detail merges carrier_rates, additive $set partial updates preserve prior keys, and basic health/login sanity. Frontend party rate card selectors: button text 'Edit Rates' / 'Save Rates'; rate inputs use placeholder='—' (em dash). Carrier party used for UI spot-check: Arun Carriers (a6c25f64-db4f-4da0-b5dd-fe7b10c507ab).",
+  "rca_of_issue": "Original bug — PartyMeta pydantic model didn't declare carrier_rates so requests were silently dropped, and upserts used the full dict which blanked unset keys. Fix (verified): (1) added carrier_rates field, (2) exclude_unset dict + $set, (3) overlay merge on list & detail GETs. All three fully verified end-to-end via backend pytest and browser UI reload."
+}

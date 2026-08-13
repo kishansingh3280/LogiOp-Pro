@@ -118,9 +118,9 @@ export async function runPartyStatement(party: Party): Promise<void> {
   lines.push(`Closing (THB): ${fmtCurrency(balThb, "THB")}`);
   const status =
     balInr > 0 || balThb > 0
-      ? "THEY OWE US"
+      ? "INSE LENA HAI"
       : balInr < 0 || balThb < 0
-        ? "WE OWE THEM"
+        ? "INHE DENA HAI"
         : "SETTLED";
   lines.push(`Status: ${status}`);
   await Share.share(

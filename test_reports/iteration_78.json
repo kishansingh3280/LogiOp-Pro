@@ -1,0 +1,32 @@
+{
+  "summary": "Phase 4 · 5 fixes fully verified end-to-end. Backend: 6/6 pytest passes — GET /api/forex/rates returns {thb_to_inr:2.35, usd_to_inr:83.5, inr_to_thb≈0.4255, as_of}; POST /api/dashboard/now-brief first-call generates fresh (LLM ~10s) then subsequent call returns cached=true in <500 ms; MOST IMPORTANTLY the cache survives `sudo supervisorctl restart backend` (Mongo-backed persistence, in-memory L1 lost but Mongo L2 restores instantly) — verified by wiping `now_brief_cache` collection → 1st call fresh → restart → 2nd call cached=true; POST /api/ledger/entries accepts company_id+company_mode in body without error and row persists. Frontend (mobile 390x844): (1) /(tabs)/more Modules list has 'Parties' row (icon 'people', subtitle 'Customers, carriers, contacts') at the TOP followed by Bags → Lalamove ('car-sport' icon confirmed by grep + visual) → Catalog → Admin → Reports → OPSI → Settings; (2) /_layout NowBriefPrewarm fires POST /api/dashboard/now-brief right after auth token loads — visible in backend logs (multiple 200 OKs per mount); (3) /ledger renders 4 summary cards (Receivable INR ₹70,906 · Receivable THB ฿15,407 · Payable INR ₹76,928.78 · Payable THB ฿35,225) followed by ALL 22 parties list with colored circular avatars (Carrier=purple, Customer=cyan, End Customer=gold), INR balance right-aligned (green +/red −), THB balance below when non-zero, chevron on far right — NO chip filter strip, NO FAB, NO Recent Transactions tab; tapping a row routes to /party/[id]/statement; (4) /party/[id]/statement — back button + party name + share icon in header, identity GlassCard with 'STATEMENT · CARRIER' + name + date range + THEY OWE US/WE OWE THEM/SETTLED pill; TWO separate GlassCards for INR and THB current balance; bank-statement table Date|Description|Debit(red)|Credit(green)|Balance(white) with verified ✓ on the RIGHT after Balance; 'Share statement · Save as PDF' + 'Add Entry' + 'Mark as Verified · till today' CTAs all visible; Add Entry routes to /ledger/new-entry?party_id=[id]; (5) /ledger/new-entry — full-page form with header back btn, Party dropdown pre-filled from URL (Abhishek Singh selected as green pill), Type segment (You Got·Credit green / You Gave·Debit red, default Credit), Amount + Currency (INR/THB/USD pills, INR default), live INR preview '≈ ₹235 at ₹2.35/THB' when THB selected and '≈ ₹8,350 at ₹83.50/USD' when USD selected, Description, Date (default 2026-08-13), Company (Awadh/Singh Exp., Awadh default green highlight), Mode (Formal/Informal, Informal default green highlight), Cancel + Save Entry buttons. All auto-login working correctly via SEED_KISHAN_PASSWORD.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/party/[id]/statement", "issues": ["Header 'THEY OWE US/WE OWE THEM' pill logic uses OR (closingInr>0 || closingThb>0) which can be misleading for mixed-currency parties — e.g., Abhishek Singh shows top pill 'THEY OWE US' green (because THB +฿400>0) even though INR balance is −₹49,800 (WE OWE THEM). Minor cosmetic — spec did not require net-off logic, and per-currency cards clearly show each side. Flagging for future polish only."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter78_phase4_fixes.py",
+    "/app/test_reports/pytest/iter78_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:599-610 · GET /api/forex/rates returns hard-coded ballpark rates as documented — safe MVP; recommend admin console tuning endpoint post-MVP.",
+    "server.py:2652-2675 · Two-level cache (in-memory L1 + Mongo L2 collection `now_brief_cache`) correctly persists across backend restarts — verified live.",
+    "_layout.tsx:184-193 · NowBriefPrewarm fire-and-forget with `.catch(()=>{})` — no error surfacing; correct for a background pre-warm.",
+    "ledger/new-entry.tsx:113-124 · USD normalisation to INR is safe (backend accepts only INR/THB per proxy schema) and preserves rupee accuracy via forex rate — correct MVP behaviour."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter78_phase4_fixes.py (new — 6 tests: forex, now-brief cache generate+cached, cache survives restart, ledger entry create awadh/informal, create singh/formal, ledger-summary reachable)"
+  ],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100%"},
+  "seed_data_creation": "2 TEST_iter78 ledger entries created against existing party 'Abhishek Singh' — one Awadh/Informal INR credit, one Singh/Formal THB debit. Both persist in DB and appear on statement.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All Phase 4 fixes (Parties row in More, Lalamove car-sport icon, Mongo-persistent now-brief cache w/ frontend pre-warm, khata-book ledger, bank-statement party detail, full-page multi-currency new-entry form + /api/forex/rates) implemented and verified. Backend test at /app/backend/tests/test_iter78_phase4_fixes.py can be reused as regression; note that it restarts the backend twice and takes ~12s. Auth uses `access_token` field (not `token`).",
+  "rca_of_issue": "N/A — no issues found."
+}

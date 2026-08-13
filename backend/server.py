@@ -527,29 +527,37 @@ class PartyMeta(BaseModel):
     party_id: str
     notes: Optional[str] = None
     photo_url: Optional[str] = None
+    # Fix 3 (Phase 5) · Free-form carrier quoting rates.
+    carrier_rates: Optional[Dict[str, Any]] = None
 
 
 @api_router.put("/parties/{party_id}/meta")
 async def party_meta_upsert(party_id: str, body: PartyMeta):
-    """Upsert local overlay fields (notes, photo_url) for a party."""
+    """Upsert local overlay fields (notes, photo_url, carrier_rates)
+    for a party. Additive `$set` so partial updates don't blank other
+    keys — callers can PATCH just `carrier_rates` without losing notes.
+    """
     now_iso = datetime.now(timezone.utc).isoformat()
-    doc = {
-        "party_id": party_id,
-        "notes": body.notes,
-        "photo_url": body.photo_url,
-        "updated_at": now_iso,
-    }
+    payload = body.dict(exclude_unset=True, exclude={"party_id"})
+    payload["party_id"] = party_id
+    payload["updated_at"] = now_iso
     await db.party_meta.update_one(
-        {"party_id": party_id}, {"$set": doc}, upsert=True
+        {"party_id": party_id}, {"$set": payload}, upsert=True
     )
-    return {"ok": True, **doc}
+    stored = await db.party_meta.find_one({"party_id": party_id}) or payload
+    return {"ok": True, **_clean_mongo_id(stored)}
 
 
 @api_router.get("/parties/{party_id}/meta")
 async def party_meta_get(party_id: str):
     doc = await db.party_meta.find_one({"party_id": party_id})
     if not doc:
-        return {"party_id": party_id, "notes": None, "photo_url": None}
+        return {
+            "party_id": party_id,
+            "notes": None,
+            "photo_url": None,
+            "carrier_rates": None,
+        }
     return _clean_mongo_id(doc)
 
 
@@ -594,6 +602,20 @@ class Trip(BaseModel):
 
     class Config:
         extra = "allow"
+
+
+@api_router.get("/forex/rates")
+async def forex_rates():
+    """Fix 5 (Phase 4) · Static forex rates for the ledger form's
+    multi-currency preview. Values can be tuned in a future admin
+    console, but for MVP we hard-code known ballpark rates.
+    """
+    return {
+        "thb_to_inr": 2.35,
+        "usd_to_inr": 83.5,
+        "inr_to_thb": round(1 / 2.35, 4),
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @api_router.get("/trips")
@@ -2632,17 +2654,44 @@ class NowBriefIn(BaseModel):
 
 # Module-level in-memory cache for Now Brief so we don't hammer the LLM
 # on rapid re-mounts / route revisits. Cache TTL is 5 minutes (300 s).
+# Fix 2 (Phase 4) · Backed by Mongo `now_brief_cache` collection so the
+# cache survives process restarts. In-memory dict is used as a hot L1
+# and is refreshed from Mongo on cold start.
 _now_brief_cache: Dict[str, Any] = {"ts": 0.0, "content": ""}
+
+
+async def _now_brief_read_cache() -> Dict[str, Any]:
+    """Return the most-recent cache entry from Mongo (or the in-memory
+    fallback). Populates the in-memory L1 as a side-effect."""
+    if _now_brief_cache["content"] and float(_now_brief_cache["ts"]) > 0:
+        return _now_brief_cache
+    doc = await db.now_brief_cache.find_one({"key": "now_brief"})
+    if doc:
+        _now_brief_cache["ts"] = float(doc.get("ts") or 0)
+        _now_brief_cache["content"] = doc.get("content") or ""
+    return _now_brief_cache
+
+
+async def _now_brief_write_cache(content: str) -> None:
+    ts = time.time()
+    _now_brief_cache["ts"] = ts
+    _now_brief_cache["content"] = content
+    await db.now_brief_cache.update_one(
+        {"key": "now_brief"},
+        {"$set": {"key": "now_brief", "content": content, "ts": ts}},
+        upsert=True,
+    )
 
 
 @api_router.post("/dashboard/now-brief")
 async def dashboard_now_brief(body: NowBriefIn, current: UserPublic = Depends(get_current_user)):
     from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-    # 5-minute TTL cache — return immediately if fresh.
-    if _now_brief_cache["content"] and (time.time() - float(_now_brief_cache["ts"])) < 300:
+    # 5-minute TTL cache — return immediately if fresh (Mongo-backed).
+    cache = await _now_brief_read_cache()
+    if cache["content"] and (time.time() - float(cache["ts"])) < 300:
         return {
-            "brief": _now_brief_cache["content"],
+            "brief": cache["content"],
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "cached": True,
         }
@@ -2716,9 +2765,8 @@ async def dashboard_now_brief(body: NowBriefIn, current: UserPublic = Depends(ge
         )
         logging.warning(f"now-brief LLM failed, using fallback: {e}")
 
-    # Store fresh result in module-level cache (5-min TTL enforced above).
-    _now_brief_cache["ts"] = time.time()
-    _now_brief_cache["content"] = content
+    # Store fresh result in cache (both in-memory L1 + Mongo L2).
+    await _now_brief_write_cache(content)
 
     return {"brief": content, "generated_at": datetime.now(timezone.utc).isoformat()}
 
@@ -5440,12 +5488,14 @@ async def proxy_to_remote_backend(path: str, request: Request):
                         m[x["party_id"]] = {
                             "notes": x.get("notes"),
                             "photo_url": x.get("photo_url"),
+                            "carrier_rates": x.get("carrier_rates"),
                         }
                     for d in data:
                         if isinstance(d, dict):
                             over = m.get(d.get("id") or "") or {}
                             d.setdefault("notes", over.get("notes"))
                             d.setdefault("photo_url", over.get("photo_url"))
+                            d.setdefault("carrier_rates", over.get("carrier_rates"))
                     resp_content = json.dumps(data).encode()
                     resp_headers.pop("content-length", None)
             elif isinstance(data, dict) and data.get("id"):
@@ -5453,6 +5503,7 @@ async def proxy_to_remote_backend(path: str, request: Request):
                 if over:
                     data.setdefault("notes", over.get("notes"))
                     data.setdefault("photo_url", over.get("photo_url"))
+                    data.setdefault("carrier_rates", over.get("carrier_rates"))
                     resp_content = json.dumps(data).encode()
                     resp_headers.pop("content-length", None)
         except (json.JSONDecodeError, ValueError, TypeError):

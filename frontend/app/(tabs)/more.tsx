@@ -34,6 +34,13 @@ type MenuItem = {
 
 const MENU: MenuItem[] = [
   {
+    key: "parties",
+    title: "Parties",
+    subtitle: "Customers, carriers, contacts",
+    icon: "people",
+    route: "/parties",
+  },
+  {
     key: "bags",
     title: "Bags",
     subtitle: "Every bag across every shipment, per-carrier",
@@ -44,7 +51,7 @@ const MENU: MenuItem[] = [
     key: "lalamove",
     title: "Lalamove",
     subtitle: "Instant last-mile delivery — quote, book, track",
-    icon: "bicycle",
+    icon: "car-sport",
     route: "/lalamove",
   },
   {

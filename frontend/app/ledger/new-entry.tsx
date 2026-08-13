@@ -1,7 +1,12 @@
 /**
- * /ledger/new-entry — Full-page Add Ledger Entry form.
- * Replaces the previous bottom-sheet Modal in ledger.tsx (Fix 5).
- * Accepts optional `party_id` query param to preselect a party.
+ * /ledger/new-entry — Phase 5 · Fix 6.
+ *
+ * Field order (top-to-bottom): Date → Party → Type → Amount + Currency
+ * → Convert option → Description (optional) → Company → Mode → Save.
+ *
+ * Currency options: INR and THB only (USD removed). A "Convert & save
+ * as X instead →" button toggles between INR and THB and re-fills the
+ * amount using forex rates from /api/forex/rates (fallback 2.35 INR/THB).
  */
 import { Ionicons } from "@expo/vector-icons";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
@@ -20,23 +25,32 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet, apiPost } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
+import { fmtCurrency } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard } from "@/src/lib/ui";
 
-type Party = { id: string; name: string };
+type Party = { id: string; name: string; role?: string };
+type Rates = { thb_to_inr: number; inr_to_thb: number };
+type Currency = "INR" | "THB";
+type Company = "awadh" | "singh_exports";
+type Mode = "formal" | "informal";
 
 export default function NewLedgerEntryScreen() {
   const router = useRouter();
   const { token } = useAuth();
   const params = useLocalSearchParams<{ party_id?: string }>();
 
-  const [parties, setParties] = useState<Party[]>([]);
-  const [partyId, setPartyId] = useState<string | null>(params.party_id || null);
-  const [type, setType] = useState<"debit" | "credit">("credit");
-  const [amountStr, setAmountStr] = useState("");
-  const [currency, setCurrency] = useState<"INR" | "THB">("INR");
-  const [description, setDescription] = useState("");
   const [dateStr, setDateStr] = useState(new Date().toISOString().slice(0, 10));
+  const [parties, setParties] = useState<Party[]>([]);
+  const [query, setQuery] = useState("");
+  const [partyId, setPartyId] = useState<string | null>(params.party_id || null);
+  const [type, setType] = useState<"credit" | "debit">("credit");
+  const [amountStr, setAmountStr] = useState("");
+  const [currency, setCurrency] = useState<Currency>("INR");
+  const [description, setDescription] = useState("");
+  const [company, setCompany] = useState<Company>("awadh");
+  const [companyMode, setCompanyMode] = useState<Mode>("informal");
+  const [rates, setRates] = useState<Rates>({ thb_to_inr: 2.35, inr_to_thb: 0.4255 });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -44,25 +58,64 @@ export default function NewLedgerEntryScreen() {
     apiGet<Party[]>("/api/parties")
       .then((p) => setParties(Array.isArray(p) ? p : []))
       .catch(() => setParties([]));
+    apiGet<Rates>("/api/forex/rates")
+      .then((r) => {
+        if (r?.thb_to_inr && r?.inr_to_thb) setRates(r);
+      })
+      .catch(() => {
+        /* fallback rates already set */
+      });
   }, [token]);
 
+  const selectedParty = parties.find((p) => p.id === partyId);
+  const filteredParties = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q || selectedParty) return parties.slice(0, 8);
+    return parties
+      .filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          (p.role || "").toLowerCase().includes(q),
+      )
+      .slice(0, 8);
+  }, [parties, query, selectedParty]);
+
+  const amount = parseFloat(amountStr) || 0;
+  const previewOther = useMemo(() => {
+    if (!amount) return null;
+    if (currency === "INR") return { cur: "THB" as const, amt: amount * rates.inr_to_thb };
+    return { cur: "INR" as const, amt: amount * rates.thb_to_inr };
+  }, [amount, currency, rates]);
+
+  const convertCurrency = () => {
+    if (!previewOther) {
+      setCurrency(currency === "INR" ? "THB" : "INR");
+      return;
+    }
+    setCurrency(previewOther.cur);
+    // 2 decimals is enough for both INR and THB.
+    setAmountStr(previewOther.amt.toFixed(2));
+  };
+
+  // Fix 6 (Phase 5) · Description is now OPTIONAL.
   const canSubmit = useMemo(
-    () => !!partyId && parseFloat(amountStr) > 0 && description.trim().length > 0,
-    [partyId, amountStr, description],
+    () => !!partyId && amount > 0 && !saving,
+    [partyId, amount, saving],
   );
 
-  const handleSave = async () => {
+  const submit = async () => {
     if (!canSubmit || !partyId) return;
-    const amt = parseFloat(amountStr);
     setSaving(true);
     try {
       await apiPost("/api/ledger/entries", {
         party_id: partyId,
         date: dateStr,
-        description: description.trim(),
-        debit: type === "debit" ? amt : 0,
-        credit: type === "credit" ? amt : 0,
+        description: description.trim() || "—",
+        debit: type === "debit" ? amount : 0,
+        credit: type === "credit" ? amount : 0,
         currency,
+        company_id: company,
+        company_mode: companyMode,
       });
       router.back();
     } catch (e) {
@@ -87,57 +140,92 @@ export default function NewLedgerEntryScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Add Ledger Entry</Text>
-          <Text style={styles.subtitle}>New debit or credit entry</Text>
+          <Text style={styles.subtitle}>Debit / credit · INR or THB</Text>
         </View>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         <GlassCard style={styles.card}>
+          {/* Date */}
+          <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
+          <TextInput
+            style={styles.input}
+            value={dateStr}
+            onChangeText={setDateStr}
+            placeholder="2026-08-13"
+            placeholderTextColor={colors.textDim}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
           {/* Party */}
           <Text style={styles.label}>Party</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipRow}
-          >
-            {parties.length === 0 ? (
-              <Text style={styles.dim}>Loading parties…</Text>
-            ) : (
-              parties.map((p) => (
-                <TouchableOpacity
-                  key={p.id}
-                  style={[styles.chip, partyId === p.id && styles.chipActive]}
-                  onPress={() => setPartyId(p.id)}
-                  activeOpacity={0.75}
-                >
-                  <Text
-                    style={[styles.chipText, partyId === p.id && styles.chipTextActive]}
-                    numberOfLines={1}
+          {selectedParty ? (
+            <View style={styles.selectedParty}>
+              <Text style={styles.selectedPartyText}>{selectedParty.name}</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setPartyId(null);
+                  setQuery("");
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={16} color={colors.textDim} />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <TextInput
+                style={styles.input}
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search parties…"
+                placeholderTextColor={colors.textDim}
+                autoCapitalize="words"
+              />
+              <View style={styles.suggestList}>
+                {filteredParties.map((p) => (
+                  <TouchableOpacity
+                    key={p.id}
+                    onPress={() => {
+                      setPartyId(p.id);
+                      setQuery("");
+                    }}
+                    activeOpacity={0.75}
+                    style={styles.suggestRow}
                   >
-                    {p.name}
-                  </Text>
-                </TouchableOpacity>
-              ))
-            )}
-          </ScrollView>
+                    <Text style={styles.suggestName} numberOfLines={1}>
+                      {p.name}
+                    </Text>
+                    <Text style={styles.suggestRole} numberOfLines={1}>
+                      {p.role || "—"}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                {filteredParties.length === 0 ? (
+                  <Text style={styles.dim}>No parties match</Text>
+                ) : null}
+              </View>
+            </>
+          )}
 
           {/* Type */}
           <Text style={styles.label}>Type</Text>
           <View style={styles.segment}>
             <TouchableOpacity
+              onPress={() => setType("credit")}
+              activeOpacity={0.75}
               style={[
                 styles.segmentBtn,
                 type === "credit" && {
-                  backgroundColor: colors.brandSoft,
-                  borderColor: colors.brand,
+                  backgroundColor: "rgba(0,255,136,0.15)",
+                  borderColor: colors.credit,
                 },
               ]}
-              onPress={() => setType("credit")}
-              activeOpacity={0.75}
             >
               <Ionicons
                 name="arrow-down"
@@ -150,19 +238,19 @@ export default function NewLedgerEntryScreen() {
                   { color: type === "credit" ? colors.credit : colors.textDim },
                 ]}
               >
-                Credit
+                You Got · Credit
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
+              onPress={() => setType("debit")}
+              activeOpacity={0.75}
               style={[
                 styles.segmentBtn,
                 type === "debit" && {
-                  backgroundColor: "rgba(255,68,68,0.10)",
-                  borderColor: colors.danger,
+                  backgroundColor: "rgba(255,68,68,0.15)",
+                  borderColor: colors.debit,
                 },
               ]}
-              onPress={() => setType("debit")}
-              activeOpacity={0.75}
             >
               <Ionicons
                 name="arrow-up"
@@ -175,7 +263,7 @@ export default function NewLedgerEntryScreen() {
                   { color: type === "debit" ? colors.debit : colors.textDim },
                 ]}
               >
-                Debit
+                You Gave · Debit
               </Text>
             </TouchableOpacity>
           </View>
@@ -196,9 +284,11 @@ export default function NewLedgerEntryScreen() {
             <View style={{ width: 130 }}>
               <Text style={styles.label}>Currency</Text>
               <View style={styles.segment}>
-                {(["INR", "THB"] as const).map((c) => (
+                {(["INR", "THB"] as Currency[]).map((c) => (
                   <TouchableOpacity
                     key={c}
+                    onPress={() => setCurrency(c)}
+                    activeOpacity={0.75}
                     style={[
                       styles.segmentBtn,
                       currency === c && {
@@ -206,8 +296,6 @@ export default function NewLedgerEntryScreen() {
                         borderColor: colors.brand,
                       },
                     ]}
-                    onPress={() => setCurrency(c)}
-                    activeOpacity={0.75}
                   >
                     <Text
                       style={[
@@ -223,10 +311,25 @@ export default function NewLedgerEntryScreen() {
             </View>
           </View>
 
-          {/* Description */}
-          <Text style={styles.label}>Description</Text>
+          {/* Convert option */}
+          {previewOther ? (
+            <TouchableOpacity
+              style={styles.convertBtn}
+              onPress={convertCurrency}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="swap-horizontal" size={14} color={colors.brand} />
+              <Text style={styles.convertText}>
+                ≈ {fmtCurrency(previewOther.amt, previewOther.cur)} — Convert &amp; save as{" "}
+                {previewOther.cur} instead →
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {/* Description (optional) */}
+          <Text style={styles.label}>Description (optional)</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, styles.multi]}
             value={description}
             onChangeText={setDescription}
             placeholder="e.g. Payment received for AURA-INV-001"
@@ -234,17 +337,61 @@ export default function NewLedgerEntryScreen() {
             multiline
           />
 
-          {/* Date */}
-          <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
-          <TextInput
-            style={styles.input}
-            value={dateStr}
-            onChangeText={setDateStr}
-            placeholder="2026-08-12"
-            placeholderTextColor={colors.textDim}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+          {/* Company */}
+          <Text style={styles.label}>Company</Text>
+          <View style={styles.segment}>
+            {(["awadh", "singh_exports"] as Company[]).map((c) => (
+              <TouchableOpacity
+                key={c}
+                onPress={() => setCompany(c)}
+                activeOpacity={0.75}
+                style={[
+                  styles.segmentBtn,
+                  company === c && {
+                    backgroundColor: colors.brandSoft,
+                    borderColor: colors.brand,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.segmentText,
+                    { color: company === c ? colors.brand : colors.textDim },
+                  ]}
+                >
+                  {c === "singh_exports" ? "Singh Exp." : "Awadh"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Mode */}
+          <Text style={styles.label}>Mode</Text>
+          <View style={styles.segment}>
+            {(["formal", "informal"] as Mode[]).map((m) => (
+              <TouchableOpacity
+                key={m}
+                onPress={() => setCompanyMode(m)}
+                activeOpacity={0.75}
+                style={[
+                  styles.segmentBtn,
+                  companyMode === m && {
+                    backgroundColor: colors.brandSoft,
+                    borderColor: colors.brand,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.segmentText,
+                    { color: companyMode === m ? colors.brand : colors.textDim },
+                  ]}
+                >
+                  {m === "formal" ? "Formal" : "Informal"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </GlassCard>
 
         <View style={styles.actions}>
@@ -262,7 +409,7 @@ export default function NewLedgerEntryScreen() {
               styles.actionPrimary,
               (!canSubmit || saving) && { opacity: 0.5 },
             ]}
-            onPress={handleSave}
+            onPress={submit}
             disabled={!canSubmit || saving}
             activeOpacity={0.85}
           >
@@ -302,7 +449,7 @@ const styles = StyleSheet.create({
   },
   title: { color: colors.text, fontSize: 20, fontWeight: "800", letterSpacing: -0.4 },
   subtitle: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-  scroll: { padding: spacing.lg, paddingBottom: 100 },
+  scroll: { padding: spacing.lg, paddingBottom: 120 },
   card: { padding: spacing.md, gap: 4 },
   label: {
     color: colors.textMuted,
@@ -314,20 +461,6 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   row: { flexDirection: "row", gap: spacing.md },
-  chipRow: { gap: 8, paddingVertical: 4 },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-    backgroundColor: colors.card,
-    borderColor: colors.cardBorder,
-    borderWidth: 1,
-    minHeight: 32,
-    justifyContent: "center",
-  },
-  chipActive: { backgroundColor: colors.brandSoft, borderColor: colors.brand },
-  chipText: { color: colors.textDim, fontSize: 12, fontWeight: "600" },
-  chipTextActive: { color: colors.brand },
   input: {
     backgroundColor: colors.card,
     borderColor: colors.cardBorder,
@@ -338,6 +471,37 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
   },
+  multi: { minHeight: 60 },
+  selectedParty: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: colors.brandSoft,
+    borderColor: colors.brand,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  selectedPartyText: { color: colors.brand, fontSize: 14, fontWeight: "800" },
+  suggestList: {
+    marginTop: 6,
+    borderRadius: radii.md,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  suggestRow: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderBottomColor: colors.divider,
+    borderBottomWidth: 1,
+  },
+  suggestName: { color: colors.text, fontSize: 13, fontWeight: "700", flex: 1 },
+  suggestRole: { color: colors.textDim, fontSize: 11, marginLeft: 6 },
   segment: {
     flexDirection: "row",
     gap: 6,
@@ -359,12 +523,27 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
   },
   segmentText: { fontSize: 12, fontWeight: "700" },
-  dim: { color: colors.textDim, fontSize: 12 },
-  actions: {
+  convertBtn: {
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
     flexDirection: "row",
-    gap: spacing.md,
-    marginTop: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    backgroundColor: colors.brandSoft,
   },
+  convertText: {
+    color: colors.brand,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  dim: { color: colors.textDim, fontSize: 12, padding: spacing.md },
+  actions: { flexDirection: "row", gap: spacing.md, marginTop: spacing.lg },
   actionBtn: {
     flex: 1,
     flexDirection: "row",

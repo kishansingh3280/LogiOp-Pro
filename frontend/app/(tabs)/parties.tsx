@@ -219,7 +219,7 @@ export default function PartiesScreen() {
           renderItem={({ item }) => (
             <PartyCard party={item} balance={balances[item.id] || { inr: 0, thb: 0 }} />
           )}
-          ItemSeparatorComponent={() => <View style={{ height: spacing.sm }} />}
+          ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl refreshing={loading} onRefresh={load} tintColor={colors.brand} />
@@ -269,50 +269,46 @@ function PartyCard({
   return (
     <Link href={`/party/${party.id}` as any} asChild>
       <TouchableOpacity activeOpacity={0.75}>
-        <GlassCard style={styles.card}>
-          <View style={[styles.avatar, { backgroundColor: soft, borderColor: color }]}>
-            <Text style={[styles.avatarText, { color }]}>{initial}</Text>
-          </View>
-
-          <View style={styles.cardBody}>
-            <Text style={styles.name} numberOfLines={1}>
-              {party.name}
-            </Text>
-            <View style={styles.metaRow}>
-              <View style={[styles.roleChip, { backgroundColor: soft, borderColor: color }]}>
-                <Text style={[styles.roleChipText, { color }]}>
-                  {titleCase(party.role || "other")}
-                </Text>
+        <GlassCard>
+          <View style={styles.card}>
+            <View style={[styles.avatar, { backgroundColor: soft, borderColor: color }]}>
+              <Text style={[styles.avatarText, { color }]}>{initial}</Text>
+            </View>
+            <View style={styles.cardBody}>
+              <Text style={styles.name} numberOfLines={1}>
+                {party.name}
+              </Text>
+              <View style={styles.metaRow}>
+                <View style={[styles.roleChip, { backgroundColor: soft, borderColor: color }]}>
+                  <Text style={[styles.roleChipText, { color }]}>
+                    {titleCase(party.role || "other")}
+                  </Text>
+                </View>
               </View>
-              {party.phone ? (
-                <Text style={styles.metaText} numberOfLines={1}>
-                  · {party.phone}
+            </View>
+            <View style={styles.balCol}>
+              {inr !== 0 ? (
+                <Text
+                  style={[styles.balAmt, { color: inr > 0 ? colors.credit : colors.debit }]}
+                  numberOfLines={1}
+                >
+                  {inr > 0 ? "+ " : "− "}
+                  {fmtCurrency(Math.abs(inr), "INR")}
+                </Text>
+              ) : (
+                <Text style={[styles.balAmt, { color: colors.textDim }]}>—</Text>
+              )}
+              {thb !== 0 ? (
+                <Text
+                  style={[styles.balSub, { color: colors.textMuted }]}
+                  numberOfLines={1}
+                >
+                  {thb > 0 ? "+ " : "− "}
+                  {fmtCurrency(Math.abs(thb), "THB")}
                 </Text>
               ) : null}
             </View>
-          </View>
-
-          <View style={styles.balCol}>
-            {inr !== 0 ? (
-              <Text
-                style={[styles.balAmt, { color: inr > 0 ? colors.credit : colors.debit }]}
-                numberOfLines={1}
-              >
-                {inr > 0 ? "+ " : "− "}
-                {fmtCurrency(Math.abs(inr), "INR")}
-              </Text>
-            ) : (
-              <Text style={[styles.balAmt, { color: colors.textDim }]}>—</Text>
-            )}
-            {thb !== 0 ? (
-              <Text
-                style={[styles.balSub, { color: thb > 0 ? colors.credit : colors.debit }]}
-                numberOfLines={1}
-              >
-                {thb > 0 ? "+ " : "− "}
-                {fmtCurrency(Math.abs(thb), "THB")}
-              </Text>
-            ) : null}
+            <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
           </View>
         </GlassCard>
       </TouchableOpacity>
@@ -361,18 +357,17 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: "row",
     alignItems: "center",
-    padding: spacing.md,
-    gap: spacing.md,
+    gap: spacing.sm,
   },
   avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { fontSize: 18, fontWeight: "800" },
+  avatarText: { fontSize: 14, fontWeight: "800" },
   cardBody: { flex: 1, minWidth: 0 },
   name: { color: colors.text, fontSize: 15, fontWeight: "800", letterSpacing: -0.2 },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },
@@ -388,8 +383,8 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     minWidth: 90,
   },
-  balAmt: { fontSize: 14, fontWeight: "800" },
-  balSub: { fontSize: 11, fontWeight: "700", marginTop: 2 },
+  balAmt: { fontSize: 13, fontWeight: "800" },
+  balSub: { fontSize: 10, fontWeight: "700", marginTop: 1 },
   center: {
     padding: spacing.xl,
     alignItems: "center",

@@ -187,9 +187,9 @@ export default function PartyStatement() {
     lines.push(`Closing balance (INR): ${fmtCurrency(closingInr, "INR")}`);
     lines.push(`Closing balance (THB): ${fmtCurrency(closingThb, "THB")}`);
     if (closingInr > 0 || closingThb > 0) {
-      lines.push(`Status: THEY OWE US`);
+      lines.push(`Status: INSE LENA HAI`);
     } else if (closingInr < 0 || closingThb < 0) {
-      lines.push(`Status: WE OWE THEM`);
+      lines.push(`Status: INHE DENA HAI`);
     } else {
       lines.push(`Status: SETTLED`);
     }
@@ -263,7 +263,7 @@ export default function PartyStatement() {
                 {closingInr !== 0 || closingThb !== 0 ? (
                   <Pill
                     label={
-                      closingInr > 0 || closingThb > 0 ? "THEY OWE US" : "WE OWE THEM"
+                      closingInr > 0 || closingThb > 0 ? "INSE LENA HAI" : "INHE DENA HAI"
                     }
                     tint={closingInr > 0 || closingThb > 0 ? colors.credit : colors.debit}
                     soft={
@@ -276,26 +276,52 @@ export default function PartyStatement() {
               </View>
             </GlassCard>
 
-            {/* Opening + closing summary */}
+            {/* Fix 4 (Phase 4) · Two balance cards, one per currency. */}
+            <Text style={styles.section}>Current balance</Text>
             <View style={styles.grid}>
-              <BalCard
-                label="Opening"
-                inr={openingInr}
-                thb={openingThb}
-                accent={colors.textDim}
-              />
-              <BalCard
-                label="Closing"
-                inr={closingInr}
-                thb={closingThb}
-                accent={
-                  closingInr > 0 || closingThb > 0
-                    ? colors.credit
-                    : closingInr < 0 || closingThb < 0
-                      ? colors.debit
-                      : colors.text
+              <CurrencyBalCard label="INR" amount={closingInr} />
+              <CurrencyBalCard label="THB" amount={closingThb} />
+            </View>
+
+            {/* Fix 5 (Phase 5) · Action row — Add Entry + Mark Verified
+                sit BETWEEN balance cards and the entries table. */}
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.actionAdd]}
+                onPress={() =>
+                  router.push({
+                    pathname: "/ledger/new-entry",
+                    params: { party_id: id as string },
+                  } as any)
                 }
-              />
+                activeOpacity={0.85}
+              >
+                <Ionicons name="add-circle" size={16} color={colors.bgSolid} />
+                <Text style={styles.actionAddText}>Add Entry</Text>
+              </TouchableOpacity>
+              {rows.length > 0 ? (
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.actionVerify, verifying && { opacity: 0.6 }]}
+                  onPress={markAllVerified}
+                  disabled={verifying}
+                  activeOpacity={0.8}
+                >
+                  {verifying ? (
+                    <ActivityIndicator color={colors.brand} />
+                  ) : (
+                    <>
+                      <Ionicons
+                        name="shield-checkmark-outline"
+                        size={14}
+                        color={colors.brand}
+                      />
+                      <Text style={styles.actionVerifyText}>
+                        Mark as Verified · till today
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             {/* Fix 1b — Verified till banner */}
@@ -336,14 +362,6 @@ export default function PartyStatement() {
                       ]}
                     >
                       <View style={[styles.tdDateWrap, { flex: 1.4 }]}>
-                        {verifiedIds.has(r.entry.id) ? (
-                          <Ionicons
-                            name="checkmark-circle"
-                            size={12}
-                            color={colors.textDim}
-                            style={{ marginRight: 4 }}
-                          />
-                        ) : null}
                         <Text style={styles.tdDate}>{shortDate(r.entry.date)}</Text>
                       </View>
                       <View style={{ flex: 3 }}>
@@ -363,12 +381,22 @@ export default function PartyStatement() {
                       >
                         {r.entry.credit ? fmtCurrency(r.entry.credit, cur) : "—"}
                       </Text>
-                      <Text
-                        style={[styles.tdVal, styles.thNum, styles.balance]}
-                        numberOfLines={1}
-                      >
-                        {fmtCurrency(bal, cur)}
-                      </Text>
+                      <View style={[styles.thNum, { flexDirection: "row", alignItems: "center", justifyContent: "flex-end" }]}>
+                        <Text
+                          style={[styles.tdVal, styles.balance]}
+                          numberOfLines={1}
+                        >
+                          {fmtCurrency(bal, cur)}
+                        </Text>
+                        {verifiedIds.has(r.entry.id) ? (
+                          <Ionicons
+                            name="checkmark-circle"
+                            size={12}
+                            color={colors.textDim}
+                            style={{ marginLeft: 4 }}
+                          />
+                        ) : null}
+                      </View>
                     </View>
                   );
                 })
@@ -385,34 +413,36 @@ export default function PartyStatement() {
               choose <Text style={styles.tipStrong}>Save as PDF</Text> on Android.
             </Text>
 
-            {/* Fix 1b — Mark as Verified CTA */}
-            {rows.length > 0 ? (
-              <TouchableOpacity
-                style={[styles.verifyBtn, verifying && { opacity: 0.6 }]}
-                onPress={markAllVerified}
-                disabled={verifying}
-                activeOpacity={0.8}
-              >
-                {verifying ? (
-                  <ActivityIndicator color={colors.brand} />
-                ) : (
-                  <>
-                    <Ionicons
-                      name="shield-checkmark-outline"
-                      size={16}
-                      color={colors.brand}
-                    />
-                    <Text style={styles.verifyBtnText}>
-                      Mark as Verified · till today
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            ) : null}
+            {/* Fix 5 (Phase 5) · Bottom Add Entry / Mark Verified block
+                removed — buttons now live between balance cards and
+                the entries table. */}
           </>
         ) : null}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function CurrencyBalCard({ label, amount }: { label: "INR" | "THB"; amount: number }) {
+  const color =
+    amount > 0 ? colors.credit : amount < 0 ? colors.debit : colors.textDim;
+  return (
+    <GlassCard style={styles.stat}>
+      <View style={styles.statHeader}>
+        <View style={[styles.statDot, { backgroundColor: color }]} />
+        <Text style={styles.statLabel}>{label}</Text>
+      </View>
+      <Text style={[styles.statValue, { color }]} numberOfLines={1}>
+        {fmtCurrency(Math.abs(amount), label)}
+      </Text>
+      <Text style={[styles.statLabel, { marginTop: 4 }]}>
+        {amount > 0
+          ? "Inse Lena Hai"
+          : amount < 0
+            ? "Inhe Dena Hai"
+            : "Settled"}
+      </Text>
+    </GlassCard>
   );
 }
 
@@ -586,6 +616,64 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.brandBorder,
     backgroundColor: colors.brandSoft,
+  },
+  // Fix 5 (Phase 5) · Action row (Add Entry + Mark Verified between
+  // balance cards and the entries table).
+  actionRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  actionBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1,
+  },
+  actionAdd: {
+    backgroundColor: colors.brand,
+    borderColor: colors.brand,
+  },
+  actionAddText: {
+    color: colors.bgSolid,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  actionVerify: {
+    backgroundColor: "transparent",
+    borderColor: colors.brandBorder,
+  },
+  actionVerifyText: {
+    color: colors.brand,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  // Fix 4 (Phase 4) · Add Entry inline CTA.
+  addEntryBtn: {
+    marginTop: spacing.lg,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.brandBorder,
+    backgroundColor: colors.brandSoft,
+  },
+  addEntryText: {
+    color: colors.brand,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.3,
   },
   verifyBtnText: {
     color: colors.brand,

@@ -1,0 +1,50 @@
+{
+  "summary": "Phase 5 · 7 fixes validated across mobile (390) + tablet (1280). FIX 1, 2, 4, 5, 6, 7 confirmed working visually and via DOM checks. FIX 3 frontend UI is correct (CarrierRatesCard renders for role=carrier with correct labels/inputs/Edit Rates button and calls PUT/GET /api/parties/{id}/meta) — BUT the backend PartyMeta model does not accept or persist `carrier_rates`, so the field is silently dropped by Pydantic and the next GET returns nothing. This will make rates disappear on reload/refresh.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PUT /api/parties/{party_id}/meta and GET /api/parties/{party_id}/meta",
+        "issue": "PartyMeta Pydantic model (backend/server.py:526-529) only allows {party_id, notes, photo_url}. The PUT handler explicitly stores only notes+photo_url. Sending carrier_rates from the frontend is silently dropped and GET never returns it. Verified via pytest: PUT response keys = ['ok','party_id','notes','photo_url','updated_at']; GET keys = ['party_id','notes','photo_url','updated_at']. This breaks FIX 3 persistence — CarrierRatesCard values are lost on page reload.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Party detail (carrier) → Edit Rates → Save",
+        "issue": "PUT succeeds (200) so in-session state persists via local setRates(next), but on next page load GET returns no carrier_rates and inputs go blank. Backend fix required (see backend_issues.critical[0]).",
+        "affected_testIDs": []
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Animated.useNativeDriver", "issue": "Console warns 'useNativeDriver is not supported' repeatedly during Notifications modal open on web — cosmetic/web-only, animation falls back to JS. Reference: dashboard-widgets.tsx (Modal animationType='slide'). Low priority."},
+      {"component": "shadow* style props", "issue": "React Native Web deprecation warnings: 'shadow* style props are deprecated. Use boxShadow'. Many components (dock, cards). Reference: theme.ts + individual components using shadowColor/shadowOffset. Low priority."},
+      {"component": "props.pointerEvents", "issue": "React Native Web deprecation: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Reference: (tabs)/_layout.tsx bottomBar uses pointerEvents='box-none'. Low priority."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase5_fixes.py",
+    "/app/test_reports/pytest/phase5_carrier_rates.xml"
+  ],
+  "action_items": [
+    "MAIN AGENT: Extend backend PartyMeta model at /app/backend/server.py:526-544 to accept optional carrier_rates dict and persist it. Example: `class PartyMeta(BaseModel): party_id: str; notes: Optional[str]=None; photo_url: Optional[str]=None; carrier_rates: Optional[Dict[str, Optional[str]]] = None` and set carrier_rates=body.carrier_rates in the upsert doc. Also update GET to return the stored carrier_rates (default {} when missing). Retest with /app/backend/tests/test_phase5_fixes.py."
+  ],
+  "critical_code_review_comments": [
+    "FIX 3 backend gap: Pydantic v2 defaults to `extra='ignore'` so the frontend's carrier_rates payload is dropped without error — masks the bug during dev. Consider `model_config = ConfigDict(extra='allow')` or explicit field so this class of bug fails loudly.",
+    "server.py is 5508 lines — should be split into modules (auth, parties, ledger, bullion, dashboard). Flagged as file-size violation.",
+    "party_meta_upsert overwrites notes/photo_url to None on every PUT that doesn't include them — non-additive upsert can wipe existing values. When adding carrier_rates, prefer `$set` only the provided fields, not force-null the rest."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase5_fixes.py (new)"
+  ],
+  "success_rate": {"backend": "33% (1/3 — 2 failures on carrier_rates persistence)", "frontend": "100% (all 7 UI fixes visually verified)"},
+  "seed_data_creation": "One TEST_CarrierPhase5_* party created via test fixture — safe to leave, prefixed for cleanup.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After main agent fixes PartyMeta model, re-run: cd /app && EXPO_PUBLIC_BACKEND_URL=https://opsi-complete.preview.emergentagent.com python -m pytest backend/tests/test_phase5_fixes.py -v. Also manually verify /party/{carrier_id}/index shows CarrierRatesCard, tap Edit Rates, enter values, Save, reload page — values must survive reload.",
+  "rca_of_issue": "Root cause: backend PartyMeta Pydantic model was defined during Phase 3 (notes/photo_url overlay) and was never extended when Phase 5 · FIX 3 added carrier_rates. Frontend PUT body includes {party_id, carrier_rates:{per_kg,per_baht,per_1000_usd}}, but Pydantic silently drops unknown keys (default extra='ignore') and the upsert dict only sets notes/photo_url. Server returns 200 so the frontend thinks it worked, but the field is never persisted. Reproduction: (1) Login as admin, (2) PUT /api/parties/{carrier_id}/meta with body {\"party_id\": id, \"carrier_rates\": {\"per_kg\": \"250\", \"per_baht\": \"180\", \"per_1000_usd\": \"500\"}}, (3) GET /api/parties/{carrier_id}/meta → response lacks carrier_rates. Mitigation: add carrier_rates field to PartyMeta and include it in the upsert $set."
+}

@@ -17,12 +17,13 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiGet } from "@/src/lib/api";
+import { apiGet, apiPut } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { fmtCurrency, shortDate, titleCase } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -304,38 +305,11 @@ export default function PartyDetail() {
               ) : null}
             </GlassCard>
 
-            {/* Recent entries */}
-            {recentEntries.length ? (
-              <>
-                <Text style={styles.section}>Recent ledger entries</Text>
-                <GlassCard>
-                  {recentEntries.map((e, idx, arr) => {
-                    const isDebit = e.debit > 0;
-                    const amount = isDebit ? e.debit : e.credit;
-                    const tint = isDebit ? colors.debit : colors.credit;
-                    return (
-                      <View
-                        key={e.id}
-                        style={[
-                          styles.entryRow,
-                          idx < arr.length - 1 && styles.entryRowBorder,
-                        ]}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.entryDesc} numberOfLines={1}>
-                            {e.description}
-                          </Text>
-                          <Text style={styles.entrySub}>{shortDate(e.date)}</Text>
-                        </View>
-                        <Text style={[styles.entryAmt, { color: tint }]}>
-                          {isDebit ? "− " : "+ "}
-                          {fmtCurrency(amount, e.currency)}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </GlassCard>
-              </>
+            {/* Fix 3 (Phase 5) · Recent ledger entries section removed. */}
+
+            {/* Fix 3 (Phase 5) · Carrier rates — only for role=carrier */}
+            {roleKey === "carrier" ? (
+              <CarrierRatesCard partyId={id as string} />
             ) : null}
 
             {/* Recent shipments */}
@@ -381,11 +355,122 @@ export default function PartyDetail() {
   );
 }
 
+
+// Fix 3 (Phase 5) · Carrier rates card. Reads/writes carrier_rates
+// from the party_meta local overlay.
+type CarrierRates = { per_kg?: string; per_baht?: string; per_1000_usd?: string };
+function CarrierRatesCard({ partyId }: { partyId: string }) {
+  const [rates, setRates] = useState<CarrierRates>({});
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [perKg, setPerKg] = useState("");
+  const [perBaht, setPerBaht] = useState("");
+  const [per1000Usd, setPer1000Usd] = useState("");
+
+  useEffect(() => {
+    if (!partyId) return;
+    apiGet<{ carrier_rates?: CarrierRates }>(`/api/parties/${partyId}/meta`)
+      .then((m) => {
+        const r = m?.carrier_rates || {};
+        setRates(r);
+        setPerKg(r.per_kg || "");
+        setPerBaht(r.per_baht || "");
+        setPer1000Usd(r.per_1000_usd || "");
+      })
+      .catch(() => setRates({}));
+  }, [partyId]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const next: CarrierRates = {
+        per_kg: perKg.trim() || undefined,
+        per_baht: perBaht.trim() || undefined,
+        per_1000_usd: per1000Usd.trim() || undefined,
+      };
+      await apiPut(`/api/parties/${partyId}/meta`, {
+        party_id: partyId,
+        carrier_rates: next,
+      });
+      setRates(next);
+      setEditing(false);
+    } catch {
+      /* silent */
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const row = (label: string, unit: string, value: string, setValue: (v: string) => void) => (
+    <View style={styles.rateRow}>
+      <Text style={styles.rateLabel}>{label}</Text>
+      {editing ? (
+        <TextInput
+          style={styles.rateInput}
+          value={value}
+          onChangeText={setValue}
+          keyboardType="decimal-pad"
+          placeholder="—"
+          placeholderTextColor={colors.textDim}
+        />
+      ) : (
+        <Text style={styles.rateValue}>{value ? `${unit}${value}` : "—"}</Text>
+      )}
+    </View>
+  );
+
+  return (
+    <>
+      <Text style={styles.section}>Rates & Quotation</Text>
+      <GlassCard>
+        <Text style={styles.rateHeader}>CARRYING RATES</Text>
+        {row("Per kg (Bag)", "₹", perKg, setPerKg)}
+        {row("Gold (per Baht)", "₹", perBaht, setPerBaht)}
+        {row("Currency (per $1000)", "₹", per1000Usd, setPer1000Usd)}
+        {editing ? (
+          <View style={styles.rateActions}>
+            <TouchableOpacity
+              onPress={() => {
+                setEditing(false);
+                setPerKg(rates.per_kg || "");
+                setPerBaht(rates.per_baht || "");
+                setPer1000Usd(rates.per_1000_usd || "");
+              }}
+              disabled={saving}
+              activeOpacity={0.75}
+              style={[styles.rateBtn, styles.rateBtnGhost]}
+            >
+              <Text style={styles.rateBtnGhostText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={save}
+              disabled={saving}
+              activeOpacity={0.85}
+              style={[styles.rateBtn, styles.rateBtnPrimary, saving && { opacity: 0.6 }]}
+            >
+              <Text style={styles.rateBtnPrimaryText}>{saving ? "Saving…" : "Save Rates"}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            onPress={() => setEditing(true)}
+            activeOpacity={0.75}
+            style={[styles.rateBtn, styles.rateBtnPrimary, { alignSelf: "flex-start", marginTop: 8 }]}
+          >
+            <Ionicons name="create-outline" size={14} color={colors.bgSolid} />
+            <Text style={styles.rateBtnPrimaryText}>Edit Rates</Text>
+          </TouchableOpacity>
+        )}
+      </GlassCard>
+    </>
+  );
+}
+
 function BalanceBox({ amount, currency }: { amount: number; currency: "INR" | "THB" }) {
   const isPositive = amount > 0;
   const isNegative = amount < 0;
   const tint = isPositive ? colors.credit : isNegative ? colors.debit : colors.textMuted;
-  const label = isPositive ? "They owe us" : isNegative ? "We owe them" : "Settled";
+  const label = isPositive ? "Inse Lena Hai" : isNegative ? "Inhe Dena Hai" : "Settled";
   return (
     <View style={styles.stat}>
       <View style={styles.statHeader}>
@@ -582,4 +667,49 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   retryText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
+  // Fix 3 (Phase 5) · Carrier rates card styles.
+  rateHeader: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginBottom: spacing.sm,
+  },
+  rateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    borderBottomColor: colors.divider,
+    borderBottomWidth: 1,
+  },
+  rateLabel: { color: colors.textMuted, fontSize: 12 },
+  rateValue: { color: colors.text, fontSize: 13, fontWeight: "800" },
+  rateInput: {
+    minWidth: 90,
+    color: colors.text,
+    fontSize: 13,
+    textAlign: "right",
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: colors.card,
+  },
+  rateActions: { flexDirection: "row", gap: 8, marginTop: 12 },
+  rateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  rateBtnGhost: { backgroundColor: "transparent", borderColor: colors.cardBorder },
+  rateBtnGhostText: { color: colors.textDim, fontSize: 12, fontWeight: "800" },
+  rateBtnPrimary: { backgroundColor: colors.brand, borderColor: colors.brand },
+  rateBtnPrimaryText: { color: colors.bgSolid, fontSize: 12, fontWeight: "800" },
+
 });

@@ -446,9 +446,11 @@ export function NotificationsButton({ collapsed }: { collapsed: boolean }) {
         animationType="slide"
         onRequestClose={() => setOpen(false)}
       >
-        <Pressable style={styles.notifBackdrop} onPress={() => setOpen(false)}>
-          <Pressable style={styles.notifPanel} onPress={(e) => e.stopPropagation()}>
-            <View style={styles.notifGrabber} />
+        {/* Fix 7 (Phase 5) · Right-side slide-in panel — 33% width.
+            Tap the semi-transparent overlay (left ~67%) to dismiss. */}
+        <View style={styles.notifRightWrap}>
+          <Pressable style={styles.notifRightBackdrop} onPress={() => setOpen(false)} />
+          <View style={styles.notifRightPanel}>
             <View style={styles.notifHeader}>
               <View style={styles.headerIcon}>
                 <Ionicons name="notifications" size={18} color={colors.brand} />
@@ -480,8 +482,8 @@ export function NotificationsButton({ collapsed }: { collapsed: boolean }) {
                 so you always know how many active fronts are open.
               </Text>
             </ScrollView>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
     </>
   );
@@ -726,6 +728,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "flex-end",
+  },
+  // Fix 7 (Phase 5) · Right-side slide-in wrap + panel.
+  notifRightWrap: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  notifRightBackdrop: {
+    flex: 2,
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  notifRightPanel: {
+    flex: 1,
+    backgroundColor: colors.bgSolid,
+    borderLeftWidth: 1,
+    borderColor: colors.brandBorder,
   },
   notifPanel: {
     backgroundColor: colors.bgSolid,

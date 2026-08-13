@@ -7,7 +7,8 @@
  */
 import { Ionicons } from "@expo/vector-icons";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { Tabs } from "expo-router";
+import { Tabs, useRouter } from "expo-router";
+import React from "react";
 import {
   StyleSheet,
   Text,
@@ -48,7 +49,13 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index" options={{ title: voice.overview }} />
       <Tabs.Screen name="shipments" options={{ title: voice.shipments }} />
-      <Tabs.Screen name="parties" options={{ title: voice.parties }} />
+      {/* Fix 1 (Phase 5) · Parties no longer appears on the mobile
+          bottom dock. It remains a real tab route so tablet sidebar +
+          More-tab entry still work, but its dock button is hidden. */}
+      <Tabs.Screen
+        name="parties"
+        options={{ title: voice.parties, href: null }}
+      />
       <Tabs.Screen name="invoices" options={{ title: voice.invoices }} />
       <Tabs.Screen name="more" options={{ title: voice.more }} />
     </Tabs>
@@ -57,13 +64,19 @@ export default function TabsLayout() {
 
 // ────────────────────────────────────────────────────────────────
 // Floating bottom tab bar (mobile only).
+// Fix 1 (Phase 5) · Inserts a synthetic "Trips" button that routes to
+// /bullion so the dock reads Overview / Shipments / Trips / Invoices /
+// More even though `trips` isn't a real Tabs.Screen.
 // ────────────────────────────────────────────────────────────────
 function FloatingBottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
+  const router = useRouter();
+  const visibleRoutes = state.routes.filter((r) => r.name !== "parties");
   return (
     <View style={styles.bottomBar} pointerEvents="box-none">
       <View style={styles.bottomBarInner}>
-        {state.routes.map((route, idx) => {
-          const focused = state.index === idx;
+        {visibleRoutes.map((route, visibleIdx) => {
+          const routeIdx = state.routes.findIndex((r) => r.key === route.key);
+          const focused = state.index === routeIdx;
           const icons = TAB_ICONS[route.name] || TAB_ICONS.index;
           const title = descriptors[route.key]?.options.title ?? route.name;
 
@@ -78,36 +91,72 @@ function FloatingBottomBar({ state, descriptors, navigation }: BottomTabBarProps
             }
           };
 
-          return (
-            <TouchableOpacity
+          const items: React.ReactNode[] = [
+            <TabItem
               key={route.key}
+              focused={focused}
+              icons={icons}
+              title={String(title)}
               onPress={onPress}
-              activeOpacity={0.7}
-              style={styles.tabItemMobile}
-              accessibilityRole="button"
-              accessibilityState={focused ? { selected: true } : {}}
-              accessibilityLabel={String(title)}
-            >
-              {focused ? <View style={styles.activeDot} /> : <View style={styles.dotSpacer} />}
-              <Ionicons
-                name={focused ? icons.active : icons.inactive}
-                size={focused ? 24 : 22}
-                color={focused ? colors.brand : colors.textDim}
-              />
-              <Text
-                style={[
-                  styles.tabLabelMobile,
-                  { color: focused ? colors.brand : colors.textDim },
-                ]}
-                numberOfLines={1}
-              >
-                {String(title)}
-              </Text>
-            </TouchableOpacity>
-          );
+            />,
+          ];
+
+          // Insert Trips synthetic button between Shipments and Invoices.
+          if (route.name === "shipments") {
+            items.push(
+              <TabItem
+                key="__trips"
+                focused={false}
+                icons={{ active: "diamond", inactive: "diamond-outline" }}
+                title="Trips"
+                onPress={() => router.push("/bullion" as any)}
+              />,
+            );
+          }
+          void visibleIdx;
+          return <React.Fragment key={route.key}>{items}</React.Fragment>;
         })}
       </View>
     </View>
+  );
+}
+
+function TabItem({
+  focused,
+  icons,
+  title,
+  onPress,
+}: {
+  focused: boolean;
+  icons: { active: IconName; inactive: IconName };
+  title: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      style={styles.tabItemMobile}
+      accessibilityRole="button"
+      accessibilityState={focused ? { selected: true } : {}}
+      accessibilityLabel={title}
+    >
+      {focused ? <View style={styles.activeDot} /> : <View style={styles.dotSpacer} />}
+      <Ionicons
+        name={focused ? icons.active : icons.inactive}
+        size={focused ? 24 : 22}
+        color={focused ? colors.brand : colors.textDim}
+      />
+      <Text
+        style={[
+          styles.tabLabelMobile,
+          { color: focused ? colors.brand : colors.textDim },
+        ]}
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
