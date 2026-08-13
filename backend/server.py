@@ -5774,6 +5774,31 @@ async def proxy_to_remote_backend(path: str, request: Request):
         except (json.JSONDecodeError, ValueError):
             pass
 
+    # Fix H (Phase 7) · Ledger entries — latest date first.
+    # Guarantees a consistent sort order regardless of what the
+    # remote backend returned. Applies to both filtered and
+    # unfiltered GET /api/ledger/entries responses.
+    if (
+        request.method == "GET"
+        and path == "ledger/entries"
+        and resp.status_code == 200
+    ):
+        try:
+            arr = json.loads(resp_content)
+            if isinstance(arr, list):
+                def _sort_key(r: Any) -> str:
+                    if not isinstance(r, dict):
+                        return ""
+                    # Prefer explicit `date` field; fall back to
+                    # `created_at` so freshly-inserted rows with no
+                    # date still bubble to the top.
+                    return str(r.get("date") or r.get("created_at") or "")
+                arr.sort(key=_sort_key, reverse=True)
+                resp_content = json.dumps(arr).encode()
+                resp_headers.pop("content-length", None)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
     # Fix 3 (Phase 3) · Merge party_meta overlay (notes, photo_url) into
     # party GET responses so the frontend sees a unified party object.
     if (
