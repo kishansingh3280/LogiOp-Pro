@@ -15,11 +15,16 @@
  * single-currency column.
  */
 import { Ionicons } from "@expo/vector-icons";
+import * as Print from "expo-print";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
+  Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   Share,
@@ -77,6 +82,9 @@ export default function PartyStatement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
+  // Fix 6 (Phase 6) · Share options bottom sheet + PDF generation state.
+  const [shareOpen, setShareOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -198,6 +206,168 @@ export default function PartyStatement() {
 
   const handleShare = useCallback(async () => {
     if (!party) return;
+    setShareOpen(true);
+  }, [party]);
+
+  // Fix 6 (Phase 6) · Structured HTML rendered → PDF via expo-print.
+  const buildShareHTML = useCallback((): string => {
+    if (!party) return "";
+    const esc = (s: unknown) =>
+      String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    const statusText =
+      closingInr > 0 || closingThb > 0
+        ? "INSE LENA HAI"
+        : closingInr < 0 || closingThb < 0
+        ? "INHE DENA HAI"
+        : "SETTLED";
+    const statusColor =
+      closingInr > 0 || closingThb > 0
+        ? "#00C853"
+        : closingInr < 0 || closingThb < 0
+        ? "#E53935"
+        : "#6B7280";
+
+    const rowsHTML = rows
+      .map((r) => {
+        const cur = r.entry.currency;
+        const bal = cur === "THB" ? r.balThb : r.balInr;
+        return `
+          <tr>
+            <td class="c-date">${esc(shortDate(r.entry.date))}</td>
+            <td class="c-desc">${esc(r.entry.description || "—")}</td>
+            <td class="c-num c-debit">${r.entry.debit ? esc(fmtCurrency(r.entry.debit, cur)) : ""}</td>
+            <td class="c-num c-credit">${r.entry.credit ? esc(fmtCurrency(r.entry.credit, cur)) : ""}</td>
+            <td class="c-num c-bal">${esc(fmtCurrency(bal, cur))}</td>
+          </tr>`;
+      })
+      .join("");
+
+    return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/>
+<title>Statement — ${esc(party.name)}</title>
+<style>
+  @page { margin: 24px; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+         color: #111827; margin: 0; padding: 0; font-size: 12px; }
+  .brand { color:#00C853; font-weight: 800; letter-spacing: 0.4px; }
+  .head { display:flex; justify-content:space-between; align-items:flex-end;
+          border-bottom: 2px solid #00C853; padding-bottom: 10px; margin-bottom: 14px; }
+  .head h1 { margin:0; font-size: 20px; font-weight: 800; letter-spacing:-0.4px; }
+  .muted { color:#6B7280; font-size: 10px; }
+  .stats { display:flex; gap:10px; margin: 12px 0 16px; }
+  .stat { flex:1; padding: 10px 12px; border: 1px solid #E5E7EB; border-radius: 8px; }
+  .stat .lbl { font-size:9px; text-transform: uppercase; letter-spacing:0.6px; color:#6B7280; }
+  .stat .val { font-size:16px; font-weight:800; margin-top:4px; }
+  .status { display:inline-block; padding: 4px 10px; border-radius: 999px;
+            font-size: 10px; font-weight: 800; letter-spacing: 0.6px;
+            background: ${statusColor}18; color: ${statusColor};
+            border: 1px solid ${statusColor}55; }
+  table { width:100%; border-collapse: collapse; margin-top: 6px; }
+  th, td { padding: 7px 8px; border-bottom: 1px solid #EEF2F7; text-align: left; vertical-align: top; }
+  th { background:#F8FAFC; color:#4B5563; font-size:10px; text-transform: uppercase;
+       letter-spacing:0.5px; font-weight: 700; }
+  .c-date { width: 68px; color:#6B7280; }
+  .c-desc { color:#111827; }
+  .c-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .c-debit { color:#E53935; }
+  .c-credit { color:#00C853; }
+  .c-bal { color:#111827; font-weight:700; }
+  .footer { margin-top: 22px; display:flex; justify-content:space-between;
+            font-size:10px; color:#6B7280; border-top: 1px solid #E5E7EB; padding-top: 8px; }
+</style></head>
+<body>
+  <div class="head">
+    <div>
+      <div class="brand">LogiOp Pro</div>
+      <h1>${esc(party.name)}</h1>
+      <div class="muted">Ledger statement · Period ${esc(period)}</div>
+    </div>
+    <div style="text-align:right">
+      <div class="status">${esc(statusText)}</div>
+      <div class="muted" style="margin-top:6px">Generated ${esc(longDate(new Date().toISOString()))}</div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="lbl">Opening · INR</div>
+      <div class="val">${esc(fmtCurrency(openingInr, "INR"))}</div>
+    </div>
+    <div class="stat">
+      <div class="lbl">Opening · THB</div>
+      <div class="val">${esc(fmtCurrency(openingThb, "THB"))}</div>
+    </div>
+    <div class="stat">
+      <div class="lbl">Closing · INR</div>
+      <div class="val" style="color:${closingInr >= 0 ? "#00C853" : "#E53935"}">${esc(fmtCurrency(closingInr, "INR"))}</div>
+    </div>
+    <div class="stat">
+      <div class="lbl">Closing · THB</div>
+      <div class="val" style="color:${closingThb >= 0 ? "#00C853" : "#E53935"}">${esc(fmtCurrency(closingThb, "THB"))}</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th><th>Description</th>
+        <th class="c-num">Debit</th><th class="c-num">Credit</th><th class="c-num">Balance</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHTML || `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">No entries</td></tr>`}
+    </tbody>
+  </table>
+
+  <div class="footer">
+    <div>${esc(rows.length)} entries · ${esc(period)}</div>
+    <div>LogiOp Pro — generated on device</div>
+  </div>
+</body></html>`;
+  }, [party, period, rows, openingInr, openingThb, closingInr, closingThb]);
+
+  const handlePdfShare = useCallback(async () => {
+    if (!party || pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const html = buildShareHTML();
+      const safeName = party.name.replace(/[^\w.-]+/g, "_").slice(0, 40) || "statement";
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      setShareOpen(false);
+      if (Platform.OS === "web") {
+        // On web, open PDF in a new tab for preview/print/save.
+        try {
+          window.open(uri, "_blank");
+        } catch {
+          /* silent */
+        }
+        return;
+      }
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          mimeType: "application/pdf",
+          dialogTitle: `Statement — ${party.name}`,
+          UTI: "com.adobe.pdf",
+        });
+      } else {
+        Alert.alert("PDF ready", `Saved to ${safeName}.pdf`);
+      }
+    } catch (e) {
+      Alert.alert("PDF failed", (e as Error).message || "Could not build PDF.");
+    } finally {
+      setPdfBusy(false);
+    }
+  }, [party, pdfBusy, buildShareHTML]);
+
+  const handleTextShare = useCallback(async () => {
+    if (!party) return;
+    setShareOpen(false);
     try {
       await Share.share(
         {
@@ -392,11 +562,11 @@ export default function PartyStatement() {
             {/* Share CTA */}
             <TouchableOpacity style={styles.primaryBtn} onPress={handleShare} activeOpacity={0.8}>
               <Ionicons name="share-outline" size={18} color={colors.bg} />
-              <Text style={styles.primaryBtnText}>Share statement · Save as PDF</Text>
+              <Text style={styles.primaryBtnText}>Share statement · PDF or Text</Text>
             </TouchableOpacity>
             <Text style={styles.tipText}>
-              Tip: from the share sheet, pick <Text style={styles.tipStrong}>Print</Text> and
-              choose <Text style={styles.tipStrong}>Save as PDF</Text> on Android.
+              PDF export uses the device print engine — the file can be shared to
+              WhatsApp, Email, or saved to Files.
             </Text>
 
             {/* Fix 5 (Phase 5) · Bottom Add Entry / Mark Verified block
@@ -405,6 +575,69 @@ export default function PartyStatement() {
           </>
         ) : null}
       </ScrollView>
+
+      {/* Fix 6 (Phase 6) · Share options bottom sheet */}
+      <Modal
+        transparent
+        visible={shareOpen}
+        animationType="fade"
+        onRequestClose={() => setShareOpen(false)}
+      >
+        <Pressable style={styles.sheetBackdrop} onPress={() => setShareOpen(false)}>
+          <Pressable style={styles.sheetCard} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Share statement</Text>
+            <Text style={styles.sheetSubtitle}>
+              {party?.name ? `${party.name} · ${period}` : ""}
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.sheetRow, pdfBusy && { opacity: 0.6 }]}
+              activeOpacity={0.75}
+              onPress={handlePdfShare}
+              disabled={pdfBusy}
+            >
+              <View style={[styles.sheetIcon, { backgroundColor: colors.brandSoft }]}>
+                {pdfBusy ? (
+                  <ActivityIndicator color={colors.brand} size="small" />
+                ) : (
+                  <Ionicons name="document-text" size={22} color={colors.brand} />
+                )}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sheetRowTitle}>
+                  {pdfBusy ? "Building PDF…" : "Share as PDF"}
+                </Text>
+                <Text style={styles.sheetRowSub}>Formatted, printable statement · A4</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.sheetRow}
+              activeOpacity={0.75}
+              onPress={handleTextShare}
+            >
+              <View style={[styles.sheetIcon, { backgroundColor: "rgba(0,200,255,0.12)" }]}>
+                <Ionicons name="chatbubble-ellipses" size={22} color="#00C8FF" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sheetRowTitle}>Share as Text</Text>
+                <Text style={styles.sheetRowSub}>Plain-text summary · WhatsApp friendly</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.sheetCancel}
+              activeOpacity={0.75}
+              onPress={() => setShareOpen(false)}
+            >
+              <Text style={styles.sheetCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -735,4 +968,70 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   retryText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
+
+  // Fix 6 (Phase 6) · Share options bottom sheet.
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  sheetCard: {
+    backgroundColor: colors.bgSolid,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: spacing.lg,
+    paddingTop: 12,
+    paddingBottom: 28,
+    borderTopWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  sheetHandle: {
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.cardBorder,
+    alignSelf: "center",
+    marginBottom: 12,
+  },
+  sheetTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  sheetSubtitle: {
+    color: colors.textDim,
+    fontSize: 11,
+    marginTop: 2,
+    marginBottom: 14,
+  },
+  sheetRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingVertical: 14,
+    borderRadius: radii.md,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+    marginBottom: 8,
+  },
+  sheetIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sheetRowTitle: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  sheetRowSub: { color: colors.textDim, fontSize: 11, marginTop: 2 },
+  sheetCancel: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: radii.md,
+    marginTop: 4,
+  },
+  sheetCancelText: { color: colors.textDim, fontSize: 13, fontWeight: "700" },
 });

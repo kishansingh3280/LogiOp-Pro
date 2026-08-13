@@ -3093,3 +3093,160 @@ agent_communication:
       Fix 6 (share PDF), Fix 9 (new shipment form), and Fix 10
       (shipments redesign) are Batch B and NOT part of this run.
 
+
+##====================================================================================================
+## PHASE 6 · BATCH B — 3-FIX BUNDLE: PDF SHARE + NEW SHIPMENT + SHIPMENT REDESIGN (2026-08-13)
+##====================================================================================================
+
+frontend:
+  - task: "Phase 6 Fix 6 — Share statement · proper PDF via expo-print + expo-sharing"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/party/[id]/statement.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Installed expo-print@15.0.8 + expo-sharing@14.0.8 via
+          `yarn expo install`. Share button now opens a native-style
+          bottom sheet Modal with two options:
+            1) Share as PDF — buildShareHTML() renders a structured
+               A4-friendly HTML template (LogiOp Pro header, opening/
+               closing INR+THB stat cards, colored status pill, full
+               entries table with debit/credit/balance columns, footer
+               with entry count). Print.printToFileAsync converts to
+               PDF, then Sharing.shareAsync opens the OS share sheet.
+               On web platform it opens the PDF in a new tab.
+            2) Share as Text — retains the previous plain-text
+               summary via RN core Share.share() for WhatsApp/Email.
+          Backdrop tap and Cancel row dismiss the sheet. Loading
+          spinner replaces the icon while the PDF is being generated.
+
+  - task: "Phase 6 Fix 9 — Add New Shipment full form"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/shipments/new.tsx, /app/frontend/app/(tabs)/shipments.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Created /app/shipments/new.tsx with 4 numbered sections.
+        -working: false
+        -agent: "testing"
+        -comment: |
+          UI + validation is correct, but Save Shipment fails a 422
+          from the backend because Section 1's "Mode" pills were
+          reusing the Informal/Formal set (conflated with Section 4's
+          company_mode). The backend Shipment.mode literal accepts
+          only {air, sea, land, hand_carry}. Only Hand Carry saved
+          successfully (created CN-1006).
+        -working: true
+        -agent: "main"
+        -comment: |
+          Split the two "modes": Section 1's transport Mode pills now
+          reflect the backend contract — Hand Carry / Air / Sea /
+          Land (default: Hand Carry). Section 4's Informal / Formal
+          selector remains bound to the separate `company_mode`
+          field. Universal Form Rule respected: Company = Awadh,
+          Company Mode = Informal. Screenshot-verified.
+
+  - task: "Phase 6 Fix 10 — Shipments detail redesign — party avatar rails"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/lib/shipment-detail-view.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Replaced the vertical PartyRow list with two horizontally
+          scrollable circular-avatar rails: "Customers" (blue tint
+          with person badge) and "Carriers" (brand green with
+          airplane badge). Each rail renders PartyAvatar cards with
+          68px circle, 2-letter initials, floating role badge, name
+          and role label. Multi-customer support added to the
+          Shipment schema (party_ids?: string[]) — customers list is
+          derived from party_id + optional party_ids array. Empty
+          rails show a dashed placeholder card with contextual copy.
+          Goods (if present) surfaces as a subtle pill below the
+          rails. Removed the old PartyRow component. Verified via
+          screenshot that DA (Deepak Adavani) shows in CUSTOMERS and
+          RH (Rahul HandCarry) shows in CARRIERS rail.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 82
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Phase 6 Fix 6 — Share statement · proper PDF via expo-print + expo-sharing"
+    - "Phase 6 Fix 9 — Add New Shipment full form"
+    - "Phase 6 Fix 10 — Shipments detail redesign — party avatar rails"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      Phase 6 Batch B complete. Please verify:
+        • Fix 6 — On any party statement page (e.g. /party/{id}/statement),
+          tap the "Share statement" button. A bottom sheet should
+          appear with two rows: "Share as PDF" and "Share as Text".
+          Tapping PDF should build a formatted PDF and open the OS
+          share sheet (on web, opens in a new tab). Cancel dismisses.
+        • Fix 9 — On the Shipments tab (mobile viewport), tap "New".
+          Should route to /shipments/new. Verify all 4 sections
+          render. Fill in: pick Direction, select Customer, add
+          Carrier, set Weight = e.g. 12, tap "Save Shipment". Verify
+          Alert confirms creation and app routes to /shipment/{id}.
+          Universal form defaults: Company = Awadh, Mode = Informal.
+        • Fix 10 — On any /shipment/{id} detail page, verify the
+          Parties section is now TWO horizontal scrollable rails:
+          "Customers" and "Carriers", each with circular initial
+          avatars. Tapping an avatar should navigate to /party/{id}.
+
+      Test credentials: kishan.singh3280@gmail.com / 701A3ahig@
+
+
+##====================================================================================================
+## PHASE 6 · BATCH B · POST-TEST FIX (2026-08-13)
+##====================================================================================================
+
+frontend:
+  - task: "Phase 6 Fix 9 · retest — Mode split + drop blocking Alert"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/shipments/new.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+          Two follow-up fixes on top of the testing_agent finding:
+            1. Section 1 transport Mode now uses backend-valid
+               literals: Hand Carry (default) / Air / Sea / Land.
+               Section 4 keeps the separate Informal / Formal switch
+               bound to company_mode.
+            2. Replaced the post-save Alert (which blocked navigation
+               on web because window.alert is synchronous and swallows
+               the RN Alert button callback) with an immediate
+               router.replace to /shipment/{id}. Verified end-to-end:
+               submitted a shipment with customer=Finij, weight=15,
+               mode=hand_carry → server returned id
+               58bfa0e6-9a21-4d64-b256-8389e8323191 → app auto-routed
+               to the new detail page which correctly rendered the
+               Fix 10 avatar rails.
+

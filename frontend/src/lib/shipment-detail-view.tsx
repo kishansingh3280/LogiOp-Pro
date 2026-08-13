@@ -57,6 +57,7 @@ type Shipment = {
     contents?: string | null;
   }[];
   party_id: string;
+  party_ids?: string[]; // Fix 10 (Phase 6) · multi-customer support
   dispatch_date?: string;
   dispatched_at?: string;
   in_transit_at?: string;
@@ -93,6 +94,7 @@ export function ShipmentDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [party, setParty] = useState<Party | null>(null);
+  const [customers, setCustomers] = useState<Party[]>([]);
   const [carrier, setCarrier] = useState<Party | null>(null);
   const [carriers, setCarriers] = useState<Party[]>([]);
   const [allParties, setAllParties] = useState<Party[]>([]);
@@ -145,21 +147,31 @@ export function ShipmentDetailView({ id }: { id: string }) {
 
       // Full party list — used for per-bag carrier name resolution AND
       // to derive the "multi-carrier" list (unique carrier ids from
-      // bags + top-level carrier_party_id + carrier_party_ids array).
+      // bags + top-level carrier_party_id + carrier_party_ids array)
+      // and (Fix 10 · Phase 6) the "multi-customer" list.
       apiGet<Party[]>("/api/parties")
         .then((ps) => {
           const all = Array.isArray(ps) ? ps : [];
           setAllParties(all);
-          const ids = new Set<string>();
-          if (s.carrier_party_id) ids.add(s.carrier_party_id);
-          (s.carrier_party_ids || []).forEach((cid) => ids.add(cid));
+          const cIds = new Set<string>();
+          if (s.carrier_party_id) cIds.add(s.carrier_party_id);
+          (s.carrier_party_ids || []).forEach((cid) => cIds.add(cid));
           (s.bags || []).forEach((b) => {
-            if (b.carrier_party_id) ids.add(b.carrier_party_id);
+            if (b.carrier_party_id) cIds.add(b.carrier_party_id);
           });
-          const carrierList = Array.from(ids)
+          const carrierList = Array.from(cIds)
             .map((cid) => all.find((p) => p.id === cid))
             .filter((p): p is Party => !!p);
           setCarriers(carrierList);
+
+          // Fix 10 · Multi-customer list (party_id + optional party_ids).
+          const pIds = new Set<string>();
+          if (s.party_id) pIds.add(s.party_id);
+          (s.party_ids || []).forEach((pid) => pIds.add(pid));
+          const customerList = Array.from(pIds)
+            .map((pid) => all.find((p) => p.id === pid))
+            .filter((p): p is Party => !!p);
+          setCustomers(customerList);
         })
         .catch(() => {
           setAllParties([]);
@@ -177,6 +189,7 @@ export function ShipmentDetailView({ id }: { id: string }) {
       // reset per-id
       setShipment(null);
       setParty(null);
+      setCustomers([]);
       setCarrier(null);
       setCarriers([]);
       setInvoiceId(null);
@@ -287,34 +300,13 @@ export function ShipmentDetailView({ id }: { id: string }) {
             </View>
           ) : null}
 
-          {/* ── Parties: Customer + (multiple) Carrier(s) ── */}
-          <Text style={styles.section}>Parties</Text>
-          <GlassCard padded={false}>
-            <PartyRow
-              role="Customer"
-              party={party}
-              onPress={() => party && router.push(`/party/${party.id}` as any)}
-            />
-            {carriers.length > 0 ? (
-              carriers.map((c, i) => (
-                <PartyRow
-                  key={c.id}
-                  role={carriers.length > 1 ? `Carrier ${i + 1}` : "Carrier"}
-                  party={c}
-                  divider={i > 0 || !!party}
-                  onPress={() => router.push(`/party/${c.id}` as any)}
-                />
-              ))
-            ) : (
-              <PartyRow role="Carrier" party={null} divider={!!party} />
-            )}
-            {shipment.goods ? (
-              <View style={styles.partyGoodsRow}>
-                <Text style={styles.partyGoodsLabel}>Goods</Text>
-                <Text style={styles.partyGoodsValue}>{shipment.goods}</Text>
-              </View>
-            ) : null}
-          </GlassCard>
+          {/* ── Fix 10 (Phase 6) · Parties as horizontal avatar rails ── */}
+          <PartiesRails
+            customers={customers.length > 0 ? customers : party ? [party] : []}
+            carriers={carriers}
+            goods={shipment.goods}
+            onPressParty={(pid) => router.push(`/party/${pid}` as any)}
+          />
 
           <Text style={styles.section}>Financials</Text>
           <GlassCard>
@@ -535,51 +527,145 @@ function BagsSection({
 }
 
 
-// ── Small party row used inside the Parties card ──
-function PartyRow({
-  role,
-  party,
-  divider = false,
-  onPress,
+// ── Fix 10 (Phase 6) · Horizontal circular-avatar rails for parties ──
+// Shipments can have multiple Customers and/or multiple Carriers.
+// Each rail is horizontally scrollable when parties overflow.
+function PartiesRails({
+  customers,
+  carriers,
+  goods,
+  onPressParty,
 }: {
-  role: string;
-  party: Party | null;
-  divider?: boolean;
-  onPress?: () => void;
+  customers: Party[];
+  carriers: Party[];
+  goods?: string;
+  onPressParty: (partyId: string) => void;
 }) {
-  const isCustomer = role.toLowerCase().startsWith("customer");
-  const iconName = isCustomer ? "person-circle" : "car-sport";
-  const iconTint = isCustomer ? colors.text : colors.brand;
-  const content = (
-    <View style={[styles.partyRow, divider && styles.partyRowDivider]}>
-      <View style={styles.partyIcon}>
-        <Ionicons name={iconName as any} size={16} color={iconTint} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.partyRole}>{role}</Text>
-        <Text
-          style={[
-            styles.partyName,
-            { color: party ? colors.text : colors.textDim },
-          ]}
-          numberOfLines={1}
-        >
-          {party?.name || "—"}
+  return (
+    <>
+      <View style={styles.railHeader}>
+        <Text style={styles.section}>Customers</Text>
+        <Text style={styles.railCount}>
+          {customers.length} {customers.length === 1 ? "party" : "parties"}
         </Text>
       </View>
-      {party && onPress ? (
-        <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+      <PartyRail
+        parties={customers}
+        role="customer"
+        emptyText="No customer linked"
+        onPressParty={onPressParty}
+      />
+
+      <View style={styles.railHeader}>
+        <Text style={styles.section}>Carriers</Text>
+        <Text style={styles.railCount}>
+          {carriers.length} {carriers.length === 1 ? "party" : "parties"}
+        </Text>
+      </View>
+      <PartyRail
+        parties={carriers}
+        role="carrier"
+        emptyText="No carrier assigned"
+        onPressParty={onPressParty}
+      />
+
+      {goods ? (
+        <View style={styles.goodsChip}>
+          <Ionicons name="cube-outline" size={14} color={colors.textDim} />
+          <Text style={styles.goodsLabel}>Goods:</Text>
+          <Text style={styles.goodsValue}>{goods}</Text>
+        </View>
       ) : null}
-    </View>
+    </>
   );
-  if (party && onPress) {
+}
+
+function PartyRail({
+  parties,
+  role,
+  emptyText,
+  onPressParty,
+}: {
+  parties: Party[];
+  role: "customer" | "carrier";
+  emptyText: string;
+  onPressParty: (partyId: string) => void;
+}) {
+  if (parties.length === 0) {
     return (
-      <TouchableOpacity activeOpacity={0.75} onPress={onPress}>
-        {content}
-      </TouchableOpacity>
+      <View style={styles.railEmpty}>
+        <Ionicons
+          name={role === "customer" ? "person-outline" : "airplane-outline"}
+          size={22}
+          color={colors.textDim}
+        />
+        <Text style={styles.railEmptyText}>{emptyText}</Text>
+      </View>
     );
   }
-  return content;
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.railContent}
+    >
+      {parties.map((p) => (
+        <PartyAvatar
+          key={p.id}
+          party={p}
+          role={role}
+          onPress={() => onPressParty(p.id)}
+        />
+      ))}
+    </ScrollView>
+  );
+}
+
+function PartyAvatar({
+  party,
+  role,
+  onPress,
+}: {
+  party: Party;
+  role: "customer" | "carrier";
+  onPress: () => void;
+}) {
+  // Compute up-to-two letter initials from the party name.
+  const initials = (party.name || "?")
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((s) => s.charAt(0).toUpperCase())
+    .join("") || "?";
+  const isCarrier = role === "carrier";
+  const tint = isCarrier ? colors.brand : "#00C8FF";
+  const soft = isCarrier ? colors.brandSoft : "rgba(0,200,255,0.14)";
+  const border = isCarrier ? colors.brandBorder : "rgba(0,200,255,0.35)";
+  const badgeIcon = isCarrier ? "airplane" : "person";
+  return (
+    <TouchableOpacity
+      activeOpacity={0.75}
+      onPress={onPress}
+      style={styles.avatarCard}
+    >
+      <View
+        style={[
+          styles.avatarCircle,
+          { backgroundColor: soft, borderColor: border },
+        ]}
+      >
+        <Text style={[styles.avatarInitials, { color: tint }]}>{initials}</Text>
+        <View style={[styles.avatarBadge, { backgroundColor: tint }]}>
+          <Ionicons name={badgeIcon} size={10} color={colors.bgSolid} />
+        </View>
+      </View>
+      <Text style={styles.avatarName} numberOfLines={1}>
+        {party.name}
+      </Text>
+      <Text style={styles.avatarRole} numberOfLines={1}>
+        {isCarrier ? "Carrier" : "Customer"}
+      </Text>
+    </TouchableOpacity>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -851,4 +937,107 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   retryText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
+
+  // ── Fix 10 (Phase 6) · Parties rails ───────────────────────
+  railHeader: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    marginTop: spacing.md,
+    marginBottom: 4,
+  },
+  railCount: {
+    color: colors.textDim,
+    fontSize: 10,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginBottom: spacing.sm,
+  },
+  railContent: {
+    paddingVertical: 6,
+    gap: 12,
+    paddingRight: 4,
+  },
+  railEmpty: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 14,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+    borderStyle: "dashed",
+  },
+  railEmptyText: { color: colors.textDim, fontSize: 12, fontWeight: "600" },
+  avatarCard: {
+    width: 92,
+    alignItems: "center",
+  },
+  avatarCircle: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+    position: "relative",
+  },
+  avatarInitials: {
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  avatarBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: colors.bg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarName: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "center",
+    width: 88,
+  },
+  avatarRole: {
+    color: colors.textDim,
+    fontSize: 10,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginTop: 2,
+  },
+  goodsChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.card,
+    marginTop: spacing.sm,
+  },
+  goodsLabel: {
+    color: colors.textDim,
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  goodsValue: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "700",
+  },
 });

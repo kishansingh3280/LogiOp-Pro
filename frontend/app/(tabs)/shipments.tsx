@@ -9,11 +9,10 @@
  * Filters: All / Pending / In Transit / Warehouse / Delivered
  */
 import { Ionicons } from "@expo/vector-icons";
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   RefreshControl,
   ScrollView,
@@ -64,18 +63,16 @@ const FILTERS: { key: string; label: string }[] = [
   { key: "delivered", label: "Delivered" },
 ];
 
-function handleNewShipment() {
-  Alert.alert(
-    "New Shipment",
-    "Create shipments from the desktop console. Mobile create flow is coming soon.",
-    [{ text: "OK" }],
-  );
+function handleNewShipment(router: ReturnType<typeof useRouter>) {
+  // Fix 9 (Phase 6) · Route to full mobile create form.
+  router.push("/shipments/new" as never);
 }
 
 export default function ShipmentsScreen() {
   const { token } = useAuth();
   const { activeCompany, activeMode } = useCompany();
   const isTablet = useIsTablet();
+  const router = useRouter();
   const [items, setItems] = useState<Shipment[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -142,7 +139,7 @@ export default function ShipmentsScreen() {
           </View>
           <TouchableOpacity
             style={styles.newBtn}
-            onPress={handleNewShipment}
+            onPress={() => handleNewShipment(router)}
             activeOpacity={0.8}
           >
             <Ionicons name="add" size={18} color={colors.bgSolid} />

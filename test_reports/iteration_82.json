@@ -1,0 +1,53 @@
+{
+  "summary": "Phase 6 · Batch B (Fixes 6, 9, 10) end-to-end review. Fix 6 (PDF share bottom sheet) VERIFIED — tapping 'Share statement · PDF or Text' opens a modal with 'Share as PDF' + 'Share as Text' + 'Cancel', outside-tap dismisses. Fix 10 (Shipments detail rails) VERIFIED — /shipment/{id} now shows CUSTOMERS and CARRIERS horizontal rails with circular initials avatars (e.g. DA blue+person, AS green+airplane), name, role label, and a 'GOODS: TEST' chip below the rails. Fix 9 (New Shipment form) — UI renders correctly with 4 sections, correct Universal Rule defaults (Awadh / Informal), direction toggle auto-fills Delhi↔Bangkok, customer/carrier pickers open modals with search, weight/bag/freight fields and INR pill all wired up. HOWEVER, Save Shipment will FAIL for the default Informal mode: backend /api/shipments schema requires `mode ∈ {air, sea, land, hand_carry}` and the form sends `mode: 'informal'` from Section 1's Mode pills — that field is being conflated with the Section 4 company_mode. Backend responds 422 literal_error. Only mode=hand_carry succeeds today. 3 of 4 backend tests PASSED; 1 CRITICAL bug documented below.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/shipments",
+        "issue": "The remote shipment schema rejects `mode='informal'` and `mode='formal'` — only air|sea|land|hand_carry are accepted. Form sends the Section-1 Mode pill (informal/formal/hand_carry) as shipment `mode`, so Save fails with 422 for the DEFAULT case (mode=informal). Repro: POST with mode=informal → 422 literal_error. mode=hand_carry succeeds.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "shipments/new.tsx onSave payload builder",
+        "issue": "Payload sends `mode: <informal|formal|hand_carry>` which is not a valid shipment transport mode. The form is conflating two orthogonal concepts: transport mode (air/sea/land/hand_carry) and company mode (informal/formal). Fix: either (a) rename Section 1 pills to reflect true transport modes (Air / Sea / Land / Hand Carry) and send those literals, or (b) map informal→'land', formal→'air' before POST (business decision needed), or (c) drop the Section 1 Mode pill and rely only on Section 4 company_mode + a proper Transport Mode picker. Reference: /app/frontend/app/shipments/new.tsx:39-55, 187 (payload.mode = mode).",
+        "testID": "",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Create Shipment → shipment/{id} navigation",
+        "issue": "Because Save 422s on default Informal mode, the user never reaches the success Alert or the redirect to /shipment/{id}. Users MUST currently switch the Mode pill to 'Hand Carry' before Save succeeds — no in-app hint of this constraint.",
+        "affected_testIDs": []
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase6_batchB.py",
+    "/app/test_reports/pytest/iter82_batchB.xml"
+  ],
+  "action_items": [
+    "MAIN AGENT — CRITICAL: Reconcile the New Shipment form's Section-1 'Mode' pills (Informal/Formal/Hand Carry) with the backend Shipment schema (air/sea/land/hand_carry). Recommended: rename Section 1 to 'Transport Mode' with pills Air / Sea / Land / Hand Carry, default to a valid transport mode (probably 'air' or 'hand_carry' depending on business), and keep Section 4's Informal/Formal exclusively as `company_mode` (Universal Form Rule). Alternatively, if the user really intends Informal/Formal at the shipment level, add server-side accepted literals or a client-side mapping. Either way the current Save will always 422 for default Informal + all Formal cases.",
+    "MAIN AGENT — MINOR: Once mode fix is in, please add a light client-side error surface if POST /api/shipments returns 422 so validation errors from remote are shown to the user (currently only the generic 'Could not save' Alert is shown)."
+  ],
+  "critical_code_review_comments": [
+    "Fix 6 PDF flow uses expo-print + expo-sharing correctly. On web it opens uri via window.open in a new tab, on native it invokes Sharing.shareAsync with mimeType application/pdf. Modal Pressable stops propagation on inner card — outside-tap dismiss works.",
+    "Fix 10 rails: shipment-detail-view.tsx correctly unions party_id + party_ids for Customers rail and carrier_party_id + carrier_party_ids for Carriers rail. Empty-state 'No customer linked' / 'No carrier assigned' dashed placeholders present. Avatar initials computed from first two words. Tapping a card routes to /party/{id}.",
+    "Fix 9 form validation client-side is present (requires customerId + positive weight) but doesn't guard against the schema mismatch on `mode`. Recommend post-migration to remove/rename Section-1 Mode entirely to avoid confusion with Section-4 company_mode.",
+    "Fix 9 also uses useEffect on direction with `!origin` and `!destination` guards — this means once the user edits origin, toggling direction won't overwrite. Intentional and good."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "75% (3/4 tests; 1 critical schema mismatch)", "frontend": "Fix 6 100%, Fix 10 100%, Fix 9 UI 100% but Save flow broken for default state"},
+  "seed_data_creation": "Created 1 shipment for verification: id=35989f43-7660-45d1-8cc1-1fa48014f54a (CN-1006, mode=hand_carry, Delhi→Bangkok, ₹5000 INR freight, party=1d4908d1..., carrier=6e8d9483... 'Abhishek Singh'). Retained in remote DB. Also 1 failed 422 attempt (nothing persisted).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Fix 6 and Fix 10 are green. Only Fix 9's `mode` mapping needs re-verification once main agent aligns the Section 1 pill with backend literals. After the change: (a) open /shipments/new on mobile viewport 390x844, (b) accept all defaults, (c) select any Customer, (d) enter Weight=12, (e) tap Save — expect 200 + navigate to /shipment/{id}. Then retest with Formal/Air/etc. Existing test file at /app/backend/tests/test_phase6_batchB.py can be updated to reflect the new mode literal.",
+  "rca_of_issue": "Root cause: shipments/new.tsx defines TWO 'Mode' pill groups. Section 1 Mode (Informal/Formal/Hand Carry) is sent as shipment.mode (transport mode) at line 187 in payload, but the remote schema only accepts air|sea|land|hand_carry. The Universal Form Rule ('Mode defaults Informal') was intended to govern Section 4's company_mode, not Section 1's transport mode — the two got conflated during Batch B implementation. Reproduction: 1) login as admin, 2) open /shipments/new, 3) keep Informal default, 4) select a Customer, 5) enter Weight 12, 6) tap Save Shipment → Alert 'Could not save' (backend returned 422 literal_error for `mode`). Workaround: user must switch Section 1 Mode pill from Informal to Hand Carry before Save. Fix: rename Section 1 pills to Air/Sea/Land/Hand Carry (or drop Section 1 Mode and add a proper transport picker) — leave Section 4's Informal/Formal for company_mode. See action_items."
+}
