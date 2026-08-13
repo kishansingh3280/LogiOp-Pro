@@ -428,9 +428,9 @@ agent_communication:
       Pre-publish full regression sweep. User is about to publish, so please
       exercise every task in current_focus end-to-end (both backend REST +
       frontend UI). Preferred preview URL:
-      https://cyber-logistics-hub-1.preview.emergentagent.com/
+      https://opsi-complete.preview.emergentagent.com/
       Backend base URL for direct API tests:
-      https://cyber-logistics-hub-1.preview.emergentagent.com/api
+      https://opsi-complete.preview.emergentagent.com/api
       No auth is required. Existing test data on the live DB includes
       INV-009 (linked to SE/098/01), INV-1002 (unlinked), SE/098/01 with 3
       bags. Feel free to create+cleanup additional records as needed
@@ -586,7 +586,7 @@ backend:
               In transit pills) and USD on hand splits matching (f).
 
           Preview URL:
-          https://cyber-logistics-hub-1.preview.emergentagent.com/
+          https://opsi-complete.preview.emergentagent.com/
           Backend: same host + /api
 
 metadata:
@@ -798,7 +798,7 @@ agent_communication:
             shortcut is right below.
         (5) EXIF: static-check the utility works (Jest or direct import
             check). Full on-device verification requires a build.
-      Preview URL: https://cyber-logistics-hub-1.preview.emergentagent.com/
+      Preview URL: https://opsi-complete.preview.emergentagent.com/
 
 
   - agent: "testing"

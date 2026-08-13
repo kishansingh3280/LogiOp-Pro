@@ -1,6 +1,6 @@
 # Voice Assistant Fixes — Verification Report (Iter 68)
 
-Runtime tested against `https://cyber-logistics-hub-1.preview.emergentagent.com`
+Runtime tested against `https://opsi-complete.preview.emergentagent.com`
 with the `kishan / Kishan@Boss2026` (Admin) account.
 
 ## Summary

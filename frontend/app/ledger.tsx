@@ -9,24 +9,21 @@
  * Purpose: a single glance at "who owes what" for the whole business.
  */
 import { Ionicons } from "@expo/vector-icons";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
-  Modal,
   Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiGet, apiPost } from "@/src/lib/api";
+import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { fmtCurrency, shortDate } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -61,10 +58,8 @@ export default function LedgerScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fix 2 · party filter chip + add-entry modal state
+  // Fix 2 · party filter chip state (Add-Entry is now a full-page route)
   const [partyFilter, setPartyFilter] = useState<string>("all");
-  const [modalOpen, setModalOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,6 +87,14 @@ export default function LedgerScreen() {
   useEffect(() => {
     if (token) load();
   }, [token, load]);
+
+  // Fix 5 · Refresh ledger data whenever the screen regains focus
+  //         (e.g. returning from the /ledger/new-entry route).
+  useFocusEffect(
+    useCallback(() => {
+      if (token) load();
+    }, [token, load]),
+  );
 
   const partyMap = useMemo(() => {
     const m: Record<string, string> = {};
@@ -342,40 +345,22 @@ export default function LedgerScreen() {
       </ScrollView>
 
       {/* Fix 2 · Floating "+ Add Entry" button. Positioned above the
-          OPSI orb which sits at bottom-right (72px pad). */}
+          OPSI orb which sits at bottom-right (72px pad).
+          Fix 5 · now opens a full-page route instead of a bottom sheet. */}
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => setModalOpen(true)}
+        onPress={() =>
+          router.push({
+            pathname: "/ledger/new-entry",
+            params: partyFilter !== "all" ? { party_id: partyFilter } : {},
+          } as any)
+        }
         activeOpacity={0.85}
         accessibilityLabel="Add ledger entry"
       >
         <Ionicons name="add" size={22} color={colors.bgSolid} />
         <Text style={styles.fabText}>Add Entry</Text>
       </TouchableOpacity>
-
-      {modalOpen ? (
-        <AddEntryModal
-          parties={parties || []}
-          defaultPartyId={partyFilter !== "all" ? partyFilter : undefined}
-          saving={saving}
-          onClose={() => setModalOpen(false)}
-          onSubmit={async (payload) => {
-            setSaving(true);
-            try {
-              await apiPost("/api/ledger/entries", payload);
-              setModalOpen(false);
-              await load(); // refresh entries + summary
-            } catch (e) {
-              Alert.alert(
-                "Add entry failed",
-                (e as Error).message || "Please try again.",
-              );
-            } finally {
-              setSaving(false);
-            }
-          }}
-        />
-      ) : null}
     </SafeAreaView>
   );
 }
@@ -403,251 +388,7 @@ function FilterChip({
   );
 }
 
-// ─── Add-entry modal (Fix 2) ───────────────────────────────────────
-type AddPayload = {
-  party_id: string;
-  date: string;
-  description: string;
-  debit: number;
-  credit: number;
-  currency: "INR" | "THB";
-};
-
-function AddEntryModal({
-  parties,
-  defaultPartyId,
-  saving,
-  onClose,
-  onSubmit,
-}: {
-  parties: Party[];
-  defaultPartyId?: string;
-  saving: boolean;
-  onClose: () => void;
-  onSubmit: (payload: AddPayload) => void | Promise<void>;
-}) {
-  const [partyId, setPartyId] = useState<string | null>(defaultPartyId || null);
-  const [type, setType] = useState<"debit" | "credit">("credit");
-  const [amountStr, setAmountStr] = useState("");
-  const [currency, setCurrency] = useState<"INR" | "THB">("INR");
-  const [description, setDescription] = useState("");
-  const [dateStr, setDateStr] = useState(new Date().toISOString().slice(0, 10));
-
-  const canSubmit =
-    !!partyId && parseFloat(amountStr) > 0 && description.trim().length > 0;
-
-  const handleSave = () => {
-    if (!canSubmit || !partyId) return;
-    const amt = parseFloat(amountStr);
-    onSubmit({
-      party_id: partyId,
-      date: dateStr,
-      description: description.trim(),
-      debit: type === "debit" ? amt : 0,
-      credit: type === "credit" ? amt : 0,
-      currency,
-    });
-  };
-
-  return (
-    <Modal
-      visible
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalSheet}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Add Ledger Entry</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={10}>
-              <Ionicons name="close" size={22} color={colors.textDim} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView
-            style={{ maxHeight: 500 }}
-            contentContainerStyle={{ paddingBottom: 12 }}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Party */}
-            <Text style={styles.modalLabel}>Party</Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.chipRow}
-            >
-              {parties.length === 0 ? (
-                <Text style={styles.dim}>No parties available</Text>
-              ) : (
-                parties.map((p) => (
-                  <FilterChip
-                    key={p.id}
-                    label={p.name}
-                    active={partyId === p.id}
-                    onPress={() => setPartyId(p.id)}
-                  />
-                ))
-              )}
-            </ScrollView>
-
-            {/* Type */}
-            <Text style={styles.modalLabel}>Type</Text>
-            <View style={styles.segment}>
-              <TouchableOpacity
-                style={[
-                  styles.segmentBtn,
-                  type === "credit" && {
-                    backgroundColor: colors.brandSoft,
-                    borderColor: colors.brand,
-                  },
-                ]}
-                onPress={() => setType("credit")}
-                activeOpacity={0.75}
-              >
-                <Ionicons
-                  name="arrow-down"
-                  size={14}
-                  color={type === "credit" ? colors.credit : colors.textDim}
-                />
-                <Text
-                  style={[
-                    styles.segmentText,
-                    { color: type === "credit" ? colors.credit : colors.textDim },
-                  ]}
-                >
-                  Credit
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.segmentBtn,
-                  type === "debit" && {
-                    backgroundColor: "rgba(255,68,68,0.10)",
-                    borderColor: colors.danger,
-                  },
-                ]}
-                onPress={() => setType("debit")}
-                activeOpacity={0.75}
-              >
-                <Ionicons
-                  name="arrow-up"
-                  size={14}
-                  color={type === "debit" ? colors.debit : colors.textDim}
-                />
-                <Text
-                  style={[
-                    styles.segmentText,
-                    { color: type === "debit" ? colors.debit : colors.textDim },
-                  ]}
-                >
-                  Debit
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Amount + Currency */}
-            <View style={styles.modalRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalLabel}>Amount</Text>
-                <TextInput
-                  style={styles.input}
-                  value={amountStr}
-                  onChangeText={setAmountStr}
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={colors.textDim}
-                />
-              </View>
-              <View style={{ width: 130 }}>
-                <Text style={styles.modalLabel}>Currency</Text>
-                <View style={styles.segment}>
-                  {(["INR", "THB"] as const).map((c) => (
-                    <TouchableOpacity
-                      key={c}
-                      style={[
-                        styles.segmentBtn,
-                        currency === c && {
-                          backgroundColor: colors.brandSoft,
-                          borderColor: colors.brand,
-                        },
-                      ]}
-                      onPress={() => setCurrency(c)}
-                      activeOpacity={0.75}
-                    >
-                      <Text
-                        style={[
-                          styles.segmentText,
-                          { color: currency === c ? colors.brand : colors.textDim },
-                        ]}
-                      >
-                        {c}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </View>
-
-            {/* Description */}
-            <Text style={styles.modalLabel}>Description</Text>
-            <TextInput
-              style={styles.input}
-              value={description}
-              onChangeText={setDescription}
-              placeholder="e.g. Payment received for AURA-INV-001"
-              placeholderTextColor={colors.textDim}
-              multiline
-            />
-
-            {/* Date */}
-            <Text style={styles.modalLabel}>Date (YYYY-MM-DD)</Text>
-            <TextInput
-              style={styles.input}
-              value={dateStr}
-              onChangeText={setDateStr}
-              placeholder="2026-08-12"
-              placeholderTextColor={colors.textDim}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </ScrollView>
-
-          <View style={styles.modalActions}>
-            <TouchableOpacity
-              style={[styles.modalBtn, styles.modalBtnGhost]}
-              onPress={onClose}
-              disabled={saving}
-              activeOpacity={0.75}
-            >
-              <Text style={styles.modalBtnGhostText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.modalBtn,
-                styles.modalBtnPrimary,
-                (!canSubmit || saving) && { opacity: 0.5 },
-              ]}
-              onPress={handleSave}
-              disabled={!canSubmit || saving}
-              activeOpacity={0.85}
-            >
-              {saving ? (
-                <ActivityIndicator color={colors.bgSolid} size="small" />
-              ) : (
-                <>
-                  <Ionicons name="checkmark" size={16} color={colors.bgSolid} />
-                  <Text style={styles.modalBtnPrimaryText}>Save Entry</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
+// ─── Add-entry moved to full-page route /ledger/new-entry (Fix 5) ──
 
 function SummaryCard({
   label,

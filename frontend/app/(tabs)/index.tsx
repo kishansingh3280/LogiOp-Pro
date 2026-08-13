@@ -241,9 +241,6 @@ export default function HomeScreen() {
           Live view of shipments, ledger and warehouse
         </Text>
 
-        {/* Now Brief — OPSI-generated situational greeting */}
-        <NowBriefCard />
-
         {/* Greeting */}
         <GlassCard glow style={styles.greetCard}>
           <Text style={styles.eyebrow}>{voice.greet}</Text>
@@ -278,6 +275,11 @@ export default function HomeScreen() {
             onPress={() => router.push("/ledger" as any)}
           />
         </View>
+
+        {/* Now Brief — OPSI-generated situational greeting.
+            Fix 4 · repositioned AFTER Customer Will Pay / You Pay Carrier row,
+            BEFORE Bangkok Warehouse. Auto-fetches on mount. */}
+        <NowBriefCard />
 
         {/* Row 2 — Bangkok Warehouse */}
         <Text style={styles.sectionTitle}>{voice.bangkokWarehouse}</Text>

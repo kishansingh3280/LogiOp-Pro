@@ -88,8 +88,9 @@ export function AmbientBackground() {
       <BreathingOrb {...ORB1} />
       <BreathingOrb {...ORB2} />
       <BreathingOrb {...ORB3} />
-      {/* Frosted overlay — sits ABOVE the orbs, BEHIND content */}
-      <View style={styles.overlay} pointerEvents="none" />
+      {/* Frosted overlay — TWO stacked overlays above the orbs, below content */}
+      <View style={styles.overlay1} pointerEvents="none" />
+      <View style={styles.overlay2} pointerEvents="none" />
     </View>
   );
 }
@@ -288,13 +289,22 @@ function BreathingOrb(orb: OrbConfig) {
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    // Fix 3a · frost glass — sits above the orbs, below content.
+  overlay1: {
+    // Fix 3a · frost glass layer 1 — sits above the orbs, below content.
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(5,3,15,0.52)",
+    backgroundColor: "rgba(5,3,15,0.55)",
+  },
+  overlay2: {
+    // Fix 3a · frost glass layer 2 — deepens dark tone above layer 1.
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.30)",
   },
 });

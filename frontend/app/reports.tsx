@@ -14,17 +14,13 @@
  */
 import { Ionicons } from "@expo/vector-icons";
 import { Stack, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  FlatList,
-  Modal,
-  Pressable,
   ScrollView,
   Share,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -32,34 +28,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
-import { fmtCurrency, longDate, shortDate, titleCase } from "@/src/lib/format";
+import { fmtCurrency, longDate } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
 import { GlassCard, Pill } from "@/src/lib/ui";
 
-// ── API shapes ─────────────────────────────────────────────────────
-type Party = {
-  id: string;
-  name: string;
-  role?: string;
-  phone?: string;
-  email?: string;
-  address?: string;
-  gstin?: string;
-  opening_balance_inr?: number;
-  opening_balance_thb?: number;
-};
-
-type LedgerEntry = {
-  id: string;
-  party_id: string;
-  date?: string;
-  description: string;
-  currency: "INR" | "THB";
-  debit: number;
-  credit: number;
-  ref_type?: string;
-};
-
+// ── API shapes (minimal — used for tile counts + ledger summary) ──
 type LedgerSummary = {
   receivable?: { inr?: number; thb?: number };
   payable?: { inr?: number; thb?: number };
@@ -67,86 +40,33 @@ type LedgerSummary = {
   top_give?: { id: string; name: string; inr?: number; thb?: number }[];
 };
 
-type Shipment = {
-  id: string;
-  consignment_no: string;
-  direction: "IN_TO_TH" | "TH_TO_IN";
-  mode?: string;
-  origin?: string;
-  destination?: string;
-  goods?: string;
-  status: string;
-  weight_kg: number;
-  bag_count: number;
-  freight: number;
-  freight_currency: "INR" | "THB";
-  party_id?: string;
-  carrier_party_id?: string;
-  dispatch_date?: string;
-  created_at: string;
-  notes?: string;
-  bags?: {
-    id: string;
-    weight_kg?: number;
-    contents?: string | null;
-    carrier_party_id?: string | null;
-    status?: string;
-  }[];
-};
-
-type InvoiceItem = { description: string; quantity: number; rate: number; unit?: string };
-type Invoice = {
-  id: string;
-  number: string;
-  party_id: string;
-  shipment_id?: string | null;
-  date?: string;
-  due_date?: string | null;
-  currency?: "INR" | "THB";
-  items: InvoiceItem[];
-  tax_percent: number;
-  status?: string;
-  notes?: string;
-};
-
-type PickerKind = null | "party" | "shipment" | "invoice";
-
 // ── Screen ─────────────────────────────────────────────────────────
 export default function ReportsScreen() {
   const { token } = useAuth();
   const router = useRouter();
 
-  const [parties, setParties] = useState<Party[]>([]);
-  const [shipments, setShipments] = useState<Shipment[]>([]);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [partyCount, setPartyCount] = useState(0);
+  const [shipmentCount, setShipmentCount] = useState(0);
+  const [invoiceCount, setInvoiceCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
-  const [picker, setPicker] = useState<PickerKind>(null);
-  const [pickerQuery, setPickerQuery] = useState("");
 
-  // ── Load reference lists once. Ledger data is fetched on demand
-  //    per-report so we don't waste bandwidth up-front.
+  // ── Load lightweight counts once so tiles show real totals.
   useEffect(() => {
     if (!token) return;
     setLoading(true);
     Promise.all([
-      apiGet<Party[]>("/api/parties").catch(() => []),
-      apiGet<Shipment[]>("/api/shipments").catch(() => []),
-      apiGet<Invoice[]>("/api/invoices").catch(() => []),
+      apiGet<unknown[]>("/api/parties").catch(() => []),
+      apiGet<unknown[]>("/api/shipments").catch(() => []),
+      apiGet<unknown[]>("/api/invoices").catch(() => []),
     ])
       .then(([p, s, i]) => {
-        setParties(Array.isArray(p) ? p : []);
-        setShipments(Array.isArray(s) ? s : []);
-        setInvoices(Array.isArray(i) ? i : []);
+        setPartyCount(Array.isArray(p) ? p.length : 0);
+        setShipmentCount(Array.isArray(s) ? s.length : 0);
+        setInvoiceCount(Array.isArray(i) ? i.length : 0);
       })
       .finally(() => setLoading(false));
   }, [token]);
-
-  const partyMap = useMemo(() => {
-    const m: Record<string, Party> = {};
-    for (const p of parties) m[p.id] = p;
-    return m;
-  }, [parties]);
 
   // ── Report generators ─────────────────────────────────────────────
 
@@ -191,250 +111,23 @@ export default function ReportsScreen() {
         { dialogTitle: "Share ledger summary" },
       );
     } catch (e) {
-      // Best-effort — a Share cancel throws too, silent is fine.
       console.warn("[reports] ledger summary failed:", (e as Error).message);
     } finally {
       setPending(null);
     }
   }, []);
 
-  const runPartyStatement = useCallback(
-    async (party: Party) => {
-      setPending(`party:${party.id}`);
-      setPicker(null);
-      try {
-        const entries = await apiGet<LedgerEntry[]>(
-          `/api/ledger/entries?party_id=${party.id}`,
-        );
-        const sorted = (entries || [])
-          .slice()
-          .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-        let balInr = party.opening_balance_inr ?? 0;
-        let balThb = party.opening_balance_thb ?? 0;
-        const lines: string[] = [];
-        lines.push(`LEDGER STATEMENT — ${party.name}`);
-        if (party.role) lines.push(`Role: ${titleCase(party.role)}`);
-        if (party.phone) lines.push(`Phone: ${party.phone}`);
-        if (party.email) lines.push(`Email: ${party.email}`);
-        if (party.gstin) lines.push(`GSTIN: ${party.gstin}`);
-        lines.push(`Generated: ${longDate(new Date().toISOString())}`);
-        lines.push("─────────────────────────────────────────");
-        if (balInr) lines.push(`Opening (INR): ${fmtCurrency(balInr, "INR")}`);
-        if (balThb) lines.push(`Opening (THB): ${fmtCurrency(balThb, "THB")}`);
-        lines.push("");
-        lines.push("DATE       | DESCRIPTION                        |    DEBIT |   CREDIT |  BALANCE");
-        lines.push("─────────────────────────────────────────────────────────────────────────");
-        for (const e of sorted) {
-          const cur = e.currency;
-          if (cur === "THB") balThb += (e.debit || 0) - (e.credit || 0);
-          else balInr += (e.debit || 0) - (e.credit || 0);
-          const bal = cur === "THB" ? balThb : balInr;
-          const dr = e.debit ? fmtCurrency(e.debit, cur) : "—";
-          const cr = e.credit ? fmtCurrency(e.credit, cur) : "—";
-          lines.push(
-            `${shortDate(e.date).padEnd(10)} | ${(e.description || "").slice(0, 34).padEnd(34)} | ${dr.padStart(8)} | ${cr.padStart(8)} | ${fmtCurrency(bal, cur)}`,
-          );
-        }
-        lines.push("─────────────────────────────────────────");
-        lines.push(`Closing (INR): ${fmtCurrency(balInr, "INR")}`);
-        lines.push(`Closing (THB): ${fmtCurrency(balThb, "THB")}`);
-        const status =
-          balInr > 0 || balThb > 0
-            ? "THEY OWE US"
-            : balInr < 0 || balThb < 0
-              ? "WE OWE THEM"
-              : "SETTLED";
-        lines.push(`Status: ${status}`);
-        await Share.share(
-          { title: `Statement — ${party.name}`, message: lines.join("\n") },
-          { dialogTitle: `Share statement for ${party.name}` },
-        );
-      } catch (e) {
-        console.warn("[reports] statement failed:", (e as Error).message);
-      } finally {
-        setPending(null);
-      }
-    },
-    [],
-  );
+  const runPartyStatement = useCallback(() => {
+    router.push("/reports/pick-party" as any);
+  }, [router]);
 
-  const runShipmentManifest = useCallback(
-    async (sh: Shipment) => {
-      setPending(`ship:${sh.id}`);
-      setPicker(null);
-      try {
-        // Best-effort refetch for latest bag state.
-        const full = await apiGet<Shipment>(`/api/shipments/${sh.id}`).catch(() => sh);
-        const lines: string[] = [];
-        lines.push(`SHIPMENT MANIFEST — ${full.consignment_no}`);
-        lines.push(`Generated: ${longDate(new Date().toISOString())}`);
-        lines.push("─────────────────────────────────────────");
-        lines.push(`Direction: ${full.direction === "IN_TO_TH" ? "India → Thailand" : "Thailand → India"}`);
-        lines.push(`Mode: ${titleCase(full.mode || "")}`);
-        lines.push(`Origin: ${full.origin || "—"}`);
-        lines.push(`Destination: ${full.destination || "—"}`);
-        lines.push(`Status: ${(full.status || "").toUpperCase()}`);
-        lines.push(`Dispatch: ${shortDate(full.dispatch_date)}`);
-        lines.push("");
-        lines.push(`Customer: ${partyMap[full.party_id || ""]?.name || "—"}`);
-        lines.push(`Carrier: ${partyMap[full.carrier_party_id || ""]?.name || "—"}`);
-        lines.push(`Goods: ${full.goods || "—"}`);
-        lines.push(`Freight: ${fmtCurrency(full.freight, full.freight_currency)}`);
-        lines.push(`Total weight: ${full.weight_kg} kg`);
-        lines.push(`Bag count: ${full.bag_count}`);
-        lines.push("");
-        if ((full.bags || []).length) {
-          lines.push("BAGS · PER-CARRIER");
-          lines.push("BAG ID  | WEIGHT |  CARRIER              | CONTENTS");
-          lines.push("──────────────────────────────────────────────────────");
-          for (const b of full.bags!) {
-            const carrier =
-              (b.carrier_party_id && partyMap[b.carrier_party_id]?.name) ||
-              partyMap[full.carrier_party_id || ""]?.name ||
-              "—";
-            lines.push(
-              `${(b.id || "").slice(0, 6).padEnd(7)} | ${String(b.weight_kg ?? 0).padStart(5)}kg | ${carrier.slice(0, 20).padEnd(21)} | ${b.contents || "—"}`,
-            );
-          }
-          lines.push("");
-        }
-        if (full.notes) {
-          lines.push("NOTES");
-          lines.push(full.notes);
-        }
-        await Share.share(
-          { title: `Manifest — ${full.consignment_no}`, message: lines.join("\n") },
-          { dialogTitle: `Share manifest for ${full.consignment_no}` },
-        );
-      } catch (e) {
-        console.warn("[reports] manifest failed:", (e as Error).message);
-      } finally {
-        setPending(null);
-      }
-    },
-    [partyMap],
-  );
+  const runShipmentManifest = useCallback(() => {
+    router.push("/reports/pick-shipment" as any);
+  }, [router]);
 
-  const runInvoicePdf = useCallback(
-    async (inv: Invoice) => {
-      setPending(`inv:${inv.id}`);
-      setPicker(null);
-      try {
-        const party = partyMap[inv.party_id];
-        const cur = inv.currency || "INR";
-        const sub = inv.items.reduce(
-          (s, it) => s + Number(it.quantity ?? 0) * Number(it.rate ?? 0),
-          0,
-        );
-        const tax = sub * (Number(inv.tax_percent ?? 0) / 100);
-        const total = sub + tax;
-        const lines: string[] = [];
-        lines.push(`INVOICE ${inv.number}`);
-        lines.push(`Date: ${longDate(inv.date)}`);
-        if (inv.due_date) lines.push(`Due: ${longDate(inv.due_date)}`);
-        lines.push(`Status: ${(inv.status || "draft").toUpperCase()}`);
-        lines.push("─────────────────────────────────────────");
-        lines.push(`Bill To: ${party?.name || inv.party_id}`);
-        if (party?.address) lines.push(`Address: ${party.address}`);
-        if (party?.phone) lines.push(`Phone: ${party.phone}`);
-        if (party?.gstin) lines.push(`GSTIN: ${party.gstin}`);
-        lines.push("");
-        lines.push("DESCRIPTION                       |  QTY |    RATE |    AMOUNT");
-        lines.push("───────────────────────────────────────────────────────────────");
-        for (const it of inv.items) {
-          const amt = Number(it.quantity ?? 0) * Number(it.rate ?? 0);
-          lines.push(
-            `${(it.description || "").slice(0, 32).padEnd(33)} | ${String(it.quantity ?? 0).padStart(4)} | ${fmtCurrency(it.rate, cur).padStart(8)} | ${fmtCurrency(amt, cur).padStart(10)}`,
-          );
-        }
-        lines.push("───────────────────────────────────────────────────────────────");
-        lines.push(`Subtotal:  ${fmtCurrency(sub, cur)}`);
-        if (inv.tax_percent) lines.push(`Tax (${inv.tax_percent}%):  ${fmtCurrency(tax, cur)}`);
-        lines.push(`GRAND TOTAL:  ${fmtCurrency(total, cur)}`);
-        if (inv.notes) {
-          lines.push("");
-          lines.push(`Notes: ${inv.notes}`);
-        }
-        await Share.share(
-          { title: `Invoice ${inv.number}`, message: lines.join("\n") },
-          { dialogTitle: `Share invoice ${inv.number}` },
-        );
-      } catch (e) {
-        console.warn("[reports] invoice pdf failed:", (e as Error).message);
-      } finally {
-        setPending(null);
-      }
-    },
-    [partyMap],
-  );
-
-  // ── Picker item filter ─────────────────────────────────────────────
-  const pickerItems: { id: string; title: string; sub: string }[] = useMemo(() => {
-    const q = pickerQuery.trim().toLowerCase();
-    if (picker === "party") {
-      return parties
-        .filter(
-          (p) =>
-            !q ||
-            (p.name || "").toLowerCase().includes(q) ||
-            (p.phone || "").toLowerCase().includes(q),
-        )
-        .map((p) => ({
-          id: p.id,
-          title: p.name,
-          sub: `${titleCase(p.role || "")} · ${p.phone || p.email || "—"}`,
-        }));
-    }
-    if (picker === "shipment") {
-      return shipments
-        .filter((s) => !q || s.consignment_no.toLowerCase().includes(q))
-        .map((s) => ({
-          id: s.id,
-          title: s.consignment_no,
-          sub: `${s.direction === "IN_TO_TH" ? "IN→TH" : "TH→IN"} · ${s.weight_kg} kg · ${titleCase(s.status)}`,
-        }));
-    }
-    if (picker === "invoice") {
-      return invoices
-        .filter(
-          (i) =>
-            !q ||
-            (i.number || "").toLowerCase().includes(q) ||
-            (partyMap[i.party_id]?.name || "").toLowerCase().includes(q),
-        )
-        .map((i) => ({
-          id: i.id,
-          title: i.number,
-          sub: `${partyMap[i.party_id]?.name || "—"} · ${titleCase(i.status || "draft")}`,
-        }));
-    }
-    return [];
-  }, [picker, pickerQuery, parties, shipments, invoices, partyMap]);
-
-  const pickerTitle =
-    picker === "party"
-      ? "Pick a party"
-      : picker === "shipment"
-        ? "Pick a shipment"
-        : picker === "invoice"
-          ? "Pick an invoice"
-          : "";
-
-  const onPickerSelect = useCallback(
-    (id: string) => {
-      if (picker === "party") {
-        const p = parties.find((x) => x.id === id);
-        if (p) runPartyStatement(p);
-      } else if (picker === "shipment") {
-        const s = shipments.find((x) => x.id === id);
-        if (s) runShipmentManifest(s);
-      } else if (picker === "invoice") {
-        const i = invoices.find((x) => x.id === id);
-        if (i) runInvoicePdf(i);
-      }
-    },
-    [picker, parties, shipments, invoices, runPartyStatement, runShipmentManifest, runInvoicePdf],
-  );
+  const runInvoicePdf = useCallback(() => {
+    router.push("/reports/pick-invoice" as any);
+  }, [router]);
 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
@@ -480,7 +173,7 @@ export default function ReportsScreen() {
           icon="stats-chart"
           title="Ledger Summary"
           subtitle="Receivable + payable totals + top parties"
-          count={`${parties.length} parties`}
+          count={`${partyCount} parties`}
           pending={pending === "ledger"}
           onPress={runLedgerSummary}
         />
@@ -489,107 +182,31 @@ export default function ReportsScreen() {
           icon="document-text"
           title="Party Statement"
           subtitle="Chronological running balance for one party"
-          count={`${parties.length} to pick from`}
-          pending={pending?.startsWith("party:") || false}
-          onPress={() => {
-            setPickerQuery("");
-            setPicker("party");
-          }}
+          count={`${partyCount} to pick from`}
+          pending={false}
+          onPress={runPartyStatement}
         />
 
         <ReportTile
           icon="airplane"
           title="Shipment Manifest"
           subtitle="Consignment header + per-bag carrier breakdown"
-          count={`${shipments.length} shipments`}
-          pending={pending?.startsWith("ship:") || false}
-          onPress={() => {
-            setPickerQuery("");
-            setPicker("shipment");
-          }}
+          count={`${shipmentCount} shipments`}
+          pending={false}
+          onPress={runShipmentManifest}
         />
 
         <ReportTile
           icon="receipt"
           title="Invoice PDF"
           subtitle="Item table, totals, GSTIN, notes"
-          count={`${invoices.length} invoices`}
-          pending={pending?.startsWith("inv:") || false}
-          onPress={() => {
-            setPickerQuery("");
-            setPicker("invoice");
-          }}
+          count={`${invoiceCount} invoices`}
+          pending={false}
+          onPress={runInvoicePdf}
         />
 
         <Text style={styles.footNote}>Aura · Phase 8 online</Text>
       </ScrollView>
-
-      {/* Picker modal */}
-      <Modal
-        visible={picker !== null}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setPicker(null)}
-      >
-        <View style={styles.pickerBackdrop}>
-          <View style={styles.pickerPanel}>
-            <View style={styles.pickerGrabber} />
-            <View style={styles.pickerHeader}>
-              <Text style={styles.pickerTitle}>{pickerTitle}</Text>
-              <TouchableOpacity
-                onPress={() => setPicker(null)}
-                style={styles.pickerClose}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="close" size={20} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.pickerSearchWrap}>
-              <Ionicons name="search" size={16} color={colors.textDim} />
-              <TextInput
-                style={styles.pickerSearch}
-                placeholder="Search…"
-                placeholderTextColor={colors.textDim}
-                value={pickerQuery}
-                onChangeText={setPickerQuery}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="search"
-                autoFocus
-              />
-            </View>
-            <FlatList
-              data={pickerItems}
-              keyExtractor={(it) => it.id}
-              keyboardShouldPersistTaps="handled"
-              ItemSeparatorComponent={() => <View style={styles.pickerSep} />}
-              contentContainerStyle={styles.pickerList}
-              renderItem={({ item }) => (
-                <Pressable
-                  style={styles.pickerItem}
-                  onPress={() => onPickerSelect(item.id)}
-                  android_ripple={{ color: colors.brandSoft }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.pickerItemTitle} numberOfLines={1}>
-                      {item.title}
-                    </Text>
-                    <Text style={styles.pickerItemSub} numberOfLines={1}>
-                      {item.sub}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
-                </Pressable>
-              )}
-              ListEmptyComponent={
-                <View style={styles.pickerEmpty}>
-                  <Text style={styles.dim}>Nothing to show</Text>
-                </View>
-              }
-            />
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }

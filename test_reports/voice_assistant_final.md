@@ -3,7 +3,7 @@
 **Date**: 2026-01-10
 **Auth**: `kishan` / `Kishan@Boss2026` (via `signin-quick-demo`)
 **Frontend**: `http://localhost:3000` (Expo web preview, mobile viewport 390×844)
-**Backend**: `https://cyber-logistics-hub-1.preview.emergentagent.com`
+**Backend**: `https://opsi-complete.preview.emergentagent.com`
 **Fix under test**: `frontend/src/hooks/use-realtime-voice.ts:445` — added `type: "realtime"` inside `session:` object of the `session.update` payload sent on `dc.onopen`.
 
 ---
@@ -84,7 +84,7 @@ Captured `response.function_call_arguments.done` verbatim:
 ### 5. Client hits backend `/api/voice/query` — ✅ PASS
 Network trace:
 ```
-POST https://cyber-logistics-hub-1.preview.emergentagent.com/api/voice/query
+POST https://opsi-complete.preview.emergentagent.com/api/voice/query
 → 200 OK
 ```
 Response body captured (from the `function_call_output` the client then pushed back into the session):

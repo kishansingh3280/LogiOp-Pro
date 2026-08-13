@@ -94,7 +94,9 @@ export function NowBriefCard() {
       </View>
       <View style={styles.briefBody}>
         {error ? (
-          <Text style={styles.briefError}>{error}</Text>
+          <TouchableOpacity onPress={load} activeOpacity={0.7}>
+            <Text style={styles.briefRetry}>Tap to retry</Text>
+          </TouchableOpacity>
         ) : brief ? (
           <Text style={styles.briefText}>{brief}</Text>
         ) : loading ? (
@@ -533,6 +535,7 @@ const styles = StyleSheet.create({
   briefBody: { paddingTop: 2 },
   briefText: { color: colors.text, fontSize: 13, lineHeight: 19 },
   briefError: { color: colors.danger, fontSize: 12 },
+  briefRetry: { color: colors.textDim, fontSize: 13, fontStyle: "italic" },
   briefLoading: {
     flexDirection: "row",
     alignItems: "center",

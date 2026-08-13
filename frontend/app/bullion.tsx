@@ -11,24 +11,21 @@
  *        • Carrier name · weight capacity · status pill
  */
 import { Ionicons } from "@expo/vector-icons";
-import { Stack, useRouter } from "expo-router";
+import { Stack, useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
-  Modal,
   Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { apiGet, apiPost } from "@/src/lib/api";
+import { apiGet } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { fmtCurrency, shortDate, titleCase } from "@/src/lib/format";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -119,8 +116,7 @@ export default function BullionScreen() {
   const [vaultLive, setVaultLive] = useState<VaultSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [savingTrip, setSavingTrip] = useState(false);
+  // Fix 5 · Add Trip moved to full-page route /trips/new — modal state removed.
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,6 +150,13 @@ export default function BullionScreen() {
   useEffect(() => {
     if (token) load();
   }, [token, load]);
+
+  // Fix 5 · Refresh trips after returning from /trips/new full-page route.
+  useFocusEffect(
+    useCallback(() => {
+      if (token) load();
+    }, [token, load]),
+  );
 
   // ── Vault snapshot — total gold in vault (open txns) and net currency
   const vault = useMemo(() => {
@@ -337,7 +340,7 @@ export default function BullionScreen() {
           </View>
           <TouchableOpacity
             style={styles.addTripBtn}
-            onPress={() => setModalOpen(true)}
+            onPress={() => router.push("/trips/new" as any)}
             activeOpacity={0.85}
           >
             <Ionicons name="add" size={16} color={colors.bgSolid} />
@@ -355,7 +358,7 @@ export default function BullionScreen() {
               </Text>
               <TouchableOpacity
                 style={[styles.addTripBtn, { marginTop: spacing.md }]}
-                onPress={() => setModalOpen(true)}
+                onPress={() => router.push("/trips/new" as any)}
                 activeOpacity={0.85}
               >
                 <Ionicons name="add" size={16} color={colors.bgSolid} />
@@ -369,26 +372,6 @@ export default function BullionScreen() {
           <TripRow key={trip.id} trip={trip} />
         ))}
       </ScrollView>
-
-      {modalOpen ? (
-        <AddTripModal
-          carriers={carriers}
-          saving={savingTrip}
-          onClose={() => setModalOpen(false)}
-          onSubmit={async (payload) => {
-            setSavingTrip(true);
-            try {
-              await apiPost("/api/trips", payload);
-              setModalOpen(false);
-              await load();
-            } catch (e) {
-              Alert.alert("Add trip failed", (e as Error).message || "Try again.");
-            } finally {
-              setSavingTrip(false);
-            }
-          }}
-        />
-      ) : null}
     </SafeAreaView>
   );
 }
@@ -467,263 +450,6 @@ function TripRow({ trip }: { trip: BullionTrip }) {
   );
 }
 
-// ─── Add Trip modal (Fix 2) ─────────────────────────────────────────
-type AddTripPayload = {
-  carrier_id?: string;
-  flight_number?: string;
-  airline?: string;
-  departure_date?: string;
-  origin?: string;
-  destination?: string;
-  capacity_kg?: number;
-  gold_baht?: number;
-  currency_amount?: number;
-  carry_charge?: number;
-  status?: string;
-};
-
-function AddTripModal({
-  carriers,
-  saving,
-  onClose,
-  onSubmit,
-}: {
-  carriers: Party[];
-  saving: boolean;
-  onClose: () => void;
-  onSubmit: (payload: AddTripPayload) => void | Promise<void>;
-}) {
-  const [carrierId, setCarrierId] = useState<string | null>(null);
-  const [flightNumber, setFlightNumber] = useState("");
-  const [airline, setAirline] = useState("");
-  const [departureDate, setDepartureDate] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
-  const [direction, setDirection] = useState<"IN_TO_TH" | "TH_TO_IN">("IN_TO_TH");
-  const [capacityKg, setCapacityKg] = useState("");
-  const [gold, setGold] = useState("");
-  const [currency, setCurrency] = useState("");
-  const [carry, setCarry] = useState("");
-
-  const canSubmit = !!carrierId && !!departureDate;
-
-  const handleSave = () => {
-    if (!canSubmit) return;
-    const origin = direction === "IN_TO_TH" ? "India" : "Thailand";
-    const destination = direction === "IN_TO_TH" ? "Thailand" : "India";
-    onSubmit({
-      carrier_id: carrierId!,
-      flight_number: flightNumber.trim() || undefined,
-      airline: airline.trim() || undefined,
-      departure_date: departureDate,
-      origin,
-      destination,
-      capacity_kg: parseFloat(capacityKg) || undefined,
-      gold_baht: parseFloat(gold) || undefined,
-      currency_amount: parseFloat(currency) || undefined,
-      carry_charge: parseFloat(carry) || undefined,
-      status: "scheduled",
-    });
-  };
-
-  return (
-    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalSheet}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Schedule a Trip</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={10}>
-              <Ionicons name="close" size={22} color={colors.textDim} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={{ maxHeight: 540 }} showsVerticalScrollIndicator={false}>
-            {/* Carrier */}
-            <Text style={styles.modalLabel}>Carrier</Text>
-            {carriers.length === 0 ? (
-              <Text style={styles.dim}>
-                No carrier parties yet. Add one from the desktop console first.
-              </Text>
-            ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 8, paddingBottom: 4 }}
-              >
-                {carriers.map((c) => {
-                  const active = carrierId === c.id;
-                  return (
-                    <TouchableOpacity
-                      key={c.id}
-                      style={[styles.mChip, active && styles.mChipActive]}
-                      onPress={() => setCarrierId(c.id)}
-                      activeOpacity={0.75}
-                    >
-                      <Text
-                        style={[
-                          styles.mChipText,
-                          { color: active ? colors.brand : colors.textMuted },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {c.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
-
-            {/* Direction */}
-            <Text style={styles.modalLabel}>Direction</Text>
-            <View style={styles.segment}>
-              {(["IN_TO_TH", "TH_TO_IN"] as const).map((d) => (
-                <TouchableOpacity
-                  key={d}
-                  style={[
-                    styles.segmentBtn,
-                    direction === d && {
-                      backgroundColor: colors.brandSoft,
-                      borderColor: colors.brand,
-                    },
-                  ]}
-                  onPress={() => setDirection(d)}
-                  activeOpacity={0.75}
-                >
-                  <Text
-                    style={[
-                      styles.segmentText,
-                      { color: direction === d ? colors.brand : colors.textDim },
-                    ]}
-                  >
-                    {d === "IN_TO_TH" ? "India → Thailand" : "Thailand → India"}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Flight + Airline row */}
-            <View style={styles.modalRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalLabel}>Flight number</Text>
-                <TextInput
-                  style={styles.input}
-                  value={flightNumber}
-                  onChangeText={setFlightNumber}
-                  placeholder="TG 315"
-                  placeholderTextColor={colors.textDim}
-                  autoCapitalize="characters"
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalLabel}>Airline</Text>
-                <TextInput
-                  style={styles.input}
-                  value={airline}
-                  onChangeText={setAirline}
-                  placeholder="Thai Airways"
-                  placeholderTextColor={colors.textDim}
-                />
-              </View>
-            </View>
-
-            {/* Departure date */}
-            <Text style={styles.modalLabel}>Departure date (YYYY-MM-DD)</Text>
-            <TextInput
-              style={styles.input}
-              value={departureDate}
-              onChangeText={setDepartureDate}
-              placeholder="2026-08-20"
-              placeholderTextColor={colors.textDim}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            {/* Amounts row */}
-            <View style={styles.modalRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalLabel}>Capacity (kg)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={capacityKg}
-                  onChangeText={setCapacityKg}
-                  keyboardType="decimal-pad"
-                  placeholder="30"
-                  placeholderTextColor={colors.textDim}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalLabel}>Saman (baht)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={gold}
-                  onChangeText={setGold}
-                  keyboardType="decimal-pad"
-                  placeholder="10"
-                  placeholderTextColor={colors.textDim}
-                />
-              </View>
-            </View>
-            <View style={styles.modalRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalLabel}>Currency amount</Text>
-                <TextInput
-                  style={styles.input}
-                  value={currency}
-                  onChangeText={setCurrency}
-                  keyboardType="decimal-pad"
-                  placeholder="50000"
-                  placeholderTextColor={colors.textDim}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalLabel}>Carry charge (INR)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={carry}
-                  onChangeText={setCarry}
-                  keyboardType="decimal-pad"
-                  placeholder="8000"
-                  placeholderTextColor={colors.textDim}
-                />
-              </View>
-            </View>
-          </ScrollView>
-
-          <View style={styles.modalActions}>
-            <TouchableOpacity
-              style={[styles.modalBtn, styles.modalBtnGhost]}
-              onPress={onClose}
-              disabled={saving}
-              activeOpacity={0.75}
-            >
-              <Text style={styles.modalBtnGhostText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.modalBtn,
-                styles.modalBtnPrimary,
-                (!canSubmit || saving) && { opacity: 0.5 },
-              ]}
-              onPress={handleSave}
-              disabled={!canSubmit || saving}
-              activeOpacity={0.85}
-            >
-              {saving ? (
-                <ActivityIndicator color={colors.bgSolid} size="small" />
-              ) : (
-                <>
-                  <Ionicons name="checkmark" size={16} color={colors.bgSolid} />
-                  <Text style={styles.modalBtnPrimaryText}>Save Trip</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 const styles = StyleSheet.create({
   // Fix 2 · Add Trip button + modal

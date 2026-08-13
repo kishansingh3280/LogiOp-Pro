@@ -33,20 +33,6 @@ type MenuItem = {
 
 const MENU: MenuItem[] = [
   {
-    key: "ledger",
-    title: "Ledger",
-    subtitle: "Party statements, receivables, verified rows",
-    icon: "book",
-    route: "/ledger",
-  },
-  {
-    key: "bullion",
-    title: "Bullion trips",
-    subtitle: "Carrier flights, vault snapshot, live rates",
-    icon: "diamond",
-    route: "/bullion",
-  },
-  {
     key: "bags",
     title: "Bags",
     subtitle: "Every bag across every shipment, per-carrier",

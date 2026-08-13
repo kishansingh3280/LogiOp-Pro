@@ -2,7 +2,7 @@
 
 **Date**: 2026-01-10  
 **Auth**: `kishan` (Admin, JWT via `/api/auth/login`)  
-**Backend base URL**: `https://cyber-logistics-hub-1.preview.emergentagent.com`  
+**Backend base URL**: `https://opsi-complete.preview.emergentagent.com`  
 **Frontend preview**: `http://localhost:3000` (Expo web)  
 **Transport under test**: WebRTC (SDP over HTTPS to OpenAI), NOT WebSocket
 

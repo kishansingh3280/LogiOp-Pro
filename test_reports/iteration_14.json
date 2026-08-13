@@ -29,6 +29,6 @@
   "seed_data_creation": "None — tests read-only against live seeded data (Lalit has 2 rows in FY 2025-26 and 4 rows in FY 2026-27, mixed INR/THB).",
   "retest_needed": false,
   "should_main_agent_self_test": false,
-  "context_for_next_testing_agent": "Run: `EXPO_BACKEND_URL=https://cyber-logistics-hub-1.preview.emergentagent.com pytest /app/backend/tests/test_fy_and_ledger.py -v`. FY math is mirrored in Python inside the test file, so if the JS fy.ts changes semantics, update _get_fy_key/_is_in_fy accordingly. Bullion /rates schema keys are: hand_carry_rate_inr_per_kg, gold_rate_per_baht, currency_rate_per_1000, updated_at (not the earlier gold_price_inr_per_10g / usd_inr names).",
+  "context_for_next_testing_agent": "Run: `EXPO_BACKEND_URL=https://opsi-complete.preview.emergentagent.com pytest /app/backend/tests/test_fy_and_ledger.py -v`. FY math is mirrored in Python inside the test file, so if the JS fy.ts changes semantics, update _get_fy_key/_is_in_fy accordingly. Bullion /rates schema keys are: hand_carry_rate_inr_per_kg, gold_rate_per_baht, currency_rate_per_1000, updated_at (not the earlier gold_price_inr_per_10g / usd_inr names).",
   "rca_of_issue": "N/A"
 }

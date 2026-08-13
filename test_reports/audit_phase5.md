@@ -1,7 +1,7 @@
 # Logistics Hub — Phase 5 Read-Only Audit
 
 **Mode:** Source-code + live-API audit (no UI clicks; no file modifications).
-**Backend base:** `https://cyber-logistics-hub-1.preview.emergentagent.com`
+**Backend base:** `https://opsi-complete.preview.emergentagent.com`
 **Users:** kishan (Admin) login OK · bsingh (Papa) login OK.
 
 ## 1. Executive summary

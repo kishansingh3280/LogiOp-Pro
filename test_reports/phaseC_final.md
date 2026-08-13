@@ -1,7 +1,7 @@
 # Phase C — Final pre-publish verification report
 
 **Date:** 2026-01 (iter 72)
-**Environment:** https://cyber-logistics-hub-1.preview.emergentagent.com
+**Environment:** https://opsi-complete.preview.emergentagent.com
 **Auth used:** kishan (Admin), bsingh (Papa)
 **Viewports:** mobile 390×844
 

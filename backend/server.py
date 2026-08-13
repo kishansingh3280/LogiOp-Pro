@@ -2580,9 +2580,22 @@ class NowBriefIn(BaseModel):
     tz_offset_minutes: int = 330  # IST default
 
 
+# Module-level in-memory cache for Now Brief so we don't hammer the LLM
+# on rapid re-mounts / route revisits. Cache TTL is 5 minutes (300 s).
+_now_brief_cache: Dict[str, Any] = {"ts": 0.0, "content": ""}
+
+
 @api_router.post("/dashboard/now-brief")
 async def dashboard_now_brief(body: NowBriefIn, current: UserPublic = Depends(get_current_user)):
     from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+    # 5-minute TTL cache — return immediately if fresh.
+    if _now_brief_cache["content"] and (time.time() - float(_now_brief_cache["ts"])) < 300:
+        return {
+            "brief": _now_brief_cache["content"],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "cached": True,
+        }
 
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
@@ -2652,6 +2665,10 @@ async def dashboard_now_brief(body: NowBriefIn, current: UserPublic = Depends(ge
             f"{body.warehouse_bags} bags in Bangkok. 👉 Review pending shipments."
         )
         logging.warning(f"now-brief LLM failed, using fallback: {e}")
+
+    # Store fresh result in module-level cache (5-min TTL enforced above).
+    _now_brief_cache["ts"] = time.time()
+    _now_brief_cache["content"] = content
 
     return {"brief": content, "generated_at": datetime.now(timezone.utc).isoformat()}
 
@@ -5285,6 +5302,14 @@ async def proxy_to_remote_backend(path: str, request: Request):
     resp_headers = {
         k: v for k, v in resp.headers.items() if k.lower() not in _HOP_BY_HOP
     }
+    # Inject browser-friendly caching for hot read-only dashboard endpoints.
+    _cache_paths = {
+        "dashboard/stats",
+        "dashboard/ledger-summary",
+        "dashboard/warehouse",
+    }
+    if request.method == "GET" and path in _cache_paths:
+        resp_headers["Cache-Control"] = "public, max-age=30"
     return Response(
         content=resp.content,
         status_code=resp.status_code,

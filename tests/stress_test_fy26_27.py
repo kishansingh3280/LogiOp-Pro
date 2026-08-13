@@ -27,7 +27,7 @@ import requests
 
 # Preview URL — the local server.py proxies most routes to the live backend
 # and directly serves /api/bullion/* and /api/wingman/* out of Mongo.
-BASE = "https://cyber-logistics-hub-1.preview.emergentagent.com/api"
+BASE = "https://opsi-complete.preview.emergentagent.com/api"
 
 # FY 2026-27 boundaries (Indian financial year).
 FY_START = date(2026, 4, 1)

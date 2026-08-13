@@ -202,9 +202,9 @@ export function GlobalSidebar({
 // ─── Floating gold + silver + rose-gold particle layer ─────────────
 // Sits at zIndex 0 (nav items are above at zIndex 1) so it never
 // intercepts taps on nav items. 14 total particles:
-//   • 5 gold  (#FFD700, 3px,   opacity 0.40)
-//   • 5 silver (#C0C0C0, 2px,   opacity 0.30)
-//   • 4 rose  (#B76E79, 2.5px, opacity 0.35)
+//   • 3 gold   (#FFD700, 3px,   opacity 0.35)
+//   • 6 silver (#C0C0C0, 2.5px, opacity 0.42)
+//   • 5 rose   (#B76E79, 2.5px, opacity 0.45)
 // Each floats upward translateY 0 → -20 with a per-particle duration
 // staggered between 4000–8000 ms, useNativeDriver: true.
 type Particle = {
@@ -226,13 +226,13 @@ function ParticleLayer() {
     };
     const arr: Particle[] = [];
 
-    // 5 gold — largest, brightest
-    for (let i = 0; i < 5; i++) {
+    // 3 gold — largest, brightest
+    for (let i = 0; i < 3; i++) {
       arr.push({
         color: "#FFD700",
         size: 3,
         radius: 1.5,
-        opacity: 0.4,
+        opacity: 0.35,
         topPct: rand(i * 7.13 + 1) * 0.9 + 0.05,
         leftPct: rand(i * 3.71 + 2) * 0.85 + 0.075,
         // 4000 + 0..4000 → range 4000..8000
@@ -240,26 +240,26 @@ function ParticleLayer() {
       });
     }
 
-    // 5 silver — small, subtle
-    for (let i = 0; i < 5; i++) {
+    // 6 silver — small, subtle
+    for (let i = 0; i < 6; i++) {
       arr.push({
         color: "#C0C0C0",
-        size: 2,
-        radius: 1,
-        opacity: 0.3,
+        size: 2.5,
+        radius: 1.25,
+        opacity: 0.42,
         topPct: rand(i * 11.7 + 40) * 0.9 + 0.05,
         leftPct: rand(i * 4.9 + 41) * 0.85 + 0.075,
         duration: 4000 + Math.round(rand(i * 6.7 + 42) * 4000),
       });
     }
 
-    // 4 rose gold — medium warmth
-    for (let i = 0; i < 4; i++) {
+    // 5 rose gold — medium warmth
+    for (let i = 0; i < 5; i++) {
       arr.push({
         color: "#B76E79",
         size: 2.5,
         radius: 1.25,
-        opacity: 0.35,
+        opacity: 0.45,
         topPct: rand(i * 9.31 + 80) * 0.9 + 0.05,
         leftPct: rand(i * 5.83 + 81) * 0.85 + 0.075,
         duration: 4000 + Math.round(rand(i * 7.19 + 82) * 4000),
@@ -341,27 +341,22 @@ function SidebarShipmentStats() {
   useEffect(() => {
     if (!token) return;
     apiGet<{ shipments?: ShipmentStats } | ShipmentStats>("/api/dashboard/stats")
-      .then((raw) => {
-        // Accept either { shipments: {...} } (current backend shape) or a
-        // flat { total, pending, ... } shape for future-proofing.
-        const s: ShipmentStats =
-          raw && typeof raw === "object" && "shipments" in raw && raw.shipments
-            ? (raw as { shipments: ShipmentStats }).shipments
-            : (raw as ShipmentStats);
+      .then((data) => {
+        // Fix 8 · API returns { shipments: { total, pending, in_transit,
+        // delivered } } — unwrap into `s`, fall back to flat shape.
+        const s = ((data as { shipments?: ShipmentStats })?.shipments ??
+          data) as ShipmentStats;
         setStats(s || null);
       })
       .catch(() => setStats(null));
   }, [token]);
 
   const rows: { label: string; value: number; tint: string }[] = [
-    { label: "Total", value: stats?.total ?? 0, tint: colors.text },
-    { label: "Pending", value: stats?.pending ?? 0, tint: colors.warn },
-    {
-      label: "In Transit",
-      value: (stats?.in_transit ?? 0) + (stats?.warehouse_arrived ?? 0),
-      tint: colors.info,
-    },
-    { label: "Delivered", value: stats?.delivered ?? 0, tint: colors.brand },
+    // Fix 8 · Fixed palette per spec.
+    { label: "Total", value: stats?.total ?? 0, tint: "#FFFFFF" },
+    { label: "Pending", value: stats?.pending ?? 0, tint: "#FF9500" },
+    { label: "In Transit", value: stats?.in_transit ?? 0, tint: "#007AFF" },
+    { label: "Delivered", value: stats?.delivered ?? 0, tint: "#00FF88" },
   ];
 
   return (

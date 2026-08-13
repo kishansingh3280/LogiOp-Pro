@@ -1,6 +1,6 @@
 # Phase 5 Fix-Batch Verification (iteration 66)
 
-**Environment:** https://cyber-logistics-hub-1.preview.emergentagent.com
+**Environment:** https://opsi-complete.preview.emergentagent.com
 **Viewports:** Mobile 390x844, Tablet 1200x900
 **Credentials:** kishan / Kishan@Boss2026 (Admin), bsingh / Papa@2026 (Papa)
 **Verdict:** 12 / 12 PASS  (10 runtime-verified + 2 source-verified where runtime not feasible)

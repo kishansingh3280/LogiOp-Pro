@@ -30,6 +30,6 @@
   "seed_data_creation": "None — PUT verified_up_to on Lalit was reverted to its pre-test value (null). Stress test's own cleanup removed all STRESS-* artefacts.",
   "retest_needed": false,
   "should_main_agent_self_test": false,
-  "context_for_next_testing_agent": "Run: `EXPO_BACKEND_URL=https://cyber-logistics-hub-1.preview.emergentagent.com pytest /app/backend/tests/test_verify_and_invoice_link.py -v` and `cd /app && python3 tests/stress_test.py`. The verified_up_to test is idempotent — it snapshots the current value, PUTs 2026-08-07, verifies, then restores whatever was there. Invoice-link test skips gracefully when no invoice has shipment_id set; if the seed changes to include a linked invoice, the test will additionally assert the referenced shipment resolves via /api/shipments/{sid}.",
+  "context_for_next_testing_agent": "Run: `EXPO_BACKEND_URL=https://opsi-complete.preview.emergentagent.com pytest /app/backend/tests/test_verify_and_invoice_link.py -v` and `cd /app && python3 tests/stress_test.py`. The verified_up_to test is idempotent — it snapshots the current value, PUTs 2026-08-07, verifies, then restores whatever was there. Invoice-link test skips gracefully when no invoice has shipment_id set; if the seed changes to include a linked invoice, the test will additionally assert the referenced shipment resolves via /api/shipments/{sid}.",
   "rca_of_issue": "N/A"
 }
