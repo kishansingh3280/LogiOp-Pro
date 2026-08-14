@@ -32,6 +32,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { apiGet, apiPost } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth-context";
 import { useCompany } from "@/src/lib/company-context";
+import { DatePickerModal } from "@/src/lib/date-picker-modal";
 import { ModeCompanyBlock } from "@/src/lib/mode-company-block";
 import { fetchPartyRates, computeCarrierCharge } from "@/src/lib/party-rates";
 import { colors, radii, spacing } from "@/src/lib/theme";
@@ -119,6 +120,8 @@ export default function NewShipmentScreen() {
   // showing all customers if none match, so legacy flows still work).
   const [parentCustomerPartyId, setParentCustomerPartyId] = useState<string>("");
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
+  // Fix Bug 4 (Phase 7) · in-app calendar picker for bag date.
+  const [datePickerFor, setDatePickerFor] = useState<string | null>(null);
   const [goods, setGoods] = useState<string>("");
   // Which bag's customer/carrier/item picker is currently open.
   const [bagPickerOpen, setBagPickerOpen] = useState<
@@ -677,13 +680,26 @@ export default function NewShipmentScreen() {
                       </View>
                       <View style={{ flex: 1 }}>
                         <Label>Date</Label>
-                        <TextInput
-                          style={styles.input}
-                          value={b.bag_date}
-                          onChangeText={(v) => updateBag(b.key, { bag_date: v })}
-                          placeholder="YYYY-MM-DD"
-                          placeholderTextColor={colors.textDim}
-                        />
+                        <TouchableOpacity
+                          style={styles.dateField}
+                          onPress={() => setDatePickerFor(b.key)}
+                          activeOpacity={0.75}
+                        >
+                          <Ionicons
+                            name="calendar"
+                            size={14}
+                            color={colors.brand}
+                          />
+                          <Text
+                            style={[
+                              styles.dateFieldText,
+                              !b.bag_date && { color: colors.textDim },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {b.bag_date || "Pick date"}
+                          </Text>
+                        </TouchableOpacity>
                       </View>
                     </View>
 
@@ -1169,6 +1185,20 @@ export default function NewShipmentScreen() {
           </Pressable>
         </Pressable>
       ) : null}
+      {/* ── Bug 4 (Phase 7) · Calendar picker for bag date ─── */}
+      <DatePickerModal
+        visible={!!datePickerFor}
+        value={
+          datePickerFor
+            ? bagRows.find((b) => b.key === datePickerFor)?.bag_date || ""
+            : ""
+        }
+        onSelect={(iso) => {
+          if (datePickerFor) updateBag(datePickerFor, { bag_date: iso });
+        }}
+        onClose={() => setDatePickerFor(null)}
+        title="Bag ki dispatch date"
+      />
     </SafeAreaView>
   );
 }
@@ -1534,6 +1564,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   invoiceBtnText: { color: colors.bg, fontSize: 13, fontWeight: "800", letterSpacing: 0.2 },
+  // Bug 4 (Phase 7) · Calendar-picker trigger field
+  dateField: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.card,
+    borderColor: colors.cardBorder,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 40,
+  },
+  dateFieldText: { color: colors.text, fontSize: 13, fontWeight: "600" },
 
   // Party picker
   pickerBackdrop: {

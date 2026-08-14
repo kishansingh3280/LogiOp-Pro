@@ -254,6 +254,9 @@ export function OpsiOrb() {
           <Animated.View style={[styles.orb, { transform: [{ scale }] }]}>
             <Ionicons name="sparkles" size={22} color={colors.bgSolid} />
           </Animated.View>
+          {/* Bug 2 · Visible label under the orb so first-time users
+              can identify the AI assistant button. */}
+          <Text style={styles.orbLabel}>OPSI</Text>
         </Pressable>
       </View>
 
@@ -408,9 +411,19 @@ const styles = StyleSheet.create({
   },
   orbHit: {
     width: 60,
-    height: 60,
+    height: 76,
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
+  },
+  orbLabel: {
+    color: colors.brand,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    marginTop: 4,
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   orbGlow: {
     position: "absolute",

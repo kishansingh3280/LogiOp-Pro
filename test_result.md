@@ -4029,3 +4029,89 @@ agent_communication:
       Zero lint errors. Backend + expo restarted successfully. Live
       rates scheduler still ticking. Preview home rendered. Request
       testing_agent to run the full regression suite.
+
+##====================================================================================================
+## BUG BATCH · LIVE RATES DISPLAY + OPSI LABEL + LEDGER OVERLAP + CALENDAR PICKER (2026-08-14)
+##====================================================================================================
+
+frontend:
+  - task: "Bug 3 · Ledger balance column overlap on mobile"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/ledger.tsx"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "balCol.minWidth 90→110 with marginLeft 4. row.gap md→sm. avatar 44→40. Added Platform.select tabular-nums fontVariant on iOS for cleaner numeric alignment. No lint errors."
+
+  - task: "Bug 2 · Unlabeled OPSI assistant orb"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/opsi-orb.tsx"
+    needs_retesting: true
+    priority: "medium"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Added visible 'OPSI' label below the sparkles orb with brand color + tight text-shadow so first-time users can identify the AI assistant button. Kept accessibilityLabel for screen readers."
+
+  - task: "Bug 4 · Calendar picker for per-bag date"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/lib/date-picker-modal.tsx, /app/frontend/app/shipments/new.tsx"
+    needs_retesting: true
+    priority: "high"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "New zero-dependency DatePickerModal component (month grid, prev/next month chevrons, Aaj button, tap-to-select). Wired into shipment/new bag row — Date field is now a tappable pill that opens the modal. Cross-platform (web + iOS + Android)."
+
+  - task: "Bug 1 · Live rates clearer labels + tighter formatting"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/bullion.tsx"
+    needs_retesting: true
+    priority: "medium"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Verified values are correct (SLN Bullion → GoodReturns matches official IBJA ₹15,149/g for 999 gold). Updated card titles to be less misleading: 'India Gold (per gram)' + 'GoodReturns · IBJA benchmark' subtitle; 'Booth Exchange (Bangkok)' + 'grandsuperrich.com · buy/sell'. Row labels now say '24K (999)', '22K (916)', '1 INR → THB', etc. — cleaner semantics."
+
+backend:
+  - task: "Bug 5 · Ledger sort latest first (already shipped in previous batch)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    needs_retesting: false
+    priority: "low"
+    stuck_count: 0
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "Already verified in iteration 87 · GET /api/ledger/entries returns entries sorted DESC by date. No re-work needed."
+
+metadata:
+  test_sequence: 90
+  run_ui: true
+
+agent_communication:
+    -agent: "main"
+    -message: |
+      User reported 5 bugs. Data investigation showed live-rates
+      values ARE technically correct (matched IBJA official
+      reference for India gold). Fixed the perception issue by
+      relabelling the cards to name the actual source. Fixed:
+        (1) Ledger balance column overlap — widened + tabular-nums
+        (2) OPSI orb label — visible 'OPSI' text under sparkles
+        (3) Calendar picker — new zero-dep DatePickerModal
+        (4) Live rates labels clearer
+        (5) Ledger sort — no new work (already shipped)
+      Zero lint errors. Backend + expo restarted.
+      Request testing_agent to verify these 5 items visually +
+      any regressions on dock/party/ship-new flows.

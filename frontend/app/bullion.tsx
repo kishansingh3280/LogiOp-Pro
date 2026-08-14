@@ -400,30 +400,30 @@ export default function BullionScreen() {
             {liveRates.sources.sln_bullion ? (
               <LiveRateCard
                 icon="diamond"
-                title="India Gold Sell"
-                source="SLN Bullion / GoodReturns"
+                title="India Gold (per gram)"
+                source="GoodReturns · IBJA benchmark"
                 isStale={liveRates.sources.sln_bullion.is_stale}
                 fetchedAt={liveRates.sources.sln_bullion.fetched_at}
                 rows={[
                   {
-                    label: "24K Gold",
+                    label: "24K (999)",
                     value:
                       Number(liveRates.sources.sln_bullion.rates.gold_24k_1g_inr || 0) > 0
-                        ? `₹${Number(liveRates.sources.sln_bullion.rates.gold_24k_1g_inr).toLocaleString("en-IN")} /g`
+                        ? `₹${Number(liveRates.sources.sln_bullion.rates.gold_24k_1g_inr).toLocaleString("en-IN")}/g`
                         : "—",
                   },
                   {
-                    label: "22K Gold",
+                    label: "22K (916)",
                     value:
                       Number(liveRates.sources.sln_bullion.rates.gold_22k_1g_inr || 0) > 0
-                        ? `₹${Number(liveRates.sources.sln_bullion.rates.gold_22k_1g_inr).toLocaleString("en-IN")} /g`
+                        ? `₹${Number(liveRates.sources.sln_bullion.rates.gold_22k_1g_inr).toLocaleString("en-IN")}/g`
                         : "—",
                   },
                   {
-                    label: "Silver",
+                    label: "Silver (per kg)",
                     value:
                       Number(liveRates.sources.sln_bullion.rates.silver_1kg_inr || 0) > 0
-                        ? `₹${Number(liveRates.sources.sln_bullion.rates.silver_1kg_inr).toLocaleString("en-IN")} /kg`
+                        ? `₹${Number(liveRates.sources.sln_bullion.rates.silver_1kg_inr).toLocaleString("en-IN")}/kg`
                         : "—",
                   },
                 ]}
@@ -468,27 +468,27 @@ export default function BullionScreen() {
             {liveRates.sources.superrich_th ? (
               <LiveRateCard
                 icon="cash"
-                title="Super Rich Thailand"
-                source="grandsuperrich.com"
+                title="Booth Exchange (Bangkok)"
+                source="grandsuperrich.com · buy/sell"
                 isStale={liveRates.sources.superrich_th.is_stale}
                 fetchedAt={liveRates.sources.superrich_th.fetched_at}
                 rows={[
                   {
-                    label: "INR → THB (buy)",
+                    label: "1 INR → THB",
                     value:
                       Number(liveRates.sources.superrich_th.rates.inr_thb_buy || 0) > 0
-                        ? `฿${Number(liveRates.sources.superrich_th.rates.inr_thb_buy).toFixed(4)}`
+                        ? `฿${Number(liveRates.sources.superrich_th.rates.inr_thb_buy).toFixed(3)}`
                         : "—",
                   },
                   {
-                    label: "USD → THB",
+                    label: "1 USD → THB",
                     value:
                       Number(liveRates.sources.superrich_th.rates.usd_thb_buy || 0) > 0
                         ? `฿${Number(liveRates.sources.superrich_th.rates.usd_thb_buy).toFixed(2)}`
                         : "—",
                   },
                   {
-                    label: "SGD → THB",
+                    label: "1 SGD → THB",
                     value:
                       Number(liveRates.sources.superrich_th.rates.sgd_thb_buy || 0) > 0
                         ? `฿${Number(liveRates.sources.superrich_th.rates.sgd_thb_buy).toFixed(2)}`
