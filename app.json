@@ -21,7 +21,14 @@
       "permissions": [
         "VIBRATE",
         "USE_BIOMETRIC",
-        "USE_FINGERPRINT"
+        "USE_FINGERPRINT",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "VIBRATE",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
       ]
     },
     "runtimeVersion": {
@@ -29,6 +36,16 @@
     },
     "plugins": [
       "expo-local-authentication"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "1e503db2-dc92-44d9-8e22-2660711a99d6"
+      }
+    },
+    "owner": "kishan.singh3280",
+    "updates": {
+      "url": "https://u.expo.dev/1e503db2-dc92-44d9-8e22-2660711a99d6"
+    },
+    "ios": {}
   }
 }
