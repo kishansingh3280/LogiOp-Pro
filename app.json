@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "LogiOp Pro",
+    "slug": "logiop-pro",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#060812",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0D1C"
+    },
+    "android": {
+      "package": "com.singhexports.logioppro",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0D1C"
+      },
+      "permissions": [
+        "VIBRATE",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ]
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "plugins": [
+      "expo-local-authentication"
+    ]
+  }
+}
