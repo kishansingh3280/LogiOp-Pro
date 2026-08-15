@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Platform } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as NavigationBar from 'expo-navigation-bar';
 import HTML from './html';
 
-// WebView ke andar navigator.vibrate ko asli haptic engine se jodta hai
 const BRIDGE = `
 window.__NATIVE = true;
 navigator.vibrate = function(p){
@@ -19,6 +19,11 @@ export default function App(){
   const [ok, setOk] = useState(false);
   const [msg, setMsg] = useState('Pehchaan zaroori hai…');
 
+  useEffect(()=>{ // Immersive: nav bar gayab, swipe par wapas
+    NavigationBar.setVisibilityAsync('hidden').catch(()=>{});
+    NavigationBar.setBehaviorAsync('overlay-swipe').catch(()=>{});
+  },[]);
+
   useEffect(()=>{ (async ()=>{
     try{
       const has = await LocalAuthentication.hasHardwareAsync();
@@ -30,7 +35,7 @@ export default function App(){
         });
         if(r.success){ Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setOk(true); return; }
         setMsg('Pehchaan nahi hui — app band karke dobara kholein');
-      } else { setOk(true); } // sensor/enrolment nahi to seedha andar
+      } else { setOk(true); }
     }catch(e){ setOk(true); }
   })(); },[]);
 
@@ -53,7 +58,7 @@ export default function App(){
 
   return (
     <View style={{flex:1, backgroundColor:'#060812'}}>
-      <StatusBar style="light" />
+      <StatusBar hidden />
       <WebView
         source={{ html: HTML }}
         originWhitelist={["*"]}

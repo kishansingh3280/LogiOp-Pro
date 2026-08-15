@@ -168,7 +168,7 @@ html[data-theme="light"] .nav-item.active{color:#3b2f80}
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .topbar{
   display:flex;align-items:center;gap:14px;
-  padding:14px 26px 12px;
+  padding:26px 26px 12px;
   border-bottom:1px solid var(--line);
   backdrop-filter:blur(14px);
   background:linear-gradient(180deg,rgba(8,10,20,.5),transparent);
@@ -697,7 +697,7 @@ html[data-theme="light"] .field select{background:rgba(255,255,255,.7)}
         </div>
         <div class="powered"><span class="pline l"></span>POWERED BY <b>OPSI</b><span class="pline r"></span></div>
       </div>
-      <div class="chip hidesm">BUILD <b>v49</b></div>
+      <div class="chip hidesm">BUILD <b>v50</b></div>
       <div class="chip hidesm" id="clockChip">--:--</div>
       <div class="avatar">
         <div class="avatar-ring"><i>KS</i></div>
