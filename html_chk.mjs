@@ -1447,7 +1447,7 @@ html,body{touch-action:pan-x pan-y;-ms-touch-action:pan-x pan-y}
         </div>
         <div class="powered"><span class="pline l"></span>POWERED BY <b>OPSI</b><span class="pline r"></span></div>
       </div>
-      <div class="chip hidesm">BUILD <b>v80</b></div>
+      <div class="chip hidesm">BUILD <b>v81</b></div>
       <div class="chip" id="bookBadge">KACHCHA</div>
       <div class="chip hidesm" id="clockChip">--:--</div>
       <div class="avatar">
@@ -2128,7 +2128,7 @@ html,body{touch-action:pan-x pan-y;-ms-touch-action:pan-x pan-y}
 </div>
 <div id="toast"></div>
 
-<script>/*v80err*/window.onerror=function(m,src,l,c){try{var d=document.createElement("div");d.style.cssText="position:fixed;z-index:99999;left:0;right:0;bottom:0;background:#b00020;color:#fff;font:12px monospace;padding:10px;white-space:pre-wrap";d.textContent="ERR: "+m+"  @line "+l+":"+c;if(document.body)document.body.appendChild(d);else setTimeout(function(){document.body&&document.body.appendChild(d)},800)}catch(e){}};
+<script>/*v81ls*/(function(){var ok=false;try{window.localStorage.setItem("__t","1");window.localStorage.removeItem("__t");ok=true}catch(e){}if(ok)return;var m={};var api={getItem:function(k){k=String(k);return m.hasOwnProperty(k)?m[k]:null},setItem:function(k,v){m[String(k)]=String(v)},removeItem:function(k){delete m[String(k)]},clear:function(){m={}},key:function(n){var a=Object.keys(m);return n<a.length?a[n]:null}};try{Object.defineProperty(api,"length",{get:function(){return Object.keys(m).length}})}catch(e){}try{Object.defineProperty(window,"localStorage",{value:api,configurable:true,writable:true})}catch(e){}try{Object.defineProperty(window,"sessionStorage",{value:api,configurable:true,writable:true})}catch(e){}})();/*v80err*/window.onerror=function(m,src,l,c){try{var d=document.createElement("div");d.style.cssText="position:fixed;z-index:99999;left:0;right:0;bottom:0;background:#b00020;color:#fff;font:12px monospace;padding:10px;white-space:pre-wrap";d.textContent="ERR: "+m+"  @line "+l+":"+c;if(document.body)document.body.appendChild(d);else setTimeout(function(){document.body&&document.body.appendChild(d)},800)}catch(e){}};
 /* ============================================================
    LogiOp Pro v41 — engine (zero-conflict, transform-only motion)
    ============================================================ */
