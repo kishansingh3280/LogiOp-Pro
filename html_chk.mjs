@@ -5029,6 +5029,9 @@ function voiceUnavailable(){
   };
 })();
 
+
+/* ---------- v73 data 0 fix ---------- */
+(function v73data(){function go(){try{if(typeof renderAll==="function")renderAll()}catch(e){}try{if(typeof countUp==="function")countUp()}catch(e){}}var n=0;var t=setInterval(function(){go();if(++n>8)clearInterval(t)},600);setTimeout(go,300);setTimeout(go,1500);setTimeout(go,3000);document.addEventListener("click",function(){setTimeout(go,250)},true);document.addEventListener("visibilitychange",function(){if(!document.hidden)setTimeout(go,250)})})();
 </script>
 </body>
 </html>
