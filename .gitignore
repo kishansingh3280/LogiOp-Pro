@@ -1,0 +1,9 @@
+node_modules/
+android/
+ios/
+dist/
+.expo/
+*.bak
+*.bak[0-9]*
+html_chk.mjs
+tmp_chk.js

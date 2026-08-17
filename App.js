@@ -47,7 +47,7 @@ export default function App() {
       <StatusBar hidden />
       <WebView
         ref={webRef}
-        source={{ html }}
+        source={{ html, baseUrl: 'https://localhost' }}
         originWhitelist={['*']}
         onMessage={onMessage}
         javaScriptEnabled
