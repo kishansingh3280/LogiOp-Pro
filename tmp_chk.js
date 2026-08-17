@@ -1307,7 +1307,7 @@ const LOGOS={
 };
 const LIVERY={TG:['#4b2a85','#f2b21d'],WE:['#e5486d','#f2b21d'],PG:['#0e6eb8','#7dc242'],FD:['#e40b1c','#ffffff'],SL:['#c8102e','#ff8200'],VZ:['#ec1c24','#ffcb05'],TR:['#ffcd00','#33334c'],'6E':['#001b94','#ffffff'],AI:['#d3072a','#e8a33d'],IX:['#f37021','#2a2a72'],UK:['#4b286d','#c5a05a'],SG:['#d61a2e','#ffcb05'],QP:['#ff6d38','#4b2a85'],MH:['#0f2557','#c8102e'],SQ:['#f4b400','#12295e'],EK:['#d71920','#c8a45d'],QR:['#5c0632','#c9b48a'],BA:['#075aaa','#dc241f'],LH:['#05164d','#ffad1d'],AF:['#002157','#ff0000'],CX:['#00645a','#b8b8b8'],KE:['#00a3e0','#c8102e'],JL:['#b8000f','#ffffff'],BR:['#006747','#ff8200'],UA:['#005daa','#ffffff'],ET:['#628c2a','#fbe122'],VN:['#0a6c58','#f2b21d'],GA:['#0e4c8c','#35b6b4']};
 function airlineOf(fl){if(!fl)return null;const m=String(fl).toUpperCase().match(/^([A-Z0-9]{2})[\s-]?/);return m?m[1]:null}
-function logoURI(code){const s=LOGOS[code]||LOGOS['IATA'];return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(s)}
+function logoURI(code){/*v77size*/var s=LOGOS[code]||LOGOS['IATA'];s=String(s).replace(/<svg/i,'<svg width="64" height="18" preserveAspectRatio="xMidYMid meet"');return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(s)}
 function flightChip(fl){if(!fl)return '';const c=airlineOf(fl);const has=c&&LOGOS[c];
   return '<span class="fchip"><img src="'+logoURI(has?c:'IATA')+'" alt=""> '+esc(fl)+'</span>'}
 function bankChip(b){const M={BBL:['BANK_BBL','Bangkok Bank'],KBANK:['BANK_KBANK','Kasikorn'],SCB:['BANK_SCB','SCB']};
