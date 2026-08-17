@@ -3249,7 +3249,7 @@ function renderCorridor(){
         '<path d="M0 -18 C3.4 -18 4.6 -14.6 4.6 -10 L4.6 -7 L-4.6 -7 L-4.6 -10 C-4.6 -14.6 -3.4 -18 0 -18 Z" fill="'+lv[0]+'"/>'+
         '<path d="M-5.4 14.6 L0 25 L5.4 14.6 Z" fill="'+lv[0]+'"/>'+
       '</svg>'+
-      '<div class="wtag"><img src="'+uri+'" alt=""><span>'+esc(m.fl||m.who)+'</span></div>'+
+      '<div class="wtag"><span>'+esc(m.fl||m.who)+'</span></div>'+
       '</div>';
   });
   host.innerHTML='<div class="wmap"><div class="wland"></div>'+

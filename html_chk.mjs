@@ -1447,7 +1447,7 @@ html,body{touch-action:pan-x pan-y;-ms-touch-action:pan-x pan-y}
         </div>
         <div class="powered"><span class="pline l"></span>POWERED BY <b>OPSI</b><span class="pline r"></span></div>
       </div>
-      <div class="chip hidesm">BUILD <b>v60</b></div>
+      <div class="chip hidesm">BUILD <b>v78</b></div>
       <div class="chip" id="bookBadge">KACHCHA</div>
       <div class="chip hidesm" id="clockChip">--:--</div>
       <div class="avatar">
@@ -5379,7 +5379,7 @@ function renderCorridor(){
         '<path d="M0 -18 C3.4 -18 4.6 -14.6 4.6 -10 L4.6 -7 L-4.6 -7 L-4.6 -10 C-4.6 -14.6 -3.4 -18 0 -18 Z" fill="'+lv[0]+'"/>'+
         '<path d="M-5.4 14.6 L0 25 L5.4 14.6 Z" fill="'+lv[0]+'"/>'+
       '</svg>'+
-      '<div class="wtag"><img src="'+uri+'" alt=""><span>'+esc(m.fl||m.who)+'</span></div>'+
+      '<div class="wtag"><span>'+esc(m.fl||m.who)+'</span></div>'+
       '</div>';
   });
   host.innerHTML='<div class="wmap"><div class="wland"></div>'+
