@@ -1447,7 +1447,7 @@ html,body{touch-action:pan-x pan-y;-ms-touch-action:pan-x pan-y}
         </div>
         <div class="powered"><span class="pline l"></span>POWERED BY <b>OPSI</b><span class="pline r"></span></div>
       </div>
-      <div class="chip hidesm">BUILD <b>v78</b></div>
+      <div class="chip hidesm">BUILD <b>v79</b></div>
       <div class="chip" id="bookBadge">KACHCHA</div>
       <div class="chip hidesm" id="clockChip">--:--</div>
       <div class="avatar">
@@ -5537,6 +5537,9 @@ function runBootCinema(){
 
 /* ---------- v76 stamp + map logo ---------- */
 (function v76stamp(){var VER="v76";function work(){try{var all=document.querySelectorAll("span,div,b,small,em,button,a");for(var i=0;i<all.length;i++){var e=all[i];if(e.children.length===0&&/^\s*BUILD\s*v\d+\s*$/i.test(e.textContent)){e.textContent="BUILD "+VER}}}catch(e){}try{var host=document.querySelector(".wmap")||document.querySelector("#corrMap")||document.body;var el=host.querySelectorAll("img,svg,image");for(var k=0;k<el.length;k++){var x=el[k];if(x.getBoundingClientRect().width>60){x.style.setProperty("width","auto","important");x.style.setProperty("height","14px","important");x.style.setProperty("max-width","28px","important");x.style.setProperty("max-height","14px","important");x.style.setProperty("object-fit","contain","important")}}}catch(e){}}var n=0;var t=setInterval(function(){work();if(++n>25)clearInterval(t)},600);setTimeout(work,300);document.addEventListener("click",function(){setTimeout(work,250)},true)})();
+
+/* ---------- v79 map layout css ---------- */
+(function(){try{var t=document.createElement("style");t.id="v79map";t.textContent=".wmap{position:relative!important;width:100%!important;height:100%!important;min-height:280px!important;overflow:hidden!important;border-radius:14px!important}.wland{position:absolute!important;inset:0!important;pointer-events:none!important}.wsvg{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;display:block!important}.wroute{fill:none!important;stroke:url(#wgr)!important;stroke-width:2!important;stroke-dasharray:5 5!important;opacity:.85!important}.wnode{position:absolute!important;transform:translate(-50%,-50%)!important;display:inline-flex!important;align-items:center!important;gap:5px!important;font-size:10px!important;white-space:nowrap!important;z-index:3!important}.wnode i{display:block!important;width:9px!important;height:9px!important;border-radius:50%!important;background:currentColor!important;box-shadow:0 0 12px currentColor!important;flex:0 0 auto!important}.wnode b{font-size:11px!important;letter-spacing:.5px!important;font-weight:700!important}.wpl{position:absolute!important;transform:translate(-50%,-50%)!important;display:flex!important;flex-direction:column!important;align-items:center!important;gap:2px!important;z-index:4!important;pointer-events:none!important}.wpl svg.ac{width:26px!important;height:26px!important;display:block!important;flex:0 0 auto!important}.wtag{display:inline-flex!important;align-items:center!important;gap:4px!important;font-size:9px!important;line-height:1!important;padding:2px 6px!important;border-radius:999px!important;background:rgba(255,255,255,.10)!important;white-space:nowrap!important}.wtag img{width:auto!important;height:12px!important;max-width:24px!important;object-fit:contain!important}.wcred{position:absolute!important;right:8px!important;bottom:6px!important;font-size:9px!important;opacity:.45!important;z-index:2!important}";document.head.appendChild(t)}catch(e){}})();
 </script>
 </body>
 </html>
