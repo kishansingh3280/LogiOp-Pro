@@ -1,4 +1,4 @@
-
+/*v80err*/window.onerror=function(m,src,l,c){try{var d=document.createElement("div");d.style.cssText="position:fixed;z-index:99999;left:0;right:0;bottom:0;background:#b00020;color:#fff;font:12px monospace;padding:10px;white-space:pre-wrap";d.textContent="ERR: "+m+"  @line "+l+":"+c;if(document.body)document.body.appendChild(d);else setTimeout(function(){document.body&&document.body.appendChild(d)},800)}catch(e){}};
 /* ============================================================
    LogiOp Pro v41 — engine (zero-conflict, transform-only motion)
    ============================================================ */
