@@ -26,6 +26,9 @@ jobs:
       - name: Prebuild android
         run: npx expo prebuild --platform android --clean
 
+      - name: Fix hermesc
+        run: chmod +x node_modules/react-native/sdks/hermesc/linux64-bin/hermesc
+
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon
 
