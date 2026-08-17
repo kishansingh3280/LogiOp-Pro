@@ -5521,7 +5521,7 @@ function runBootCinema(){
 
 
 /* ---------- v64 airline logo ---------- */
-(function(){try{var t=document.createElement("style");t.id="v64logo";t.textContent=".finb{display:inline-flex!important;align-items:center!important;gap:6px!important;vertical-align:middle!important}\n.fin2{all:unset!important;display:inline-block!important;height:var(--h,22px)!important}\n.fin2::before,.fin2::after{display:none!important;content:none!important}\n.fin2 img{width:auto!important;height:100%!important;max-width:44px!important;object-fit:contain!important;display:block!important}\n.fno{font-size:11px!important;font-weight:700!important;line-height:1!important;white-space:nowrap!important}\n#corrLegend{display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:8px 10px!important}\n.wpl .ac{width:34px!important;height:34px!important}\n.wpl .wtag img{width:auto!important;height:13px!important;max-width:26px!important;object-fit:contain!important}\n";document.head.appendChild(t)}catch(e){}})();
+(function(){try{var t=document.createElement("style");t.id="v64logo";t.textContent=".finb{display:inline-flex!important;align-items:center!important;gap:6px!important;vertical-align:middle!important}.fin2{all:unset!important;display:inline-block!important;height:var(--h,22px)!important}.fin2::before,.fin2::after{display:none!important;content:none!important}.fin2 img{width:auto!important;height:100%!important;max-width:44px!important;object-fit:contain!important;display:block!important}.fno{font-size:11px!important;font-weight:700!important;line-height:1!important;white-space:nowrap!important}.wpl .ac{width:34px!important;height:34px!important}.wpl .wtag img{width:auto!important;height:13px!important;max-width:26px!important;object-fit:contain!important}";document.head.appendChild(t)}catch(e){}})();
 
 /* --------- v65 boot watchdog --------- */
 (function v65wd(){return;setTimeout(function(){try{if(window.__v64finish)window.__v64finish()}catch(e){}},6000)})();
@@ -5531,6 +5531,8 @@ function runBootCinema(){
 
 /* --- v69: boot poora band --- */
 (function(){function go(){try{var b=document.getElementById("boot");if(b){b.style.display="none";b.remove()}var a=document.getElementById("authWrap");if(a)a.remove();document.body.style.overflow="";try{renderAll()}catch(e){}try{countUp()}catch(e){}}catch(e){}}if(document.readyState!=="loading")setTimeout(go,300);else document.addEventListener("DOMContentLoaded",function(){setTimeout(go,300)});setTimeout(go,1200);setTimeout(go,2500)})();
+
+(function(){try{var t=document.createElement("style");t.id="v71map";t.textContent=".wmap img{max-width:26px!important;max-height:14px!important;width:auto!important;height:13px!important;object-fit:contain!important}.wmap svg.ac,.wpl svg.ac{width:34px!important;height:34px!important}.wmap .wpl{max-width:60px!important}";document.head.appendChild(t)}catch(e){}})();
 </script>
 </body>
 </html>
