@@ -5531,6 +5531,9 @@ function runBootCinema(){
 
 /* --- v69: boot poora band --- */
 (function(){function go(){try{var b=document.getElementById("boot");if(b){b.style.display="none";b.remove()}var a=document.getElementById("authWrap");if(a)a.remove();document.body.style.overflow="";try{renderAll()}catch(e){}try{countUp()}catch(e){}}catch(e){}}if(document.readyState!=="loading")setTimeout(go,300);else document.addEventListener("DOMContentLoaded",function(){setTimeout(go,300)});setTimeout(go,1200);setTimeout(go,2500)})();
+
+/* ---------- v72 map logo runtime fix ---------- */
+(function v72fix(){function shrink(){try{var host=document.querySelector(".wmap")||document.querySelector("#corrMap")||document.body;var el=host.querySelectorAll("img,svg,image");for(var i=0;i<el.length;i++){var e=el[i];var w=e.getBoundingClientRect().width;if(w>60){e.style.setProperty("width","auto","important");e.style.setProperty("height","14px","important");e.style.setProperty("max-width","28px","important");e.style.setProperty("max-height","14px","important");e.style.setProperty("object-fit","contain","important")}}var c=document.querySelectorAll(".chip");for(var k=0;k<c.length;k++){if(/BUILD/i.test(c[k].textContent))c[k].textContent="BUILD v72"}}catch(e){}}var n=0;var t=setInterval(function(){shrink();if(++n>20)clearInterval(t)},700);setTimeout(shrink,400);document.addEventListener("click",function(){setTimeout(shrink,300)},true)})();
 </script>
 </body>
 </html>

@@ -5531,8 +5531,6 @@ function runBootCinema(){
 
 /* --- v69: boot poora band --- */
 (function(){function go(){try{var b=document.getElementById("boot");if(b){b.style.display="none";b.remove()}var a=document.getElementById("authWrap");if(a)a.remove();document.body.style.overflow="";try{renderAll()}catch(e){}try{countUp()}catch(e){}}catch(e){}}if(document.readyState!=="loading")setTimeout(go,300);else document.addEventListener("DOMContentLoaded",function(){setTimeout(go,300)});setTimeout(go,1200);setTimeout(go,2500)})();
-
-(function(){try{var t=document.createElement("style");t.id="v71map";t.textContent=".wmap img{max-width:26px!important;max-height:14px!important;width:auto!important;height:13px!important;object-fit:contain!important}.wmap svg.ac,.wpl svg.ac{width:34px!important;height:34px!important}.wmap .wpl{max-width:60px!important}";document.head.appendChild(t)}catch(e){}})();
 </script>
 </body>
 </html>
