@@ -2441,7 +2441,7 @@ function briefShow(){
   });
 }
 /* ---------- CINEMATIC BOOT + LOGIN ---------- */
-function runBootCinema(){
+function runBootCinema(){/*v82boot*/try{var b=document.getElementById("boot");if(b){b.style.display="none";b.remove()}}catch(e){}return;
   const boot=$('#boot'),msg=$('#bootMsg');
   if(!boot){return}
   const msgs=['OPSI jaag raha hai\u2026','Circuits garam ho rahe hain\u2026','Rates la raha hoon\u2026'];

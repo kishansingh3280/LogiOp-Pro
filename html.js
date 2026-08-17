@@ -1447,7 +1447,7 @@ html,body{touch-action:pan-x pan-y;-ms-touch-action:pan-x pan-y}
         </div>
         <div class="powered"><span class="pline l"></span>POWERED BY <b>OPSI</b><span class="pline r"></span></div>
       </div>
-      <div class="chip hidesm">BUILD <b>v81</b></div>
+      <div class="chip hidesm">BUILD <b>v82</b></div>
       <div class="chip" id="bookBadge">KACHCHA</div>
       <div class="chip hidesm" id="clockChip">--:--</div>
       <div class="avatar">
@@ -4571,7 +4571,7 @@ function briefShow(){
   });
 }
 /* ---------- CINEMATIC BOOT + LOGIN ---------- */
-function runBootCinema(){
+function runBootCinema(){/*v82boot*/try{var b=document.getElementById("boot");if(b){b.style.display="none";b.remove()}}catch(e){}return;
   const boot=$('#boot'),msg=$('#bootMsg');
   if(!boot){return}
   const msgs=['OPSI jaag raha hai\\u2026','Circuits garam ho rahe hain\\u2026','Rates la raha hoon\\u2026'];
