@@ -1,0 +1,8 @@
+.finb{display:inline-flex!important;align-items:center!important;gap:6px!important;vertical-align:middle!important}
+.fin2{all:unset!important;display:inline-block!important;height:var(--h,22px)!important}
+.fin2::before,.fin2::after{display:none!important;content:none!important}
+.fin2 img{width:auto!important;height:100%!important;max-width:44px!important;object-fit:contain!important;display:block!important}
+.fno{font-size:11px!important;font-weight:700!important;line-height:1!important;white-space:nowrap!important}
+#corrLegend{display:flex!important;flex-wrap:wrap!important;align-items:center!important;gap:8px 10px!important}
+.wpl .ac{width:34px!important;height:34px!important}
+.wpl .wtag img{width:auto!important;height:13px!important;max-width:26px!important;object-fit:contain!important}

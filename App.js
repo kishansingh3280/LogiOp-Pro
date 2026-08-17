@@ -1,80 +1,70 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { View, StatusBar, BackHandler, Vibration, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { StatusBar } from 'expo-status-bar';
-import * as Haptics from 'expo-haptics';
-import * as LocalAuthentication from 'expo-local-authentication';
-import * as NavigationBar from 'expo-navigation-bar';
-import HTML from './html';
+import html from './html.js';
 
-const BRIDGE = `
-window.__NATIVE = true;
-navigator.vibrate = function(p){
-  try{ window.ReactNativeWebView.postMessage(JSON.stringify({t:'vibe', p:p})); }catch(e){}
-  return true;
-};
-true;`;
+// expo-navigation-bar optional — na ho to bhi app chale
+let NavigationBar = null;
+try { NavigationBar = require('expo-navigation-bar'); } catch (e) {}
 
-export default function App(){
-  const [ok, setOk] = useState(false);
-  const [msg, setMsg] = useState('Pehchaan zaroori hai…');
+export default function App() {
+  const webRef = useRef(null);
 
-  useEffect(()=>{ // Immersive: nav bar gayab, swipe par wapas
-    NavigationBar.setVisibilityAsync('hidden').catch(()=>{});
-    NavigationBar.setBehaviorAsync('overlay-swipe').catch(()=>{});
-  },[]);
+  useEffect(() => {
+    if (Platform.OS === 'android' && NavigationBar) {
+      try {
+        NavigationBar.setVisibilityAsync('hidden');
+        NavigationBar.setBehaviorAsync('overlay-swipe');
+      } catch (e) {}
+    }
+  }, []);
 
-  useEffect(()=>{ (async ()=>{
-    try{
-      const has = await LocalAuthentication.hasHardwareAsync();
-      const enrolled = await LocalAuthentication.isEnrolledAsync();
-      if(has && enrolled){
-        const r = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'LogiOp Pro — fingerprint se login',
-          cancelLabel: 'Radd karein',
-        });
-        if(r.success){ Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); setOk(true); return; }
-        setMsg('Pehchaan nahi hui — app band karke dobara kholein');
-      } else { setOk(true); }
-    }catch(e){ setOk(true); }
-  })(); },[]);
-
-  const onMsg = (e)=>{
-    try{
-      const d = JSON.parse(e.nativeEvent.data);
-      if(d.t==='vibe'){
-        const p = d.p;
-        if(Array.isArray(p)) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        else if(p<=5) Haptics.selectionAsync();
-        else if(p<=12) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  // Hardware back / back-gesture → pehle app ke andar band karo, exit sirf dashboard se
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (webRef.current) {
+        webRef.current.injectJavaScript('window.__appBack && window.__appBack(); true;');
+        return true; // hum sambhalenge — HTML bolega kab exit karna hai
       }
-    }catch(err){}
+      return false;
+    });
+    return () => sub.remove();
+  }, []);
+
+  const onMessage = (e) => {
+    try {
+      const msg = JSON.parse(e.nativeEvent.data);
+      if (msg.t === 'hap' && Array.isArray(msg.p)) {
+        Vibration.vibrate(msg.p);
+      } else if (msg.t === 'exit') {
+        BackHandler.exitApp();
+      }
+    } catch (err) {}
   };
 
-  if(!ok) return (
-    <View style={s.gate}><Text style={s.gateTxt}>{msg}</Text></View>
-  );
-
   return (
-    <View style={{flex:1, backgroundColor:'#060812'}}>
+    <View style={{ flex: 1, backgroundColor: '#05060d' }}>
       <StatusBar hidden />
       <WebView
-        source={{ html: HTML }}
-        originWhitelist={["*"]}
-        injectedJavaScriptBeforeContentLoaded={BRIDGE}
-        onMessage={onMsg}
-        allowsFullscreenVideo
-        domStorageEnabled
+        ref={webRef}
+        source={{ html }}
+        originWhitelist={['*']}
+        onMessage={onMessage}
         javaScriptEnabled
+        domStorageEnabled
         setSupportMultipleWindows={false}
         overScrollMode="never"
-        style={{flex:1, backgroundColor:'#060812'}}
+        bounces={false}
+        scalesPageToFit={false}
+        textZoom={100}
+        allowFileAccess
+        mediaPlaybackRequiresUserAction={false}
+        allowsInlineMediaPlayback
+        onPermissionRequest={(e)=>{try{e.nativeEvent&&e.grant&&e.grant()}catch(err){}}}
+        allowUniversalAccessFromFileURLs
+        injectedJavaScriptBeforeContentLoaded={'window.__NATIVE=true; true;'}
+        style={{ flex: 1, backgroundColor: '#05060d' }}
       />
     </View>
   );
 }
-const s = StyleSheet.create({
-  gate:{flex:1,backgroundColor:'#060812',alignItems:'center',justifyContent:'center'},
-  gateTxt:{color:'#98a0c4',fontSize:15}
-});
