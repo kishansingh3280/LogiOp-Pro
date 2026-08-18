@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +27,7 @@ jobs:
         run: npx expo prebuild --platform android --clean
 
       - name: Fix hermesc
-        run: chmod +x node_modules/react-native/sdks/hermesc/linux64-bin/hermesc
+        run: chmod -R +x node_modules/react-native/sdks/hermesc/ && node_modules/react-native/sdks/hermesc/linux64-bin/hermesc --version
 
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon
